@@ -1,0 +1,3 @@
+- [ ] Task one wraps across lines to test live streaming wrap behavior in lists.
+- [x] Done task with *emphasis* and **strong** and `code`.
+  - [ ] Nested task continues with more text to wrap properly.

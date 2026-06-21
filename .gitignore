@@ -1,0 +1,17 @@
+build/
+build-*/
+dist/
+VERSION
+.cache/
+compile_commands.json
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+parityjudge/parityjudge

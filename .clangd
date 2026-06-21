@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -std=c89
+    - -Wall
+    - -Wextra
+    - -Wpedantic
+    - -D_POSIX_C_SOURCE=200809L
+  CompilationDatabase: build/debug

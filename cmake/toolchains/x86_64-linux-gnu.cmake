@@ -1,0 +1,7 @@
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+find_program(LIBMDF_CC x86_64-linux-gnu-gcc)
+if(NOT LIBMDF_CC)
+  set(LIBMDF_CC cc)
+endif()
+set(CMAKE_C_COMPILER "${LIBMDF_CC}")

@@ -1,0 +1,10 @@
+prefix=@LIBMDF_PC_PREFIX@
+exec_prefix=${prefix}
+libdir=@LIBMDF_PC_LIBDIR@
+includedir=@LIBMDF_PC_INCLUDEDIR@
+
+Name: libmdf
+Description: Streaming token Markdown renderer for ANSI and HTML
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lmdf
+Cflags: -I${includedir}

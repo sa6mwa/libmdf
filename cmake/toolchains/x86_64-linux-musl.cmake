@@ -1,0 +1,7 @@
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+find_program(LIBMDF_CC x86_64-linux-musl-gcc)
+if(NOT LIBMDF_CC)
+  message(FATAL_ERROR "x86_64-linux-musl-gcc not found; set PATH to the cross toolchain")
+endif()
+set(CMAKE_C_COMPILER "${LIBMDF_CC}")

@@ -1,0 +1,11 @@
+# Linkify (GFM)
+
+Bare URLs should be linkified:
+
+http://example.com
+https://example.com/path?q=1&x=2
+www.example.org
+
+Bare emails:
+
+me@example.com
