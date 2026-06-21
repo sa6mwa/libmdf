@@ -1,8 +1,8 @@
 # libmdf
 
 `libmdf` is a C89/POSIX Markdown renderer for ANSI terminal output and HTML.
-It is the C implementation of the rendering surfaces used by
-`pkt.systems/mdf`, with local parity gates against the Go reference.
+It is a C port of the rendering surfaces from [pkt.systems/mdf](https://github.com/sa6mwa/mdf),
+with parity checks against the Go implementation.
 
 The project ships:
 
@@ -13,15 +13,9 @@ The project ships:
 
 PDF generation is intentionally out of scope.
 
-## Status
-
-The first planned release is `0.1.0`. Version metadata is tag-driven:
-an untagged git worktree reports `0.0.0`; a release build must be made from a
-commit tagged with an exact lightweight `vX.Y.Z` tag.
-
 ## Install
 
-Release archives are split by purpose.
+Archives are split by purpose.
 
 Library SDK archives are named:
 
@@ -62,7 +56,7 @@ The CLI archives embed JetBrains Mono for HTML output and therefore include the
 JetBrains Mono `OFL.txt`. The library SDK archives do not embed the font and do
 not ship `OFL.txt`.
 
-Supported release targets:
+Prebuilt targets:
 
 ```text
 x86_64-linux-gnu
@@ -74,8 +68,8 @@ armhf-linux-musl
 arm64-apple-darwin
 ```
 
-Linux `cmdf` release binaries are verified as static binaries. The library SDK
-archives ship both static and shared libraries.
+Linux `cmdf` binaries are static. The library SDK archives ship both static
+and shared libraries.
 
 ## CMake
 
@@ -187,6 +181,9 @@ exact sink writes in the same order. Tables are the exception to ordinary
 word-sized streaming: `MDF_TABLE_BUFFER_FULL` buffers the full table before
 rendering, while `MDF_TABLE_BUFFER_ROW` emits header plus first row, then later
 rows as the parser can decide them.
+
+The Go `mdf` implementation is the behavioral reference for ANSI streaming.
+Parity checks compare the C hot path against that reference.
 
 HTML output is streamed, but byte-for-byte streaming parity with the Go CLI is
 not a supported contract. HTML tables rely on browser layout rather than ANSI
@@ -309,7 +306,7 @@ embeds JetBrains Mono for HTML parity with `cmdf`.
 The renderer supports the Markdown constructs covered by the parity corpus:
 headings, emphasis, links, autolinks, blockquotes, lists, task lists, fenced and
 indented code, frontmatter, thematic breaks, entities, tables, and inline HTML
-handling used by the Go reference.
+handling used by `cmdf`.
 
 HTML output escapes text and attributes. Link `href` output is restricted to
 safe schemes: `http`, `https`, `mailto`, and relative URLs. Unsafe schemes such
@@ -349,26 +346,25 @@ wire modes. Streaming parity is chunk-bound and runs as fast as the renderer can
 consume input; it does not use sleeps, wall-clock gaps, or timing thresholds.
 
 `make parity-quick` is an explicit local smoke for fast iteration. It does not
-replace release parity.
+replace the full parity matrix.
 
-`make release` is the full local release gate. It cleans generated state, runs
-the prerelease checks, builds the release matrix, creates release artifacts,
-generates checksums, verifies package layout, and runs privacy/relocatability
-checks. It includes the exhaustive parity gate. Release uploads must be selected from
-`dist/libmdf-<version>-CHECKSUMS`, not from a `dist/` glob.
+## Release Cycle
 
-## Source Releases
-
-The source archive is:
+`libmdf` follows the pkt.systems C/CMake lifecycle used by
+`c.pkt.systems`:
 
 ```text
-libmdf-<version>.tar.gz
+https://github.com/sa6mwa/c.pkt.systems/
 ```
 
-It contains tracked source files plus generated release metadata:
-`VERSION` and `RELEASE_MANIFEST`. `VERSION` is intentionally not checked into
-the git repository; git worktrees derive their version only from an exact
-lightweight `vX.Y.Z` tag on `HEAD`.
+The local lifecycle skill is the release authority for this repository. The
+public release surface is `make release`: it starts from a clean tree, runs the
+prerelease checks, sanitizer checks, fuzz smoke, Lua checks, full Go parity
+matrix, package generation, checksum generation, package verification, and
+artifact privacy/relocatability checks.
+
+Release artifacts are selected from the generated checksum manifest, not from a
+`dist/` glob.
 
 ## License
 
