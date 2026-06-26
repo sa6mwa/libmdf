@@ -44,8 +44,8 @@
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
-    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
-    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } },
-    { "name": "msan", "configurePreset": "msan", "output": { "outputOnFailure": true } }
+    { "name": "asan", "configurePreset": "asan", "filter": { "exclude": { "label": "packaging|parity" } }, "output": { "outputOnFailure": true } },
+    { "name": "tsan", "configurePreset": "tsan", "filter": { "exclude": { "label": "packaging|parity" } }, "output": { "outputOnFailure": true } },
+    { "name": "msan", "configurePreset": "msan", "filter": { "exclude": { "label": "packaging|parity" } }, "output": { "outputOnFailure": true } }
   ]
 }

@@ -17,6 +17,15 @@ PDF generation is intentionally out of scope.
 
 Archives are split by purpose.
 
+Source archives are named:
+
+```text
+libmdf-<version>.tar.gz
+```
+
+They contain the release source tree for rebuilding the C library, CLI, tests,
+Lua bindings, and release artifacts.
+
 Library SDK archives are named:
 
 ```text
@@ -56,6 +65,17 @@ The CLI archives embed JetBrains Mono for HTML output and therefore include the
 JetBrains Mono `OFL.txt`. The library SDK archives do not embed the font and do
 not ship `OFL.txt`.
 
+Lua release artifacts are named:
+
+```text
+libmdf-lua-<version>.tar.gz
+libmdf-<version>-1.rockspec
+libmdf-<version>-1.src.rock
+```
+
+They provide the Lua 5.5 facade and native binding package source. The source
+rock is built against an extracted SDK archive during verification.
+
 Prebuilt targets:
 
 ```text
@@ -84,6 +104,21 @@ target_link_libraries(app PRIVATE libmdf::mdf_static)
 
 The package exports `libmdf::mdf_static` and `libmdf::mdf_shared` when both
 library variants are present.
+
+When building from source, the main CMake options are:
+
+```text
+LIBMDF_BUILD_STATIC=ON|OFF
+LIBMDF_BUILD_SHARED=ON|OFF
+LIBMDF_BUILD_BINARY=ON|OFF
+LIBMDF_BUILD_TESTS=ON|OFF
+LIBMDF_BUILD_FUZZ=ON|OFF
+LIBMDF_INSTALL_BINARY=ON|OFF
+LIBMDF_CMDF_STATIC_RUNTIME=ON|OFF
+```
+
+The project presets and `Makefile` targets are the preferred local entry points
+for development and release builds.
 
 ## pkg-config
 
@@ -328,6 +363,8 @@ make parity-quick
 make lua-test
 make package
 make package-verify
+make release-lua-artifacts
+make verify-release-privacy
 make release
 ```
 
@@ -360,8 +397,9 @@ https://github.com/sa6mwa/c.pkt.systems/
 The local lifecycle skill is the release authority for this repository. The
 public release surface is `make release`: it starts from a clean tree, runs the
 prerelease checks, sanitizer checks, fuzz smoke, Lua checks, full Go parity
-matrix, package generation, checksum generation, package verification, and
-artifact privacy/relocatability checks.
+matrix, release matrix builds, package generation, Lua release artifact
+generation, checksum generation, package verification, and artifact
+privacy/relocatability checks.
 
 Release artifacts are selected from the generated checksum manifest, not from a
 `dist/` glob.

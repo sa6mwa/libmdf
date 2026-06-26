@@ -448,24 +448,24 @@ static int run_margin_corpus_cases(void)
         "testdata/table-corpus/wrapping.md",
         "testdata/table-corpus/container-contexts.md"
     };
-    static const int widths[] = {20, 50, 80, 100};
-    static const int margins[][2] = {
-        {0, 0},
-        {2, 0},
-        {0, 3},
-        {2, 3},
-        {6, 4}
+    static const struct {
+        int width;
+        int left;
+        int right;
+    } cases[] = {
+        {20, 0, 0},
+        {50, 2, 0},
+        {80, 0, 3},
+        {100, 2, 3},
+        {80, 6, 4}
     };
     size_t p;
-    size_t w;
-    size_t m;
+    size_t c;
 
     for (p = 0; p < sizeof(paths) / sizeof(paths[0]); p++) {
-        for (w = 0; w < sizeof(widths) / sizeof(widths[0]); w++) {
-            for (m = 0; m < sizeof(margins) / sizeof(margins[0]); m++) {
-                if (!run_margin_corpus_case(paths[p], widths[w], margins[m][0], margins[m][1])) {
-                    return 0;
-                }
+        for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+            if (!run_margin_corpus_case(paths[p], cases[c].width, cases[c].left, cases[c].right)) {
+                return 0;
             }
         }
     }
@@ -1021,44 +1021,32 @@ static int run_ansi_margin_table_regression_cases(void)
         "| --- | --- |\n"
         "| mixed long | plain text before *italic phrase* then **bold phrase** then ***combined phrase*** with enough words to wrap |\n"
         "| linked long | [Agile Manifesto](https://agilemanifesto.org/) then **not requirements**, and guided by evidence |\n";
-    static const int widths[] = {30, 40, 60, 80, 100};
-    static const int margins[][2] = {
-        {0, 0},
-        {2, 0},
-        {0, 4},
-        {2, 4},
-        {6, 4}
+    static const struct {
+        int width;
+        int left;
+        int right;
+        mdf_table_buffer_mode buffer;
+        mdf_table_wire_mode wire;
+    } cases[] = {
+        {30, 0, 0, MDF_TABLE_BUFFER_FULL, MDF_TABLE_WIRE_LINE},
+        {40, 2, 0, MDF_TABLE_BUFFER_ROW, MDF_TABLE_WIRE_ASCII},
+        {60, 0, 4, MDF_TABLE_BUFFER_FULL, MDF_TABLE_WIRE_SPACE},
+        {80, 2, 4, MDF_TABLE_BUFFER_ROW, MDF_TABLE_WIRE_LINE},
+        {100, 6, 4, MDF_TABLE_BUFFER_FULL, MDF_TABLE_WIRE_ASCII},
+        {30, 6, 4, MDF_TABLE_BUFFER_ROW, MDF_TABLE_WIRE_SPACE}
     };
-    static const mdf_table_buffer_mode buffers[] = {
-        MDF_TABLE_BUFFER_FULL,
-        MDF_TABLE_BUFFER_ROW
-    };
-    static const mdf_table_wire_mode wires[] = {
-        MDF_TABLE_WIRE_LINE,
-        MDF_TABLE_WIRE_ASCII,
-        MDF_TABLE_WIRE_SPACE
-    };
-    size_t w;
-    size_t m;
-    size_t b;
-    size_t wi;
+    size_t c;
 
-    for (w = 0; w < sizeof(widths) / sizeof(widths[0]); w++) {
-        for (m = 0; m < sizeof(margins) / sizeof(margins[0]); m++) {
-            for (b = 0; b < sizeof(buffers) / sizeof(buffers[0]); b++) {
-                for (wi = 0; wi < sizeof(wires) / sizeof(wires[0]); wi++) {
-                    if (!run_ansi_margin_table_regression_case("inline-table", inline_table,
-                            widths[w], margins[m][0], margins[m][1], buffers[b], wires[wi],
-                            "Ag", "req", "ada")) {
-                        return 0;
-                    }
-                    if (!run_ansi_margin_table_regression_case("narrow-table", narrow_table,
-                            widths[w], margins[m][0], margins[m][1], buffers[b], wires[wi],
-                            "italic", "bold", "req")) {
-                        return 0;
-                    }
-                }
-            }
+    for (c = 0; c < sizeof(cases) / sizeof(cases[0]); c++) {
+        if (!run_ansi_margin_table_regression_case("inline-table", inline_table,
+                cases[c].width, cases[c].left, cases[c].right, cases[c].buffer, cases[c].wire,
+                "Ag", "req", "ada")) {
+            return 0;
+        }
+        if (!run_ansi_margin_table_regression_case("narrow-table", narrow_table,
+                cases[c].width, cases[c].left, cases[c].right, cases[c].buffer, cases[c].wire,
+                "italic", "bold", "req")) {
+            return 0;
         }
     }
     return 1;

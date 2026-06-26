@@ -31,7 +31,13 @@ int ansi_inline_append(mdf_impl *impl, char **buf, size_t *len, size_t *cap, con
 
 
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink);
+int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int closing);
+static const char *ansi_inline_emphasis_prefix(mdf_impl *impl, int continuation, char *buf, size_t buf_cap);
 static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, size_t reserve_cols);
+static int ansi_inline_flush_unmatched_nested_emphasis(mdf_impl *impl, mdf_sink *sink);
+static int ansi_inline_handle_streamed_emphasis_delim(mdf_impl *impl, mdf_sink *sink);
+static int ansi_inline_emit_streamed_emphasis_literal_char(mdf_impl *impl, mdf_sink *sink, char c);
+static const char *ansi_inline_nested_emphasis_style(mdf_impl *impl, int nested_count, char *buf, size_t buf_cap);
 static int autolink_likely(const char *s, size_t len);
 static int autolink_is_email(const char *s, size_t len);
 static int markdown_escapable_char(char c);
@@ -57,6 +63,23 @@ static int ansi_pre_code_space_starts_wrap_prefix(mdf_impl *impl);
 static int ansi_pre_code_line_has_only_whitespace_prefix(mdf_impl *impl, int prefix_width);
 static void ansi_pre_code_note_segment(mdf_impl *impl, const char *segment, size_t len);
 static int ansi_pre_code_prepare_segment(mdf_impl *impl, mdf_sink *sink, const char *segment, size_t len, const char **prefix);
+
+static const char *ansi_store_owned_inline_style(mdf_impl *impl, const char *style)
+{
+    size_t style_len;
+
+    if (style == NULL) {
+        impl->ansi_owned_inline_style[0] = '\0';
+        return NULL;
+    }
+    style_len = strlen(style);
+    if (style_len >= sizeof(impl->ansi_owned_inline_style)) {
+        mdf_impl_mark_oom(impl);
+        return NULL;
+    }
+    memcpy(impl->ansi_owned_inline_style, style, style_len + 1);
+    return impl->ansi_owned_inline_style;
+}
 
 static int ansi_is_quote_char(char c)
 {
@@ -2727,6 +2750,10 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
         const char *emit_style;
         size_t total_word_cols;
 
+        if (impl->ansi_pending_final_emph_base_len > impl->ansi_word_len) {
+            impl->ansi_pending_final_emph_base_len = impl->ansi_word_len;
+            impl->ansi_pending_final_emph_base_cols = impl->ansi_word_cols;
+        }
         emit_style = (!impl->opts.boring &&
                       impl->ansi_active_inline_style == final_emph_style &&
                       impl->ansi_pending_inline_style != final_emph_style) ? "" : final_emph_style;
@@ -2753,6 +2780,9 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
         impl->ansi_pending_final_emph_base_cols = 0;
         impl->ansi_active_inline_style = NULL;
         impl->ansi_pending_inline_style = NULL;
+        if (impl->heading_open) {
+            impl->heading_style_suspended = 1;
+        }
         final_emph_style = NULL;
     } else if (impl->ansi_pending_attached_style != NULL && !impl->opts.boring) {
         const char *style;
@@ -3034,6 +3064,10 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
     if (impl->ansi_pending_final_emph_suffix) {
         const char *emit_style;
 
+        if (impl->ansi_pending_final_emph_base_len > impl->ansi_word_len) {
+            impl->ansi_pending_final_emph_base_len = impl->ansi_word_len;
+            impl->ansi_pending_final_emph_base_cols = impl->ansi_word_cols;
+        }
         total_cols = impl->ansi_word_cols;
         if (impl->ansi_pending_space) {
             if (ansi_flush_pending_space_only_for(impl, sink, total_cols) != 0) return -1;
@@ -3972,6 +4006,7 @@ int ansi_inline_flush_literal(mdf_impl *impl, mdf_sink *sink)
         int i;
 
         if (impl->inline_emph_streaming) {
+            if (ansi_inline_flush_unmatched_nested_emphasis(impl, sink) != 0) return -1;
             if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 1) != 0) return -1;
             if (!impl->opts.boring) {
                 impl->ansi_pending_style_reset = 1;
@@ -3993,6 +4028,9 @@ int ansi_inline_flush_literal(mdf_impl *impl, mdf_sink *sink)
         impl->inline_emph_pending = 0;
         impl->inline_emph_streaming = 0;
         impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_count = 0;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
         return 0;
     }
     if (impl->inline_mode == 10 || impl->inline_mode == 11 || impl->inline_mode == 12) {
@@ -4055,6 +4093,9 @@ int ansi_inline_flush_literal(mdf_impl *impl, mdf_sink *sink)
     impl->inline_emph_after_word = 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_nested_delim = 0;
+    impl->inline_emph_nested_count = 0;
+    impl->inline_emph_nested_close_count = 0;
+    impl->inline_emph_nested_saw_space = 0;
     impl->inline_entity_len = 0;
     return 0;
 }
@@ -4464,14 +4505,20 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
     return 0;
 }
 
-static int ansi_emit_link_parts(mdf_impl *impl, mdf_sink *sink, const char *text, size_t text_len, const char *url, size_t url_len, const char *prefix_style)
+static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
+                                   const char *text, size_t text_len,
+                                   const char *url, size_t url_len,
+                                   const char *prefix_style,
+                                   const char *resume_style)
 {
     size_t first_word_cols;
     size_t label_wrap_cols;
     size_t open_prefix_cols;
     size_t wrapped_fallback_cols;
     int outer_paren_context;
+    const char *after_link_style;
 
+    after_link_style = resume_style != NULL ? resume_style : prefix_style;
     first_word_cols = inline_link_label_first_word_cols(impl, text, text_len);
     label_wrap_cols = inline_link_label_wrap_cols(impl, text, text_len);
     outer_paren_context = impl->inline_outer_paren_pending;
@@ -4491,16 +4538,18 @@ static int ansi_emit_link_parts(mdf_impl *impl, mdf_sink *sink, const char *text
             ansi_emit_newline(impl, sink) != 0) return -1;
         if (text_len > 0 && ansi_ensure_left_margin(impl, sink) != 0) return -1;
         if (ansi_write_osc8_start(impl, sink, "", url, url_len) != 0) return -1;
-        if (prefix_style != NULL && prefix_style[0] != '\0' && !impl->opts.boring) {
+        if (((prefix_style != NULL && prefix_style[0] != '\0') ||
+             (after_link_style != NULL && after_link_style[0] != '\0')) &&
+            !impl->opts.boring) {
             impl->ansi_pending_style_reset = 1;
         }
         if (ansi_emit_link_label(impl, sink, text, text_len, prefix_style) != 0) return -1;
         if (mdf_emit_cstr(impl, sink, "\033]8;;\033\\") != 0) return -1;
-        if (prefix_style != NULL &&
-            prefix_style[0] != '\0' &&
+        if (after_link_style != NULL &&
+            after_link_style[0] != '\0' &&
             !impl->opts.boring) {
             impl->ansi_pending_style_reset = 1;
-            impl->ansi_pending_inline_style = prefix_style;
+            impl->ansi_pending_inline_style = after_link_style;
             impl->ansi_active_inline_style = NULL;
         } else if (!impl->opts.boring) {
             impl->ansi_pending_style_reset = 1;
@@ -4520,13 +4569,19 @@ static int ansi_emit_link_parts(mdf_impl *impl, mdf_sink *sink, const char *text
         if (ansi_flush_pending_space_for(impl, sink, label_wrap_cols + open_prefix_cols) != 0) return -1;
         label_pending_inline_style = impl->ansi_pending_inline_style;
         label_active_inline_style = impl->ansi_active_inline_style;
-        if (prefix_style != NULL && prefix_style[0] != '\0' && !impl->opts.boring) {
+        if (((prefix_style != NULL && prefix_style[0] != '\0') ||
+             (after_link_style != NULL && after_link_style[0] != '\0')) &&
+            !impl->opts.boring) {
             impl->ansi_pending_style_reset = 1;
         }
         impl->ansi_pending_inline_style = NULL;
         impl->ansi_active_inline_style = NULL;
         if (ansi_emit_link_label(impl, sink, text, text_len, prefix_style) != 0) return -1;
-        impl->ansi_pending_inline_style = label_pending_inline_style != NULL ? label_pending_inline_style : label_active_inline_style;
+        if (after_link_style != NULL && after_link_style[0] != '\0') {
+            impl->ansi_pending_inline_style = after_link_style;
+        } else {
+            impl->ansi_pending_inline_style = label_pending_inline_style != NULL ? label_pending_inline_style : label_active_inline_style;
+        }
         impl->ansi_active_inline_style = NULL;
         label_reset_pending = !impl->opts.boring;
         fallback_cols = 2 + visible_cols(url, url_len) + 1;
@@ -4703,10 +4758,19 @@ static int ansi_emit_link_parts(mdf_impl *impl, mdf_sink *sink, const char *text
             impl->ansi_active_inline_style = saved_active_inline_style;
             return -1;
         }
-        impl->ansi_pending_inline_style = saved_pending_inline_style != NULL ? saved_pending_inline_style : saved_active_inline_style;
+        if (after_link_style != NULL && after_link_style[0] != '\0') {
+            impl->ansi_pending_inline_style = after_link_style;
+        } else {
+            impl->ansi_pending_inline_style = saved_pending_inline_style != NULL ? saved_pending_inline_style : saved_active_inline_style;
+        }
         impl->ansi_active_inline_style = NULL;
     }
     return 0;
+}
+
+static int ansi_emit_link_parts(mdf_impl *impl, mdf_sink *sink, const char *text, size_t text_len, const char *url, size_t url_len, const char *prefix_style)
+{
+    return ansi_emit_link_parts_ex(impl, sink, text, text_len, url, url_len, prefix_style, NULL);
 }
 
 int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url, size_t url_len, int outer_paren_context)
@@ -4944,8 +5008,23 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
 
 static int ansi_inline_emit_link(mdf_impl *impl, mdf_sink *sink)
 {
-    if (ansi_emit_link_parts(impl, sink, impl->inline_text, impl->inline_text_len, impl->inline_url, impl->inline_url_len, "") != 0) return -1;
-    impl->inline_mode = 0;
+    const char *prefix;
+    char heading_style_buf[160];
+
+    prefix = impl->inline_emph_count > 0 ?
+             ansi_inline_emphasis_prefix(impl, 0, heading_style_buf, sizeof(heading_style_buf)) :
+             "";
+    if (impl->heading_open && prefix != NULL && prefix[0] != '\0') {
+        prefix = ansi_store_owned_inline_style(impl, prefix);
+        if (prefix == NULL) return -1;
+    }
+    if (ansi_emit_link_parts(impl, sink, impl->inline_text, impl->inline_text_len, impl->inline_url, impl->inline_url_len, prefix) != 0) return -1;
+    if (impl->inline_emph_count > 0) {
+        impl->inline_mode = 5;
+        impl->inline_emph_streaming = 2;
+    } else {
+        impl->inline_mode = 0;
+    }
     impl->inline_text_len = 0;
     impl->inline_url_len = 0;
     return 0;
@@ -5497,9 +5576,35 @@ static const char *ansi_inline_emphasis_prefix(mdf_impl *impl, int continuation,
 {
     const char *prefix;
 
-    if (impl->inline_emph_nested_delim != 0 && impl->inline_emph_count == 2) {
+    if (impl->inline_emph_nested_delim != 0 &&
+        impl->inline_emph_nested_count > 0) {
+        prefix = ansi_inline_nested_emphasis_style(impl,
+                                                  impl->inline_emph_nested_count,
+                                                  buf,
+                                                  buf_cap);
+    } else if (impl->inline_emph_nested_delim != 0 &&
+        impl->inline_emph_nested_count == 0 &&
+        impl->inline_emph_count == 2) {
         prefix = mdf_theme_emphasis_strong(impl);
     } else if (impl->inline_emph_count <= 1) {
+        prefix = mdf_theme_emphasis(impl);
+    } else if (impl->inline_emph_count == 2) {
+        prefix = mdf_theme_strong(impl);
+    } else {
+        prefix = mdf_theme_emphasis_strong(impl);
+    }
+    if (impl->heading_open) {
+        return continuation ? ansi_heading_inline_suffix(impl, prefix) :
+                              ansi_heading_inline_style(impl, impl->heading_level, prefix, buf, buf_cap);
+    }
+    return prefix;
+}
+
+static const char *ansi_inline_outer_emphasis_prefix(mdf_impl *impl, int continuation, char *buf, size_t buf_cap)
+{
+    const char *prefix;
+
+    if (impl->inline_emph_count <= 1) {
         prefix = mdf_theme_emphasis(impl);
     } else if (impl->inline_emph_count == 2) {
         prefix = mdf_theme_strong(impl);
@@ -5524,6 +5629,9 @@ void ansi_inline_clear_emphasis_state(mdf_impl *impl)
     impl->inline_emph_streaming = 0;
     impl->inline_emph_skip_spaces = 0;
     impl->inline_emph_nested_delim = 0;
+    impl->inline_emph_nested_count = 0;
+    impl->inline_emph_nested_close_count = 0;
+    impl->inline_emph_nested_saw_space = 0;
     impl->ansi_pending_final_emph_style = NULL;
     impl->ansi_pending_final_emph_suffix = 0;
     impl->ansi_pending_final_emph_word_suffix = 0;
@@ -5627,8 +5735,269 @@ int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int 
     return 0;
 }
 
+static int ansi_inline_flush_unmatched_nested_emphasis(mdf_impl *impl, mdf_sink *sink)
+{
+    int i;
+
+    if (impl->inline_emph_nested_delim != 0 &&
+        impl->inline_emph_nested_count == 0 &&
+        impl->inline_emph_nested_close_count < 0) {
+        impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
+        return 0;
+    }
+    if (impl->inline_emph_nested_delim != 0 &&
+        impl->inline_emph_nested_count == 0 &&
+        impl->inline_emph_nested_close_count > 0) {
+        while (impl->inline_emph_nested_close_count > 0) {
+            if (ansi_write_visible_char(impl, sink, impl->inline_emph_nested_delim) != 0) return -1;
+            impl->inline_emph_nested_close_count--;
+        }
+        impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_saw_space = 0;
+        return 0;
+    }
+    if (impl->inline_emph_nested_delim == 0 || impl->inline_emph_nested_count <= 0) {
+        return 0;
+    }
+    if (impl->inline_emph_nested_saw_space && impl->ansi_word_len > 0) {
+        size_t old_len;
+
+        old_len = impl->ansi_word_len;
+        for (i = 0; i < impl->inline_emph_nested_count; i++) {
+            if (ansi_inline_append(impl,
+                                   &impl->ansi_word,
+                                   &impl->ansi_word_len,
+                                   &impl->ansi_word_cap,
+                                   &impl->inline_emph_nested_delim,
+                                   1) != 0) {
+                return -1;
+            }
+        }
+        memmove(impl->ansi_word + impl->inline_emph_nested_count,
+                impl->ansi_word,
+                old_len);
+        for (i = 0; i < impl->inline_emph_nested_count; i++) {
+            impl->ansi_word[i] = impl->inline_emph_nested_delim;
+        }
+        impl->ansi_word_len = old_len + (size_t)impl->inline_emph_nested_count;
+        impl->ansi_word_cols += impl->inline_emph_nested_count;
+        impl->inline_emph_len = 0;
+        impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_count = 0;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
+        impl->inline_emph_streaming = 2;
+        return 0;
+    }
+    if (impl->ansi_word_len > 0) {
+        size_t extra;
+        size_t old_len;
+
+        extra = (size_t)(impl->inline_emph_nested_count + impl->inline_emph_nested_close_count);
+        old_len = impl->ansi_word_len;
+        for (i = 0; i < (int)extra; i++) {
+            if (ansi_inline_append(impl,
+                                   &impl->ansi_word,
+                                   &impl->ansi_word_len,
+                                   &impl->ansi_word_cap,
+                                   &impl->inline_emph_nested_delim,
+                                   1) != 0) {
+                return -1;
+            }
+        }
+        memmove(impl->ansi_word + impl->inline_emph_nested_count,
+                impl->ansi_word,
+                old_len);
+        for (i = 0; i < impl->inline_emph_nested_count; i++) {
+            impl->ansi_word[i] = impl->inline_emph_nested_delim;
+        }
+        impl->ansi_word_len = old_len + extra;
+        impl->ansi_word_cols += (int)extra;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_len = 0;
+        impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
+        impl->inline_emph_streaming = 2;
+        return 0;
+    }
+    for (i = 0; i < impl->inline_emph_nested_count; i++) {
+        if (ansi_write_visible_char(impl, sink, impl->inline_emph_nested_delim) != 0) return -1;
+    }
+    if (impl->inline_emph_len > 0 &&
+        ansi_write_visible(impl, sink, impl->inline_emph, impl->inline_emph_len) != 0) {
+        return -1;
+    }
+    for (i = 0; i < impl->inline_emph_nested_close_count; i++) {
+        if (ansi_write_visible_char(impl, sink, impl->inline_emph_nested_delim) != 0) return -1;
+    }
+    impl->inline_emph_len = 0;
+    impl->inline_emph_nested_delim = 0;
+    impl->inline_emph_nested_count = 0;
+    impl->inline_emph_nested_close_count = 0;
+    impl->inline_emph_nested_saw_space = 0;
+    impl->inline_emph_streaming = 2;
+    return 0;
+}
+
+static int ansi_inline_pop_pending_word_backslash(mdf_impl *impl)
+{
+    if (impl->ansi_word_len == 0 || impl->ansi_word[impl->ansi_word_len - 1] != '\\') {
+        return 0;
+    }
+    impl->ansi_word_len--;
+    if (impl->ansi_word_cols > 0) {
+        impl->ansi_word_cols--;
+    }
+    impl->ansi_prev_char = impl->ansi_word_len > 0 ? impl->ansi_word[impl->ansi_word_len - 1] : 0;
+    return 1;
+}
+
+static int ansi_inline_prev_emphasis_char_is_alnum(mdf_impl *impl)
+{
+    char c;
+
+    if (impl->inline_emph_nested_delim != 0 &&
+        impl->inline_emph_nested_count > 0 &&
+        impl->inline_emph_len > 0) {
+        c = impl->inline_emph[impl->inline_emph_len - 1];
+        return isalnum((unsigned char)c) != 0;
+    }
+    if (impl->inline_emph_streaming < 2 && impl->inline_emph_len > 0) {
+        c = impl->inline_emph[impl->inline_emph_len - 1];
+    } else if (impl->ansi_word_len > 0) {
+        c = impl->ansi_word[impl->ansi_word_len - 1];
+    } else if (impl->ansi_pending_space || impl->inline_emph_skip_spaces) {
+        return 0;
+    } else {
+        c = impl->ansi_prev_char;
+    }
+    return isalnum((unsigned char)c) != 0;
+}
+
+static int ansi_inline_underscore_is_intraword(mdf_impl *impl, const char *src, size_t i, size_t len)
+{
+    size_t run;
+
+    if (!ansi_inline_prev_emphasis_char_is_alnum(impl)) {
+        return 0;
+    }
+    run = 0;
+    while (i + run < len && src[i + run] == '_') {
+        run++;
+    }
+    if (i + run >= len) {
+        return 1;
+    }
+    return isalnum((unsigned char)src[i + run]) != 0;
+}
+
 int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char c)
 {
+    if (impl->inline_emph_nested_delim != 0 && impl->inline_emph_nested_count > 0) {
+        if (c == ' ' || c == '\t' || c == '\n') {
+            char space;
+
+            impl->inline_emph_nested_saw_space = 1;
+            space = ' ';
+            if (ansi_inline_append(impl,
+                                   &impl->ansi_word,
+                                   &impl->ansi_word_len,
+                                   &impl->ansi_word_cap,
+                                   &space,
+                                   1) != 0) {
+                return -1;
+            }
+            impl->ansi_word_cols++;
+            impl->ansi_prev_char = space;
+            return 0;
+        }
+        if (c == impl->inline_emph_nested_delim &&
+            impl->ansi_word_len > 0 &&
+            impl->ansi_word[impl->ansi_word_len - 1] == '\\' &&
+            impl->inline_emph_nested_close_count == 0) {
+            impl->ansi_word_len--;
+            if (impl->ansi_word_cols > 0) {
+                impl->ansi_word_cols--;
+            }
+            return ansi_write_visible_char(impl, sink, c);
+        }
+        if (c == impl->inline_emph_nested_delim &&
+            impl->ansi_word_len == 0 &&
+            impl->ansi_prev_char == 0 &&
+            impl->inline_emph_nested_close_count == 0 &&
+            impl->inline_emph_nested_count < 3) {
+            impl->inline_emph_nested_count++;
+            if (!impl->opts.boring) {
+                const char *nested_style;
+                char nested_style_buf[160];
+
+                nested_style = ansi_inline_emphasis_prefix(impl,
+                                                           0,
+                                                           nested_style_buf,
+                                                           sizeof(nested_style_buf));
+                if (impl->heading_open) {
+                    nested_style = ansi_store_owned_inline_style(impl, nested_style);
+                    if (nested_style == NULL) return -1;
+                }
+                impl->ansi_pending_inline_style = nested_style;
+                impl->ansi_active_inline_style = NULL;
+                impl->ansi_pending_style_reset = 1;
+            }
+            return 0;
+        }
+        if (c == '_' &&
+            c == impl->inline_emph_nested_delim &&
+            impl->inline_emph_nested_close_count == 0 &&
+            (impl->ansi_word_len > 0 || impl->ansi_prev_char != 0)) {
+            impl->inline_emph_nested_close_count++;
+            return 0;
+        }
+        if (c == impl->inline_emph_nested_delim) {
+            impl->inline_emph_nested_close_count++;
+            if (impl->inline_emph_nested_close_count >= impl->inline_emph_nested_count) {
+                const char *closed_style;
+                const char *outer_style;
+                char outer_style_buf[160];
+
+                closed_style = NULL;
+                outer_style = NULL;
+                if (ansi_flush_word(impl, sink) != 0) return -1;
+                if (!impl->opts.boring) {
+                    closed_style = ansi_inline_nested_emphasis_style(impl,
+                                                                     impl->inline_emph_nested_count,
+                                                                     NULL,
+                                                                     0);
+                }
+                impl->inline_emph_nested_delim = c;
+                impl->inline_emph_nested_count = 0;
+                impl->inline_emph_nested_close_count = -1;
+                impl->inline_emph_nested_saw_space = 0;
+                if (!impl->opts.boring) {
+                    outer_style = ansi_inline_outer_emphasis_prefix(impl,
+                                                                    0,
+                                                                    outer_style_buf,
+                                                                    sizeof(outer_style_buf));
+                    if (impl->heading_open) {
+                        outer_style = ansi_store_owned_inline_style(impl, outer_style);
+                        if (outer_style == NULL) return -1;
+                    }
+                    impl->ansi_pending_inline_style = outer_style;
+                    impl->ansi_active_inline_style = NULL;
+                    if (closed_style != NULL && closed_style[0] != '\0') {
+                        impl->ansi_pending_style_reset = 1;
+                    }
+                }
+            }
+            return 0;
+        }
+        while (impl->inline_emph_nested_close_count > 0) {
+            if (ansi_write_visible_char(impl, sink, impl->inline_emph_nested_delim) != 0) return -1;
+            impl->inline_emph_nested_close_count--;
+        }
+    }
     if (impl->inline_emph_skip_spaces) {
         if (c == ' ') {
             return 0;
@@ -5640,6 +6009,112 @@ int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char
             if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 0) != 0) return -1;
             return ansi_handle_visible_space(impl, sink);
         }
+        if ((c == '*' || c == '_') &&
+            c != impl->inline_emph_delim &&
+            impl->inline_emph_count <= 3 &&
+            !(impl->inline_emph_count == 2 && impl->inline_emph_len == 0) &&
+            !(impl->inline_emph_count == 2 &&
+              impl->inline_emph_nested_delim == c &&
+              impl->inline_emph_nested_count == 0)) {
+            if (impl->inline_emph_len > 0 && impl->inline_emph[impl->inline_emph_len - 1] == '\\') {
+                impl->inline_emph_len--;
+                impl->inline_emph[impl->inline_emph_len] = '\0';
+                if (ansi_inline_append(impl, &impl->inline_emph, &impl->inline_emph_len, &impl->inline_emph_cap, &c, 1) != 0) {
+                    return -1;
+                }
+                impl->inline_emph_streaming = 1;
+                return 0;
+            }
+            if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 0) != 0) return -1;
+            if (ansi_flush_pending_space_only_for(impl, sink, 0) != 0) return -1;
+            impl->inline_emph_nested_delim = c;
+            impl->inline_emph_nested_count = 0;
+            impl->inline_emph_nested_close_count = 1;
+            impl->inline_emph_nested_saw_space = 0;
+            impl->inline_emph_len = 0;
+            impl->inline_emph_streaming = 2;
+            return 0;
+        }
+        if (ansi_inline_append(impl, &impl->inline_emph, &impl->inline_emph_len, &impl->inline_emph_cap, &c, 1) != 0) {
+            return -1;
+        }
+        impl->inline_emph_streaming = 1;
+        return 0;
+    }
+    if (c == impl->inline_emph_delim &&
+        impl->inline_emph_count > 1 &&
+        impl->inline_emph_close_count > 0 &&
+        impl->inline_emph_close_count < impl->inline_emph_count &&
+        impl->ansi_word_len > (size_t)impl->inline_emph_close_count &&
+        impl->ansi_word[0] == c) {
+        int opener_count;
+        const char *nested_style;
+        char nested_style_buf[160];
+
+        opener_count = impl->inline_emph_close_count;
+        memmove(impl->ansi_word,
+                impl->ansi_word + opener_count,
+                impl->ansi_word_len - (size_t)opener_count);
+        impl->ansi_word_len -= (size_t)opener_count;
+        if (impl->ansi_word_cols >= (size_t)opener_count) {
+            impl->ansi_word_cols -= (size_t)opener_count;
+        }
+        impl->inline_emph_close_count = 0;
+        impl->inline_emph_nested_delim = c;
+        impl->inline_emph_nested_count = opener_count;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
+        if (!impl->opts.boring) {
+            nested_style = ansi_inline_emphasis_prefix(impl,
+                                                       0,
+                                                       nested_style_buf,
+                                                       sizeof(nested_style_buf));
+            if (impl->heading_open) {
+                nested_style = ansi_store_owned_inline_style(impl, nested_style);
+                if (nested_style == NULL) return -1;
+            }
+            impl->ansi_pending_inline_style = nested_style;
+            impl->ansi_active_inline_style = NULL;
+            impl->ansi_pending_style_reset = 1;
+        }
+        return ansi_inline_emit_streamed_emphasis_char(impl, sink, c);
+    }
+    if ((c == '*' || c == '_') &&
+        c != impl->inline_emph_delim &&
+        impl->inline_emph_count <= 3 &&
+        !(impl->inline_emph_count == 2 &&
+          impl->inline_emph_nested_delim == c &&
+          impl->inline_emph_nested_count == 0)) {
+        if (ansi_inline_pop_pending_word_backslash(impl)) {
+            return ansi_write_visible_char(impl, sink, c);
+        }
+        if (ansi_flush_word(impl, sink) != 0) return -1;
+        if (ansi_flush_pending_space_only_for(impl, sink, 0) != 0) return -1;
+        impl->inline_emph_nested_delim = c;
+        impl->inline_emph_nested_count = 0;
+        impl->inline_emph_nested_close_count = 1;
+        impl->inline_emph_nested_saw_space = 0;
+        impl->inline_emph_len = 0;
+        return 0;
+    }
+    return ansi_write_visible_char(impl, sink, c);
+}
+
+static int ansi_inline_emit_streamed_emphasis_literal_char(mdf_impl *impl, mdf_sink *sink, char c)
+{
+    if (impl->inline_emph_nested_delim != 0 && impl->inline_emph_nested_count > 0) {
+        while (impl->inline_emph_nested_close_count > 0) {
+            if (ansi_write_visible_char(impl, sink, impl->inline_emph_nested_delim) != 0) {
+                return -1;
+            }
+            impl->inline_emph_nested_close_count--;
+        }
+        return ansi_write_visible_char(impl, sink, c);
+    }
+    if (impl->inline_emph_skip_spaces) {
+        impl->inline_emph_skip_spaces = 0;
+    }
+    if (impl->inline_emph_streaming < 2) {
         if (ansi_inline_append(impl, &impl->inline_emph, &impl->inline_emph_len, &impl->inline_emph_cap, &c, 1) != 0) {
             return -1;
         }
@@ -5689,11 +6164,17 @@ static int ansi_inline_close_streamed_emphasis(mdf_impl *impl, mdf_sink *sink)
         impl->inline_emph_pending = 0;
         impl->inline_emph_after_word = 0;
         impl->inline_emph_streaming = 0;
+        impl->inline_emph_nested_delim = 0;
+        impl->inline_emph_nested_count = 0;
+        impl->inline_emph_nested_close_count = 0;
+        impl->inline_emph_nested_saw_space = 0;
         impl->ansi_pending_attached_style = NULL;
         impl->ansi_pending_style_reset_after_word = 0;
         impl->ansi_pending_final_emph_style = prefix;
         impl->ansi_pending_final_emph_suffix = 0;
         impl->ansi_pending_final_emph_word_suffix = 0;
+        impl->ansi_pending_final_emph_base_len = 0;
+        impl->ansi_pending_final_emph_base_cols = 0;
         return 0;
     }
     if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 1) != 0) return -1;
@@ -5710,6 +6191,57 @@ static int ansi_inline_close_streamed_emphasis(mdf_impl *impl, mdf_sink *sink)
     }
     ansi_inline_clear_emphasis_state(impl);
     return 0;
+}
+
+static int ansi_inline_handle_streamed_emphasis_delim(mdf_impl *impl, mdf_sink *sink)
+{
+    if (impl->inline_emph_close_count < 0) {
+        impl->inline_emph_close_count = 0;
+    }
+    if (!impl->inline_emph_streaming &&
+        impl->inline_emph_len == 0 &&
+        impl->inline_emph_close_count == 0 &&
+        impl->inline_emph_count < 3) {
+        impl->inline_emph_count++;
+    } else {
+        impl->inline_emph_close_count++;
+        if (impl->inline_emph_close_count == impl->inline_emph_count &&
+            !(impl->inline_emph_streaming >= 2 &&
+              impl->ansi_pending_space &&
+              impl->ansi_word_len == 0)) {
+            if (ansi_inline_close_streamed_emphasis(impl, sink) != 0) return -1;
+        }
+    }
+    return 0;
+}
+
+static const char *ansi_inline_nested_emphasis_style(mdf_impl *impl, int nested_count, char *buf, size_t buf_cap)
+{
+    int has_emphasis;
+    int has_strong;
+    const char *style;
+
+    if ((impl->inline_emph_count == 1 && nested_count == 1) ||
+        (impl->inline_emph_count == 2 && nested_count == 2)) {
+        return impl->heading_open ? ansi_heading_style(impl, impl->heading_level) : "";
+    }
+    has_emphasis = impl->inline_emph_count == 1 || impl->inline_emph_count >= 3 ||
+                   nested_count == 1 || nested_count >= 3;
+    has_strong = impl->inline_emph_count >= 2 || nested_count >= 2;
+    if (has_emphasis && has_strong) {
+        style = mdf_theme_emphasis_strong(impl);
+    } else if (has_strong) {
+        style = mdf_theme_strong(impl);
+    } else {
+        style = mdf_theme_emphasis(impl);
+    }
+    if (impl->heading_open && buf == NULL) {
+        return ansi_heading_inline_suffix(impl, style);
+    }
+    if (impl->heading_open) {
+        return ansi_heading_inline_style(impl, impl->heading_level, style, buf, buf_cap);
+    }
+    return style;
 }
 
 static int markdown_escapable_char(char c)
@@ -5902,6 +6434,9 @@ static void ansi_begin_inline_emphasis(mdf_impl *impl, char delim)
     impl->inline_emph_after_word = impl->ansi_word_len > 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_nested_delim = 0;
+    impl->inline_emph_nested_count = 0;
+    impl->inline_emph_nested_close_count = 0;
+    impl->inline_emph_nested_saw_space = 0;
 }
 
 static void ansi_begin_inline_entity(mdf_impl *impl)
@@ -6100,7 +6635,9 @@ reprocess_inline_char:
                 ansi_begin_inline_link_text(impl, 0);
             } else if (c == '`') {
                 ansi_begin_inline_code_open(impl);
-            } else if (c == '_' && ascii_is_alnum_char(impl->ansi_prev_char)) {
+            } else if (c == '_' &&
+                       (!impl->ansi_pending_space || impl->ansi_word_len > 0) &&
+                       ascii_is_alnum_char(impl->ansi_prev_char)) {
                 if (ansi_write_visible_nbsp(impl, sink) != 0) {
                     return -1;
                 }
@@ -6202,18 +6739,237 @@ reprocess_inline_char:
             }
             break;
         case 5:
+ansi_case5_reprocess:
+            if (impl->inline_emph_nested_delim != 0 &&
+                impl->inline_emph_nested_count == 0 &&
+                impl->inline_emph_nested_close_count < 0) {
+                if (c == impl->inline_emph_nested_delim &&
+                    c != impl->inline_emph_delim) {
+                    break;
+                }
+                impl->inline_emph_nested_delim = 0;
+                impl->inline_emph_nested_close_count = 0;
+                impl->inline_emph_nested_saw_space = 0;
+                goto ansi_case5_reprocess;
+            }
+            if (impl->inline_emph_nested_delim != 0 &&
+                impl->inline_emph_nested_count == 0 &&
+                impl->inline_emph_nested_close_count > 0) {
+                if (c == impl->inline_emph_nested_delim &&
+                    impl->inline_emph_nested_close_count < 3) {
+                    impl->inline_emph_nested_close_count++;
+                    break;
+                }
+                if (c == ' ' || c == '\t' || c == '\n') {
+                    while (impl->inline_emph_nested_close_count > 0) {
+                        if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, impl->inline_emph_nested_delim) != 0) return -1;
+                        impl->inline_emph_nested_close_count--;
+                    }
+                    impl->inline_emph_nested_delim = 0;
+                    impl->inline_emph_nested_saw_space = 0;
+                    goto ansi_case5_reprocess;
+                }
+                impl->inline_emph_nested_count = impl->inline_emph_nested_close_count;
+                impl->inline_emph_nested_close_count = 0;
+                impl->inline_emph_nested_saw_space = 0;
+                impl->ansi_prev_char = 0;
+                if (!impl->opts.boring) {
+                    const char *nested_style;
+                    char nested_style_buf[160];
+
+                    nested_style = ansi_inline_emphasis_prefix(impl,
+                                                               0,
+                                                               nested_style_buf,
+                                                               sizeof(nested_style_buf));
+                    if (impl->heading_open) {
+                        nested_style = ansi_store_owned_inline_style(impl, nested_style);
+                        if (nested_style == NULL) return -1;
+                    }
+                    impl->ansi_pending_inline_style = nested_style;
+                    impl->ansi_active_inline_style = NULL;
+                    impl->ansi_pending_style_reset = 1;
+                }
+                goto ansi_case5_reprocess;
+            }
+            if (impl->inline_emph_close_count >= impl->inline_emph_count &&
+                c != impl->inline_emph_delim) {
+                if (impl->inline_emph_close_count > impl->inline_emph_count ||
+                    (impl->inline_emph_streaming >= 2 &&
+                     impl->ansi_pending_space &&
+                     impl->ansi_word_len == 0)) {
+                    const char *nested_style;
+                    char nested_style_buf[160];
+
+                    if (ansi_flush_word(impl, sink) != 0) return -1;
+                    if (ansi_flush_pending_space_only_for(impl, sink, 0) != 0) return -1;
+                    impl->inline_emph_nested_delim = impl->inline_emph_delim;
+                    impl->inline_emph_nested_count = impl->inline_emph_close_count;
+                    impl->inline_emph_nested_close_count = 0;
+                    impl->inline_emph_nested_saw_space = 0;
+                    impl->inline_emph_close_count = 0;
+                    impl->inline_emph_len = 0;
+                    if (!impl->opts.boring) {
+                        nested_style = ansi_inline_emphasis_prefix(impl,
+                                                                   0,
+                                                                   nested_style_buf,
+                                                                   sizeof(nested_style_buf));
+                        if (impl->heading_open) {
+                            nested_style = ansi_store_owned_inline_style(impl, nested_style);
+                            if (nested_style == NULL) return -1;
+                        }
+                        impl->ansi_pending_inline_style = nested_style;
+                        impl->ansi_active_inline_style = NULL;
+                        impl->ansi_pending_style_reset = 1;
+                    }
+                    goto ansi_case5_reprocess;
+                }
+                if (ansi_inline_close_streamed_emphasis(impl, sink) != 0) return -1;
+                goto reprocess_inline_char;
+            }
+            if (impl->inline_emph_nested_delim == 0 &&
+                impl->inline_emph_close_count > 0 &&
+                impl->inline_emph_close_count <= impl->inline_emph_count &&
+                c != impl->inline_emph_delim &&
+                c != ' ' &&
+                c != '\t' &&
+                c != '\n') {
+                const char *nested_style;
+                char nested_style_buf[160];
+
+                if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 0) != 0) return -1;
+                if (ansi_flush_word(impl, sink) != 0) return -1;
+                if (ansi_flush_pending_space_only_for(impl, sink, 0) != 0) return -1;
+                impl->inline_emph_nested_delim = impl->inline_emph_delim;
+                impl->inline_emph_nested_count = impl->inline_emph_close_count;
+                impl->inline_emph_nested_close_count = 0;
+                impl->inline_emph_nested_saw_space = 0;
+                impl->inline_emph_close_count = 0;
+                if (!impl->opts.boring) {
+                    nested_style = ansi_inline_emphasis_prefix(impl,
+                                                               0,
+                                                               nested_style_buf,
+                                                               sizeof(nested_style_buf));
+                    if (impl->heading_open) {
+                        nested_style = ansi_store_owned_inline_style(impl, nested_style);
+                        if (nested_style == NULL) return -1;
+                    }
+                    impl->ansi_pending_inline_style = nested_style;
+                    impl->ansi_active_inline_style = NULL;
+                    impl->ansi_pending_style_reset = 1;
+                }
+                goto ansi_case5_reprocess;
+            }
+            if (impl->inline_emph_nested_delim != 0 && impl->inline_emph_nested_count > 0) {
+                if (markdown_escapable_char(c) && ansi_inline_pop_pending_word_backslash(impl)) {
+                    if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
+                    if (ansi_write_visible_char(impl, sink, c) != 0) return -1;
+                    break;
+                } else if (impl->inline_emph_nested_close_count == impl->inline_emph_nested_count &&
+                    c != impl->inline_emph_nested_delim &&
+                    !isalnum((unsigned char)c)) {
+                    const char *closed_style;
+                    const char *outer_style;
+                    char outer_style_buf[160];
+
+                    closed_style = NULL;
+                    outer_style = NULL;
+                    if (ansi_flush_word(impl, sink) != 0) return -1;
+                    if (!impl->opts.boring) {
+                        closed_style = ansi_inline_nested_emphasis_style(impl,
+                                                                         impl->inline_emph_nested_count,
+                                                                         NULL,
+                                                                         0);
+                    }
+                    impl->inline_emph_nested_delim = 0;
+                    impl->inline_emph_nested_count = 0;
+                    impl->inline_emph_nested_close_count = 0;
+                    impl->inline_emph_nested_saw_space = 0;
+                    if (!impl->opts.boring) {
+                        outer_style = ansi_inline_outer_emphasis_prefix(impl,
+                                                                        0,
+                                                                        outer_style_buf,
+                                                                        sizeof(outer_style_buf));
+                        if (impl->heading_open) {
+                            outer_style = ansi_store_owned_inline_style(impl, outer_style);
+                            if (outer_style == NULL) return -1;
+                        }
+                        impl->ansi_pending_inline_style = outer_style;
+                        impl->ansi_active_inline_style = NULL;
+                        if (closed_style != NULL && closed_style[0] != '\0') {
+                            impl->ansi_pending_style_reset = 1;
+                        }
+                    }
+                    goto ansi_case5_reprocess;
+                } else if (c == impl->inline_emph_nested_delim) {
+                    char nested_delim;
+
+                    nested_delim = c;
+                    if (ansi_inline_emit_streamed_emphasis_char(impl, sink, c) != 0) return -1;
+                    if (impl->inline_emph_nested_delim == 0) {
+                        while (i + 1 < len && src[i + 1] == nested_delim) {
+                            i++;
+                        }
+                    }
+                    break;
+                } else if (c == impl->inline_emph_delim) {
+                    if (ansi_inline_flush_unmatched_nested_emphasis(impl, sink) != 0) return -1;
+                    if (ansi_inline_handle_streamed_emphasis_delim(impl, sink) != 0) return -1;
+                    break;
+                }
+            }
+            if (markdown_escapable_char(c) && ansi_inline_pop_pending_word_backslash(impl)) {
+                if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
+                if (ansi_write_visible_char(impl, sink, c) != 0) return -1;
+                break;
+            }
             if (c == impl->inline_emph_delim) {
-                if (!impl->inline_emph_streaming &&
-                    impl->inline_emph_len == 0 &&
-                    impl->inline_emph_close_count == 0 &&
-                    impl->inline_emph_count < 3) {
-                    impl->inline_emph_count++;
-                } else {
-                    impl->inline_emph_close_count++;
-                    if (impl->inline_emph_close_count == impl->inline_emph_count) {
-                        if (ansi_inline_close_streamed_emphasis(impl, sink) != 0) return -1;
+                if (ansi_inline_handle_streamed_emphasis_delim(impl, sink) != 0) return -1;
+            } else if ((c == '*' || c == '_') &&
+                       c != impl->inline_emph_delim &&
+                       impl->inline_emph_count <= 3 &&
+                       !(impl->inline_emph_count == 2 &&
+                         impl->inline_emph_nested_delim == c &&
+                         impl->inline_emph_nested_count == 0)) {
+                size_t word_i;
+
+                if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
+                if (i + 1 < len && (src[i + 1] == ' ' || src[i + 1] == '\t' || src[i + 1] == '\n')) {
+                    if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                    break;
+                }
+                if (impl->inline_emph_streaming < 2) {
+                    for (word_i = 0; word_i < impl->inline_emph_len; word_i++) {
+                        if (impl->inline_emph[word_i] == c) {
+                            if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                            break;
+                        }
+                    }
+                    if (word_i < impl->inline_emph_len) {
+                        break;
                     }
                 }
+                for (word_i = 0; word_i < impl->ansi_word_len; word_i++) {
+                    if (impl->ansi_word[word_i] == c) {
+                        if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                        break;
+                    }
+                }
+                if (word_i < impl->ansi_word_len) {
+                    break;
+                }
+                if (c == '_' && ansi_inline_underscore_is_intraword(impl, src, i, len)) {
+                    if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                    while (i + 1 < len && src[i + 1] == '_') {
+                        i++;
+                        if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                    }
+                    break;
+                }
+                if (c != '_' && ansi_inline_underscore_is_intraword(impl, src, i, len)) {
+                    if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
+                    break;
+                }
+                if (ansi_inline_emit_streamed_emphasis_char(impl, sink, c) != 0) return -1;
             } else if (c == '[') {
                 if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
                 if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 0) != 0) return -1;
@@ -6228,7 +6984,7 @@ reprocess_inline_char:
             } else if (c == '\\' && i + 1 < len && markdown_escapable_char(src[i + 1])) {
                 c = src[++i];
                 if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
-                if (ansi_inline_emit_streamed_emphasis_char(impl, sink, c) != 0) return -1;
+                if (ansi_inline_emit_streamed_emphasis_literal_char(impl, sink, c) != 0) return -1;
             } else if (c == '\n') {
                 if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
                 if (ansi_inline_emit_streamed_emphasis_char(impl, sink, ' ') != 0) return -1;
@@ -6261,13 +7017,42 @@ reprocess_inline_char:
             break;
         case 12:
             if (c == ')') {
-                if (ansi_emit_link_parts(impl, sink,
+                const char *label_prefix;
+                const char *resume_prefix;
+                char resume_style_buf[160];
+
+                if (impl->inline_emph_nested_delim != 0 &&
+                    impl->inline_emph_nested_count > 0) {
+                    label_prefix = ansi_inline_emphasis_prefix(impl,
+                                                               1,
+                                                               resume_style_buf,
+                                                               sizeof(resume_style_buf));
+                    resume_prefix = ansi_store_owned_inline_style(
+                        impl,
+                        label_prefix);
+                    if (resume_prefix == NULL) return -1;
+                } else {
+                    label_prefix = ansi_inline_emphasis_prefix(impl, 1, NULL, 0);
+                    if (impl->heading_open) {
+                        resume_prefix = ansi_inline_emphasis_prefix(impl,
+                                                                   0,
+                                                                   resume_style_buf,
+                                                                   sizeof(resume_style_buf));
+                        resume_prefix = ansi_store_owned_inline_style(impl, resume_prefix);
+                        if (resume_prefix == NULL) return -1;
+                    } else {
+                        resume_prefix = NULL;
+                    }
+                }
+                if (ansi_emit_link_parts_ex(impl, sink,
                         impl->inline_text,
                         impl->inline_text_len,
                         impl->inline_url,
                         impl->inline_url_len,
-                        ansi_inline_emphasis_prefix(impl, 1, NULL, 0)) != 0) return -1;
+                        label_prefix,
+                        resume_prefix) != 0) return -1;
                 impl->inline_mode = 5;
+                impl->inline_emph_streaming = 2;
                 impl->inline_text_len = 0;
                 impl->inline_url_len = 0;
             } else if (c == '\\' && i + 1 < len && markdown_escapable_char(src[i + 1])) {
@@ -6437,6 +7222,9 @@ int ansi_finish_heading_end(mdf_impl *impl, mdf_sink *sink)
     if (!impl->opts.boring) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     }
+    impl->ansi_active_inline_style = NULL;
+    impl->ansi_pending_inline_style = NULL;
+    impl->ansi_pending_style_reset = 0;
     if (!impl->quote_open) {
         ansi_raise_pending_breaks(impl, 1);
     }

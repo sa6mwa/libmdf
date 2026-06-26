@@ -64,10 +64,15 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_pending_emit_valid = 0;
     impl->ansi_pending_autolink_emit_valid = 0;
     impl->ansi_pending_fallback_emit_valid = 0;
+    impl->ansi_owned_inline_style[0] = '\0';
     impl->inline_emph_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, inline_emph_count, inline_emph_after_word);
     impl->inline_emph_streaming = 0;
+    impl->inline_emph_skip_spaces = 0;
     impl->inline_emph_nested_delim = 0;
+    impl->inline_emph_nested_count = 0;
+    impl->inline_emph_nested_close_count = 0;
+    impl->inline_emph_nested_saw_space = 0;
     impl->inline_entity_len = 0;
     impl->inline_html_nbsp_pending = 0;
     impl->inline_html_nbsp_prev_digit = 0;

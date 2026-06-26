@@ -106,6 +106,7 @@ typedef struct mdf_impl {
     size_t ansi_pending_final_emph_base_cols;
     const char *ansi_active_inline_style;
     const char *ansi_pending_inline_style;
+    char ansi_owned_inline_style[160];
     int ansi_line_has_space;
     char ansi_prev_char;
     int ansi_punct_quote_pending;
@@ -167,6 +168,9 @@ typedef struct mdf_impl {
     int inline_emph_streaming;
     int inline_emph_skip_spaces;
     char inline_emph_nested_delim;
+    int inline_emph_nested_count;
+    int inline_emph_nested_close_count;
+    int inline_emph_nested_saw_space;
     char *inline_entity;
     size_t inline_entity_len;
     size_t inline_entity_cap;

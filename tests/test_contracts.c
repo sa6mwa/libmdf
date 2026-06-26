@@ -209,6 +209,19 @@ static int expect_trace_matches_writes(const capture *cap, const char *msg)
     return 0;
 }
 
+static int expect_output_equals(const capture *cap, const char *expected, const char *msg)
+{
+    if (cap->out == NULL || strcmp(cap->out, expected) != 0) {
+        fprintf(stderr,
+                "FAIL: %s: expected [%s] got [%s]\n",
+                msg,
+                expected,
+                cap->out == NULL ? "" : cap->out);
+        return 1;
+    }
+    return 0;
+}
+
 static int record_contains(const record *rec, const char *needle)
 {
     size_t needle_len;
@@ -553,6 +566,516 @@ static int test_html_link_safety_contract(void)
     return fails;
 }
 
+static int test_ansi_nested_emphasis_edge_contract(void)
+{
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo_bar*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi unmatched nested underscore writes match traces");
+    fails += expect_contains(cap.out, "foo_bar", "ansi unmatched nested underscore preserves tail");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo*bar_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested star render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi unmatched nested star writes match traces");
+    fails += expect_contains(cap.out, "foo*bar", "ansi unmatched nested star preserves tail");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo \\_bar_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped nested delimiter render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped nested delimiter writes match traces");
+    fails += expect_contains(cap.out, "foo _bar_ baz", "ansi escaped nested delimiter remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_)*\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped delimiter in pending emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped delimiter in pending emphasis writes match traces");
+    fails += expect_contains(cap.out, "_)", "ansi escaped delimiter in pending emphasis consumes escape");
+    fails += expect_not_contains(cap.out, "\\_)", "ansi escaped delimiter in pending emphasis does not expose backslash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_)*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi chunked escaped delimiter in pending emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi chunked escaped delimiter in pending emphasis writes match traces");
+    fails += expect_contains(cap.out, "_)", "ansi chunked escaped delimiter in pending emphasis consumes escape");
+    fails += expect_not_contains(cap.out, "\\_)", "ansi chunked escaped delimiter in pending emphasis does not expose backslash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_foo*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped leading underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped leading underscore writes match traces");
+    fails += expect_contains(cap.out, "_foo", "ansi escaped leading underscore consumes escape");
+    fails += expect_not_contains(cap.out, "\\_foo", "ansi escaped leading underscore does not expose backslash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*a\\_*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped trailing underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped trailing underscore writes match traces");
+    fails += expect_contains(cap.out, "a_", "ansi escaped trailing underscore consumes escape");
+    fails += expect_not_contains(cap.out, "a\\_", "ansi escaped trailing underscore does not expose backslash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo_bar_baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi intraword underscore writes match traces");
+    fails += expect_contains(cap.out, "foo_bar_baz", "ansi intraword underscore remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*a b_c_d b*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi spaced intraword underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi spaced intraword underscore writes match traces");
+    fails += expect_contains(cap.out, "a b_c_d b", "ansi spaced intraword underscore remains literal");
+    fails += expect_not_contains(cap.out, "bc_d", "ansi spaced intraword underscore does not drop delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo___bar___baz*\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword underscore run render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi intraword underscore run writes match traces");
+    fails += expect_contains(cap.out, "foo___bar___baz", "ansi intraword underscore run remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword nested underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi intraword nested underscore writes match traces");
+    fails += expect_contains(cap.out, "foo _bar_baz", "ansi intraword nested underscore remains literal");
+    fails += expect_not_contains(cap.out, "barbaz", "ansi intraword nested underscore does not drop delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested underscore across words render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi unmatched nested underscore across words writes match traces");
+    fails += expect_contains(cap.out, "foo _bar baz", "ansi unmatched nested underscore across words preserves opener");
+    fails += expect_not_contains(cap.out, "foo bar _baz", "ansi unmatched nested underscore across words does not move delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _ bar_*\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nonflanking nested underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nonflanking nested underscore writes match traces");
+    fails += expect_contains(cap.out, "foo _ bar_", "ansi nonflanking nested underscore remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo * bar*_\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nonflanking nested star render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nonflanking nested star writes match traces");
+    fails += expect_contains(cap.out, "foo * bar*", "ansi nonflanking nested star remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi pending nested underscore eof render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi pending nested underscore eof writes match traces");
+    fails += expect_contains(cap.out, "foo _", "ansi pending nested underscore eof remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo *\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi pending nested star eof render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi pending nested star eof writes match traces");
+    fails += expect_contains(cap.out, "foo *", "ansi pending nested star eof remains literal");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested underscore after space render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nested underscore after space writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi nested underscore after space is parsed");
+    fails += expect_not_contains(cap.out, "_bar_", "ansi nested underscore after space removes delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar__ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested underscore close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi longer nested underscore close writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi longer nested underscore close is parsed");
+    fails += expect_not_contains(cap.out, "bar__", "ansi longer nested underscore close consumes delimiter run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo __bar___ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested strong underscore close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi longer nested strong underscore close writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi longer nested strong underscore close is parsed");
+    fails += expect_not_contains(cap.out, "bar_", "ansi longer nested strong underscore close consumes delimiter run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo *bar** baz_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested star close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi longer nested star close writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi longer nested star close is parsed");
+    fails += expect_not_contains(cap.out, "bar*", "ansi longer nested star close consumes delimiter run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo **bar*** baz_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested strong star close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi longer nested strong star close writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi longer nested strong star close is parsed");
+    fails += expect_not_contains(cap.out, "bar*", "ansi longer nested strong star close consumes delimiter run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar \\* baz_* qux\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped star inside nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped star inside nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "foo bar * baz qux", "ansi escaped star inside nested emphasis remains visible");
+    fails += expect_not_contains(cap.out, "_\\", "ansi escaped star inside nested emphasis does not leak delimiter state");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar \\[baz\\]_ qux*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped brackets inside nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped brackets inside nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "foo bar [baz] qux", "ansi escaped brackets inside nested emphasis remain visible");
+    fails += expect_not_contains(cap.out, "\\[", "ansi escaped brackets inside nested emphasis do not leak backslash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_*(_\\*__ ]\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed nested close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi malformed nested close writes match traces");
+    fails += expect_contains(cap.out, "*(__", "ansi malformed nested close preserves visible content");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 7;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested underscore wrapped render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nested underscore wrapped writes match traces");
+    fails += expect_contains(cap.out, "foo bar\nbaz", "ansi nested underscore wraps without trailing space");
+    fails += expect_not_contains(cap.out, "bar \nbaz", "ansi nested underscore does not emit trailing wrapped space");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_ baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis inside strong render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nested emphasis inside strong writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi nested emphasis inside strong is parsed");
+    fails += expect_not_contains(cap.out, "_bar_", "ansi nested emphasis inside strong removes delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo *bar* baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-delimiter nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-delimiter nested emphasis writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-delimiter nested emphasis preserves pending text");
+    fails += expect_not_contains(cap.out, "*bar*", "ansi same-delimiter nested emphasis removes delimiters");
+    fails += expect_not_contains(cap.out, "baz*", "ansi same-delimiter nested emphasis consumes outer close");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo*bar* baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi adjacent same-delimiter nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi adjacent same-delimiter nested emphasis writes match traces");
+    fails += expect_output_equals(&cap, "foobar baz\n", "ansi adjacent same-delimiter nested emphasis preserves pending text");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-marker nested emphasis writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-marker nested emphasis preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo **bar** baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer same-marker nested run render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi longer same-marker nested run writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi longer same-marker nested run preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo * bar* baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi whitespace same-marker nested span render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi whitespace same-marker nested span writes match traces");
+    fails += expect_output_equals(&cap, "foo  bar baz\n", "ansi whitespace same-marker nested span preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\nX\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis followed by text render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-marker nested emphasis followed by text writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz X\n", "ansi same-marker nested emphasis closes outer span");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis full chunk render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-marker nested emphasis full chunk writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-marker nested emphasis full chunk preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo _bar_ baz_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested underscore render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-marker nested underscore writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-marker nested underscore preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo **bar** baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested strong render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-marker nested strong writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-marker nested strong preserves spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI,
+                        &opts,
+                        "*foo *bar* baz*\n"
+                        "_foo _bar_ baz_\n"
+                        "**foo **bar** baz**\n"
+                        "__foo __bar__ baz__\n"
+                        "***foo **bar** baz***\n",
+                        1,
+                        &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi consecutive same-marker nested spans render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi consecutive same-marker nested spans writes match traces");
+    fails += expect_output_equals(&cap,
+                                  "foo bar baz foo bar baz foo bar baz foo bar baz foo bar baz\n",
+                                  "ansi consecutive same-marker nested spans preserve spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo *bar* baz**\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-delimiter nested emphasis full chunk render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi same-delimiter nested emphasis full chunk writes match traces");
+    fails += expect_output_equals(&cap, "foo bar baz\n", "ansi same-delimiter nested emphasis full chunk preserves pending text");
+    fails += expect_not_contains(cap.out, "baz*", "ansi same-delimiter nested emphasis full chunk consumes outer close");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo*bar* baz**\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi adjacent same-delimiter nested emphasis full chunk render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi adjacent same-delimiter nested emphasis full chunk writes match traces");
+    fails += expect_output_equals(&cap, "foobar baz\n", "ansi adjacent same-delimiter nested emphasis full chunk preserves pending text");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "***foo _bar_ baz***\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple outer nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi triple outer nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi triple outer nested emphasis is parsed");
+    fails += expect_not_contains(cap.out, "_bar_", "ansi triple outer nested emphasis removes delimiters");
+    fails += expect_not_contains(cap.out, "baz*", "ansi triple outer nested emphasis consumes outer close");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "***foo _bar_ baz***\n", 64, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple outer nested emphasis full chunk render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi triple outer nested emphasis full chunk writes match traces");
+    fails += expect_contains(cap.out, "foo bar baz", "ansi triple outer nested emphasis full chunk is parsed");
+    fails += expect_not_contains(cap.out, "baz*", "ansi triple outer nested emphasis full chunk consumes outer close");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_ baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested emphasis space continuation render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi nested emphasis space continuation writes match traces");
+    fails += expect_contains(cap.out,
+                             "\033[1m\033[1;37mfoo \033[0m\033[1m\033[3m\033[1;35mbar",
+                             "styled ansi nested emphasis resets before combined style");
+    fails += expect_contains(cap.out,
+                             "bar\033[0m\033[1m\033[1;37m baz",
+                             "styled ansi nested emphasis resumes outer style after space");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi same-kind nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi same-kind nested emphasis writes match traces");
+    fails += expect_contains(cap.out,
+                             "\033[3m\033[34mfoo \033[0mbar\033[3m\033[34m baz",
+                             "styled ansi same-kind nested emphasis leaves inner text unstyled");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "# *foo _bar_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi heading same-kind nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi heading same-kind nested emphasis writes match traces");
+    fails += expect_contains(cap.out,
+                             "\033[1;32m\033[3m\033[34mfoo \033[0m\033[1;32mbar\033[0m\033[1;32m\033[3m\033[34m baz",
+                             "styled ansi heading same-kind nested emphasis resumes heading and outer style");
+    fails += expect_not_contains(cap.out,
+                                 "baz\033[0m\033[0m",
+                                 "styled ansi heading same-kind nested emphasis does not double reset");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_, baz**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested emphasis punctuation continuation render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi nested emphasis punctuation continuation writes match traces");
+    fails += expect_contains(cap.out,
+                             "bar\033[0m\033[1m\033[1;37m, baz",
+                             "styled ansi nested emphasis resumes outer style after punctuation");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _[bar](https://e)_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi link inside nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi link inside nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "foo bar (https://e) baz", "ansi link inside nested emphasis emits parsed link text");
+    fails += expect_not_contains(cap.out, "[bar](https://e)", "ansi link inside nested emphasis is parsed");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _[bar](https://e)_ baz*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi link inside nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi link inside nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "\033[0m\033[4m\033[1;34mbar", "styled ansi nested link starts with link style after reset");
+    fails += expect_not_contains(cap.out, "\033[0m\033[3m\033[34m\033[4m\033[1;34mbar", "styled ansi nested link does not leak nested emphasis into link");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*[x](u)*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi emphasized link immediate close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi emphasized link immediate close writes match traces");
+    fails += expect_output_equals(&cap, "x (u)\n", "ansi emphasized link immediate close consumes delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_[x](u)_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi underscore emphasized link immediate close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi underscore emphasized link immediate close writes match traces");
+    fails += expect_output_equals(&cap, "x (u)\n", "ansi underscore emphasized link immediate close consumes delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**[x](u)**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi strong link immediate close render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi strong link immediate close writes match traces");
+    fails += expect_output_equals(&cap, "x (u)\n", "ansi strong link immediate close consumes delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "# *[x](https://e) y*\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi heading emphasized link render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi heading emphasized link writes match traces");
+    fails += expect_contains(cap.out,
+                             ")\033[1;32m\033[3m\033[34m y",
+                             "styled ansi heading emphasized link resumes owned heading style");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _[bar](https://e) baz_ qux**\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested link resumes inner emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled ansi nested link resumes inner emphasis writes match traces");
+    fails += expect_contains(cap.out, "\033[0m\033[1m\033[3m\033[1;35m\033[4m\033[1;34mbar", "styled ansi strong nested link applies nested style to label");
+    fails += expect_contains(cap.out, ")\033[1m\033[3m\033[1;35m baz", "styled ansi nested link resumes combined style after url");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "_***both***_\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi triple nested emphasis writes match traces");
+    fails += expect_contains(cap.out, "both", "ansi triple nested emphasis preserves content");
+    fails += expect_not_contains(cap.out, "*both", "ansi triple nested emphasis consumes opening delimiters");
+    fails += expect_not_contains(cap.out, "both*", "ansi triple nested emphasis consumes closing delimiters");
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_html_blockquote_nested_emphasis_contract(void)
+{
+    static const char markdown[] =
+        "> _**TL;DR:** AI has the **production executive**._\n";
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    st = render_capture(MDF_FORMAT_HTML, &opts, markdown, 3, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "html quoted nested emphasis render succeeds");
+    fails += expect_contains(cap.out, "class=\"mdf-content\"", "html quoted line has content wrapper");
+    fails += expect_not_contains(cap.out, "**TL;DR:**", "html quoted nested leading strong is parsed");
+    fails += expect_not_contains(cap.out, "**production executive**", "html quoted nested mid-line strong is parsed");
+    fails += expect_contains(cap.out,
+                             "font-weight:700;font-style:italic;\">TL;DR:",
+                             "html quoted leading strong keeps bold italic style");
+    fails += expect_contains(cap.out,
+                             "font-weight:700;font-style:italic;\">production executive",
+                             "html quoted mid-line strong keeps bold italic style");
+    capture_free(&cap);
+    return fails;
+}
+
 int main(void)
 {
     int fails;
@@ -562,5 +1085,7 @@ int main(void)
     fails += test_margin_contract();
     fails += test_table_contract();
     fails += test_html_link_safety_contract();
+    fails += test_ansi_nested_emphasis_edge_contract();
+    fails += test_html_blockquote_nested_emphasis_contract();
     return fails == 0 ? 0 : 1;
 }

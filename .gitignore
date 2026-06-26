@@ -1,6 +1,7 @@
 build/
 build-*/
 dist/
+/stash/
 VERSION
 .cache/
 compile_commands.json
