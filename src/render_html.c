@@ -480,7 +480,14 @@ int html_start(mdf_renderer *self, mdf_sink *sink)
     build_rc = 0;
     if (mdf_write_cstr(&shell_sink, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n") != 0) build_rc = -1;
     if (build_rc == 0 && mdf_write_cstr(&shell_sink, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n") != 0) build_rc = -1;
-    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "<title>mdf</title>\n<style>\n") != 0) build_rc = -1;
+    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "<title>") != 0) build_rc = -1;
+    if (build_rc == 0) {
+        const char *title;
+
+        title = impl->html_title != NULL ? impl->html_title : "mdf";
+        if (html_escape(&shell_sink, title, strlen(title)) != 0) build_rc = -1;
+    }
+    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "</title>\n<style>\n") != 0) build_rc = -1;
     if (build_rc == 0 && html_write_default_css(self, &shell_sink) != 0) build_rc = -1;
     if (build_rc == 0 && mdf_write_cstr(&shell_sink, "</style>\n</head>\n<body>\n<main class=\"mdf-document\">") != 0) build_rc = -1;
     if (build_rc != 0) {

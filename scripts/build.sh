@@ -9,4 +9,4 @@ case "$PRESET" in
   *) PROFILE=dev ;;
 esac
 "$ROOT/scripts/configure_preset.sh" "$PRESET" "$PROFILE"
-cmake --build --preset "$PRESET"
+"$ROOT/scripts/with_target_env.sh" "$PRESET" cmake --build --preset "$PRESET"

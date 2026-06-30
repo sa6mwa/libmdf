@@ -13,10 +13,11 @@ profile=$2
 shift 2
 
 common='-DLIBMDF_BUILD_STATIC=ON -DLIBMDF_BUILD_SHARED=ON'
+with_target_env="$ROOT/scripts/with_target_env.sh"
 
 case "$profile" in
   dev)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       $common \
       -DLIBMDF_BUILD_BINARY=ON \
       -DLIBMDF_BUILD_TESTS=ON \
@@ -28,7 +29,7 @@ case "$profile" in
       "$@"
     ;;
   release)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       $common \
       -DLIBMDF_BUILD_BINARY=ON \
       -DLIBMDF_BUILD_TESTS=ON \
@@ -40,7 +41,7 @@ case "$profile" in
       "$@"
     ;;
   package)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       $common \
       -DLIBMDF_BUILD_BINARY=ON \
       -DLIBMDF_BUILD_TESTS=OFF \
@@ -52,7 +53,7 @@ case "$profile" in
       "$@"
     ;;
   cmdf-static)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       -DLIBMDF_BUILD_STATIC=ON \
       -DLIBMDF_BUILD_SHARED=OFF \
       -DLIBMDF_BUILD_BINARY=ON \
@@ -65,7 +66,7 @@ case "$profile" in
       "$@"
     ;;
   lua)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       $common \
       -DLIBMDF_BUILD_BINARY=ON \
       -DLIBMDF_BUILD_TESTS=ON \
@@ -77,7 +78,7 @@ case "$profile" in
       "$@"
     ;;
   fuzz)
-    exec cmake --preset "$preset" \
+    exec "$with_target_env" "$preset" cmake --preset "$preset" \
       -DLIBMDF_BUILD_STATIC=ON \
       -DLIBMDF_BUILD_SHARED=OFF \
       -DLIBMDF_BUILD_BINARY=OFF \

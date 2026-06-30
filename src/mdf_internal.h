@@ -64,6 +64,8 @@ typedef struct mdf_impl {
     int html_open;
     int html_body_emitted;
     int html_footer_needs_newline;
+    char *html_title;
+    size_t html_title_cap;
     void *html_state;
     int quote_open;
     int quote_wrap_active;
@@ -155,6 +157,7 @@ typedef struct mdf_impl {
     size_t ansi_pending_emit_offsets_cap;
     int ansi_pending_emit_start_col;
     int ansi_pending_emit_valid;
+    int ansi_pending_emit_leading_space;
     int ansi_pending_autolink_emit_valid;
     int ansi_pending_fallback_emit_valid;
     char *inline_emph;

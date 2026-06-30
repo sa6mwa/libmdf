@@ -41,6 +41,7 @@ lib/libmdf.a
 lib/libmdf.so* or lib/libmdf.dylib*
 lib/cmake/libmdf/
 lib/pkgconfig/libmdf.pc
+share/libmdf/package-metadata.txt
 share/doc/libmdf/LICENSE
 share/doc/libmdf/README.md
 ```
@@ -196,6 +197,15 @@ Important options:
 - `allocator`, `emission_buffer`, `memory`: custom memory and emission-buffer
   control.
 
+For HTML, `mdf_set_html_title(renderer, title)` can set an optional document
+title after `mdf_create` and before rendering starts. Passing `NULL` clears the
+override; unset titles default to `mdf`. The `cmdf` front-end auto-detects the
+HTML title only from an initial ATX heading. If the first nonblank block is not
+an ATX heading, the probe stops at the byte that proves that fact, replays the
+prescanned prefix, and resumes streaming with the default `mdf` title. This
+title probe is HTML-only; ANSI rendering never collects heading text for title
+detection.
+
 Available themes can be queried with `mdf_theme_count`, `mdf_theme_name`, and
 `mdf_theme_exists`. Theme lookup is case-insensitive. The built-in set includes
 `default`, `ayu-light`, `ayu-mirage`, `catppuccin-mocha`, `dracula`,
@@ -232,6 +242,7 @@ alignment.
 ```sh
 cmdf README.md
 cmdf --html README.md -o README.html
+cmdf README.md -o README.html
 cmdf -b -w 80 --margin-left 2 --margin-right 2 README.md
 ```
 
@@ -244,6 +255,7 @@ Flags:
 -b, --boring
 -o, --output PATH
 -t, --theme NAME
+-T, --title TITLE
 -w, --width WIDTH
     --margin-left N
     --margin-right N
@@ -266,7 +278,10 @@ containing sequence number, format, byte length, and base64 data.
 
 For HTML, `cmdf` embeds JetBrains Mono woff2 data by default. The library API
 does not hardcode this font; applications can provide their own font bytes or
-callbacks through `mdf_options.html_font`.
+callbacks through `mdf_options.html_font`. `cmdf` infers HTML output from
+`.html` and `.htm` output paths when `--html` is omitted, warning before it
+renders. The HTML document title is the first ATX heading before any paragraph,
+falls back to `mdf`, and can be overridden with `--title` or `-T`.
 
 ## Lua
 
@@ -321,6 +336,7 @@ margin_left = N
 margin_right = N
 theme = NAME
 html_content_width_ch = N
+html_title = TITLE
 table_buffer_mode = "full" | "row"
 table_wire_mode = "line" | "ascii" | "space"
 write_trace = function(format, chunk) ... end
@@ -403,6 +419,16 @@ privacy/relocatability checks.
 
 Release artifacts are selected from the generated checksum manifest, not from a
 `dist/` glob.
+
+Darwin release builds use osxcross by default. Override the toolchain root with
+`OSXCROSS_ROOT` and the host prefix with `CPKT_OSXCROSS_HOST`; when unset they
+default to `$HOME/.local/cross/osxcross` and `arm64-apple-darwin25`. Package
+verification discovers target tools from explicit overrides, CMake cache
+entries, compiler siblings, osxcross target-prefixed tools, and `PATH` last.
+Darwin configure, build, and package commands prepend the osxcross `bin`
+directory to `PATH` and pass an absolute `-fuse-ld` linker path so `cmdf` and
+shared libraries do not accidentally link through a host `ld`. Darwin archives
+are verified with target-correct `otool` against the final extracted artifacts.
 
 ## License
 

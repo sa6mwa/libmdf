@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
-DIST="$ROOT/dist"
+DIST=${LIBMDF_DIST_DIR:-$ROOT/dist}
 ARCHIVE="$DIST/libmdf-lua-$VERSION.tar.gz"
 ROCKSPEC="$DIST/libmdf-$VERSION-1.rockspec"
 SRCROCK="$DIST/libmdf-$VERSION-1.src.rock"

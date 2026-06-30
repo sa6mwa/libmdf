@@ -144,6 +144,19 @@ static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name)
     return value;
 }
 
+static const char *lua_mdf_get_optional_html_title(lua_State *L, int index)
+{
+    const char *title;
+
+    if (!lua_istable(L, index)) {
+        return NULL;
+    }
+    lua_getfield(L, index, "html_title");
+    title = lua_isnil(L, -1) ? NULL : luaL_checkstring(L, -1);
+    lua_pop(L, 1);
+    return title;
+}
+
 static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lua_mdf_trace_ctx *trace_ctx)
 {
     size_t len;
@@ -354,6 +367,7 @@ static int lua_mdf_render(lua_State *L)
     lua_mdf_trace_ctx trace_ctx;
     mdf_format format;
     mdf *inst;
+    const char *html_title;
     char *out;
     mdf_status st;
 
@@ -362,8 +376,10 @@ static int lua_mdf_render(lua_State *L)
     trace_ctx.L = L;
     trace_ctx.ref = LUA_NOREF;
     format = MDF_FORMAT_ANSI;
+    html_title = NULL;
     if (lua_istable(L, 2)) {
         format = lua_mdf_format_from_options(L, 2);
+        html_title = lua_mdf_get_optional_html_title(L, 2);
         lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
     }
     inst = NULL;
@@ -373,6 +389,16 @@ static int lua_mdf_render(lua_State *L)
             luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
         }
         return luaL_error(L, "mdf_create: %s", mdf_status_string(st));
+    }
+    if (format == MDF_FORMAT_HTML && html_title != NULL) {
+        st = mdf_set_html_title(inst, html_title);
+        if (st != MDF_OK) {
+            inst->destroy(inst);
+            if (trace_ctx.ref != LUA_NOREF) {
+                luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
+            }
+            return luaL_error(L, "mdf_set_html_title: %s", mdf_status_string(st));
+        }
     }
     out = NULL;
     st = inst->render_cstr(inst, markdown, &out);
@@ -407,6 +433,7 @@ static int lua_mdf_render_stream(lua_State *L)
     mdf_sink sink;
     lua_mdf_source_ctx source_ctx;
     lua_mdf_sink_ctx sink_ctx;
+    const char *html_title;
     mdf_status st;
 
     luaL_checktype(L, 1, LUA_TFUNCTION);
@@ -415,8 +442,10 @@ static int lua_mdf_render_stream(lua_State *L)
     trace_ctx.L = L;
     trace_ctx.ref = LUA_NOREF;
     format = MDF_FORMAT_ANSI;
+    html_title = NULL;
     if (lua_istable(L, 3)) {
         format = lua_mdf_format_from_options(L, 3);
+        html_title = lua_mdf_get_optional_html_title(L, 3);
         lua_mdf_apply_options(L, 3, &opts, &trace_ctx);
     }
     lua_pushvalue(L, 1);
@@ -431,8 +460,13 @@ static int lua_mdf_render_stream(lua_State *L)
     sink.write = lua_mdf_sink_write;
     inst = NULL;
     st = mdf_create(format, &opts, &inst);
+    if (st == MDF_OK && format == MDF_FORMAT_HTML && html_title != NULL) {
+        st = mdf_set_html_title(inst, html_title);
+    }
     if (st == MDF_OK) {
         st = inst->render(inst, &source, &sink);
+    }
+    if (inst != NULL) {
         inst->destroy(inst);
     }
     luaL_unref(L, LUA_REGISTRYINDEX, source_ctx.ref);
@@ -452,10 +486,12 @@ static int lua_mdf_new(lua_State *L)
     mdf_options opts;
     mdf_format format;
     lua_mdf_handle *handle;
+    const char *html_title;
     mdf_status st;
 
     mdf_options_init(&opts);
     format = lua_mdf_format_from_options(L, 1);
+    html_title = lua_mdf_get_optional_html_title(L, 1);
     handle = (lua_mdf_handle *)lua_newuserdatauv(L, sizeof(*handle), 0);
     handle->mdf = NULL;
     handle->opts_ref = LUA_NOREF;
@@ -469,7 +505,14 @@ static int lua_mdf_new(lua_State *L)
         handle->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     }
     st = mdf_create(format, &opts, &handle->mdf);
+    if (st == MDF_OK && format == MDF_FORMAT_HTML && html_title != NULL) {
+        st = mdf_set_html_title(handle->mdf, html_title);
+    }
     if (st != MDF_OK) {
+        if (handle->mdf != NULL) {
+            handle->mdf->destroy(handle->mdf);
+            handle->mdf = NULL;
+        }
         if (handle->opts_ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
         }

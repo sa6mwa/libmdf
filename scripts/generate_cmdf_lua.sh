@@ -73,6 +73,7 @@ local function usage()
   io.stderr:write("  -b, --boring               Boring ANSI output\\n")
   io.stderr:write("  -o, --output PATH          Output file\\n")
   io.stderr:write("  -t, --theme NAME           Theme name\\n")
+  io.stderr:write("  -T, --title TITLE          HTML document title\\n")
   io.stderr:write("  -w, --width WIDTH          ANSI output width\\n")
   io.stderr:write("      --margin-left N        ANSI left margin in spaces\\n")
   io.stderr:write("      --margin-right N       ANSI right margin in spaces\\n")
@@ -87,6 +88,7 @@ end
 
 local opts = { osc8 = mdf.detect_osc8_support() }
 local input_path, output_path, trace_path, trace_file
+local format_explicit = false
 local i = 1
 while i <= #arg do
   local a = arg[i]
@@ -95,6 +97,7 @@ while i <= #arg do
     os.exit(0)
   elseif a == "-H" or a == "--html" then
     opts.html = true
+    format_explicit = true
   elseif a == "-b" or a == "--boring" then
     opts.boring = true
   elseif a == "-w" or a == "--width" then
@@ -113,6 +116,10 @@ while i <= #arg do
     i = i + 1
     opts.theme = arg[i]
     if not opts.theme then error("cmdf.lua: missing theme", 0) end
+  elseif a == "-T" or a == "--title" then
+    i = i + 1
+    opts.html_title = arg[i]
+    if opts.html_title == nil then error("cmdf.lua: missing title", 0) end
   elseif a == "-o" or a == "--output" then
     i = i + 1
     output_path = arg[i]
@@ -153,6 +160,16 @@ while i <= #arg do
   i = i + 1
 end
 
+local function has_html_extension(path)
+  if not path then return false end
+  return path:lower():match("%.html$") ~= nil or path:lower():match("%.htm$") ~= nil
+end
+
+if not format_explicit and has_html_extension(output_path) then
+  opts.html = true
+  io.stderr:write("cmdf.lua: warning: inferring --html from output path " .. output_path .. "\\n")
+end
+
 if opts.html and opts.table_wire_mode == "ascii" then
   error("cmdf.lua: --table-wire ascii is not supported with --html; use line or space", 0)
 end
@@ -191,6 +208,86 @@ else
   input_file = io.stdin
 end
 
+local pending_chunks = {}
+local pending_index = 1
+local pending_offset = 1
+
+local function trim_detected_title(s)
+  s = s:gsub("^[ \\t]+", "")
+  while true do
+    local trimmed = s:gsub("[ \\t]+$", "")
+    local without_closer = trimmed:gsub("[ \\t]#+$", "")
+    if without_closer == trimmed then
+      return trimmed
+    end
+    s = without_closer
+  end
+end
+
+local function read_title_prescan_byte(line)
+  local ch = input_file:read(1)
+  if ch == nil then return nil end
+  pending_chunks[#pending_chunks + 1] = ch
+  line[#line + 1] = ch
+  return ch
+end
+
+local function detect_html_title_from_line(line)
+  line = line:gsub("[\\r\\n]+$", "")
+  local pos = 1
+  local spaces = 0
+  while spaces < 4 and line:sub(pos, pos) == " " do
+    pos = pos + 1
+    spaces = spaces + 1
+  end
+  local hash_end = pos
+  while hash_end <= #line and line:sub(hash_end, hash_end) == "#" do
+    hash_end = hash_end + 1
+  end
+  return trim_detected_title(line:sub(hash_end))
+end
+
+local function detect_html_title_from_stream()
+  while true do
+    local line = {}
+    local spaces = 0
+    local saw_tab = false
+    while true do
+      local ch = read_title_prescan_byte(line)
+      if ch == nil then return nil end
+      if ch == "\\n" then
+        break
+      elseif ch == "\\r" then
+        -- CR before LF does not make a blank line nonblank.
+      elseif ch == "\\t" then
+        saw_tab = true
+      elseif ch == " " then
+        spaces = spaces + 1
+      elseif not saw_tab and spaces < 4 and ch == "#" then
+        local hash_count = 1
+        repeat
+          ch = read_title_prescan_byte(line)
+          if ch == "#" then hash_count = hash_count + 1 end
+        until ch ~= "#"
+        if hash_count >= 1 and hash_count <= 6 and
+            (ch == nil or ch == "\\n" or ch == "\\r" or ch == " " or ch == "\\t") then
+          while ch ~= nil and ch ~= "\\n" do
+            ch = read_title_prescan_byte(line)
+          end
+          return detect_html_title_from_line(table.concat(line))
+        end
+        return nil
+      else
+        return nil
+      end
+    end
+  end
+end
+
+if opts.html and opts.html_title == nil then
+  opts.html_title = detect_html_title_from_stream()
+end
+
 local output_file
 if output_path then
   output_file = assert(io.open(output_path, "wb"))
@@ -201,6 +298,15 @@ end
 local function read_chunk(cap)
   local n = cap
   if n == nil or n <= 0 or n > 4096 then n = 4096 end
+  if pending_index <= #pending_chunks then
+    local chunk = pending_chunks[pending_index]:sub(pending_offset, pending_offset + n - 1)
+    pending_offset = pending_offset + #chunk
+    if pending_offset > #pending_chunks[pending_index] then
+      pending_index = pending_index + 1
+      pending_offset = 1
+    end
+    if chunk ~= "" then return chunk end
+  end
   local chunk = input_file:read(n)
   if chunk == "" then return nil end
   return chunk

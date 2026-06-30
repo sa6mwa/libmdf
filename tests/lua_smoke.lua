@@ -17,6 +17,14 @@ local function run_capture(cmd, input)
   return out
 end
 
+local function run_stdin_capture(cmd, input)
+  local p = assert(io.popen("printf %s " .. shell_quote(input) .. " | " .. cmd, "r"))
+  local out = p:read("*a")
+  local ok = p:close()
+  assert(ok, cmd)
+  return out
+end
+
 local function run_capture_with_trace(cmd, input)
   local input_path = os.tmpname()
   local trace_path = os.tmpname()
@@ -81,6 +89,8 @@ do
   f:close()
   assert(generated:match("mdf%.render_stream%("), "cmdf.lua uses streaming render API")
   assert(not generated:match('read%("%*a"%)'), "cmdf.lua must not materialize full input")
+  assert(not generated:match('read%("L"%)'), "cmdf.lua title detection must not wait for full non-ATX lines")
+  assert(generated:match("input_file:read%(1%)"), "cmdf.lua title detection uses byte-level decision reads")
   assert(not generated:match("mdf%.render%("), "cmdf.lua must not materialize full output")
 end
 
@@ -91,6 +101,13 @@ assert(out:match("body"), out)
 local lua_ansi = mdf.render(sample, parity_opts)
 local cmdf_ansi = run_capture(shell_quote(cmdf) .. " -b", sample)
 assert_equal(lua_ansi, cmdf_ansi, "lua facade ansi parity")
+
+local cmdf_lua_html_stdin = run_stdin_capture(shell_quote(cmdf_lua) .. " --html", "# Pipe Lua\n\nbody\n")
+assert(cmdf_lua_html_stdin:match("<title>Pipe Lua</title>"), "cmdf.lua stdin html auto-title uses first ATX heading")
+
+local cmdf_lua_html_tab_blank = run_stdin_capture(shell_quote(cmdf_lua) .. " --html", "\t\n# Tab Pipe Lua\n\nbody\n")
+assert(cmdf_lua_html_tab_blank:match("<title>Tab Pipe Lua</title>"),
+       "cmdf.lua stdin html auto-title ignores tab-only leading blank lines")
 
 local stream_ansi = collect_stream(sample, parity_opts, 1)
 assert_equal(stream_ansi, cmdf_ansi, "lua streaming ansi parity")

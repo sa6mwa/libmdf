@@ -149,6 +149,7 @@ struct mdf {
 
 void mdf_options_init(mdf_options *opts);
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
+mdf_status mdf_set_html_title(mdf *self, const char *title);
 const char *mdf_status_string(mdf_status status);
 size_t mdf_theme_count(void);
 const char *mdf_theme_name(size_t index);

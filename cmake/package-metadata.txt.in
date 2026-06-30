@@ -1,0 +1,9 @@
+name=libmdf
+version=@PROJECT_VERSION@
+target_id=@LIBMDF_TARGET_ID@
+target_arch=@LIBMDF_TARGET_ARCH@
+target_os=@LIBMDF_TARGET_OS@
+target_libc=@LIBMDF_TARGET_LIBC@
+cmake_package=lib/cmake/libmdf/libmdfConfig.cmake
+pkg_config=lib/pkgconfig/libmdf.pc
+license=share/doc/libmdf/LICENSE

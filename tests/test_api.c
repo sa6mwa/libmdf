@@ -1697,6 +1697,38 @@ int main(void)
     out = NULL;
     renderer->destroy(renderer);
     renderer = NULL;
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "html title renderer create");
+    st = mdf_set_html_title(renderer, "Manual & <Title>");
+    fails += expect(st == MDF_OK, "html title setter succeeds before rendering");
+    st = mdf_set_html_title(renderer, NULL);
+    fails += expect(st == MDF_OK, "html title setter clears title before rendering");
+    st = mdf_set_html_title(renderer, "Manual & <Title>");
+    fails += expect(st == MDF_OK, "html title setter resets title before rendering");
+    st = renderer->render_cstr(renderer, "Body.\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<title>Manual &amp; &lt;Title&gt;</title>") != NULL,
+                    "library html title setter is escaped into the document shell");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = mdf_set_html_title(renderer, "Second Title");
+    fails += expect(st == MDF_OK, "html title setter retitles reusable renderer after render");
+    st = renderer->render_cstr(renderer, "Second body.\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<title>Second Title</title>") != NULL,
+                    "library html reusable renderer uses retitled title");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = mdf_set_html_title(renderer, NULL);
+    fails += expect(st == MDF_OK, "html title setter clears reusable renderer after render");
+    st = renderer->render_cstr(renderer, "Default body.\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<title>mdf</title>") != NULL,
+                    "library html reusable renderer uses default title after clear");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    renderer->destroy(renderer);
+    renderer = NULL;
     opts.html_font.family = "Example Mono";
     opts.html_font.regular.format = MDF_HTML_FONT_FORMAT_WOFF2;
     opts.html_font.regular.data = test_font;

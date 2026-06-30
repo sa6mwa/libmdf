@@ -5,13 +5,28 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
 TARGETS=${LIBMDF_TARGETS:-"x86_64-linux-gnu x86_64-linux-musl aarch64-linux-gnu aarch64-linux-musl armhf-linux-gnu armhf-linux-musl arm64-apple-darwin"}
 mkdir -p "$ROOT/dist"
-rm -f "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz "$ROOT"/dist/cmdf-"$VERSION"-*.tar.gz "$ROOT/dist/libmdf-$VERSION-CHECKSUMS"
+rm -f \
+  "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz \
+  "$ROOT"/dist/cmdf-"$VERSION"-*.tar.gz \
+  "$ROOT"/dist/libmdf-lua-"$VERSION".tar.gz \
+  "$ROOT"/dist/libmdf-"$VERSION"-1.rockspec \
+  "$ROOT"/dist/libmdf-"$VERSION"-1.src.rock \
+  "$ROOT/dist/libmdf-$VERSION-CHECKSUMS"
+find "$ROOT/dist" -maxdepth 1 -type f \( \
+  -name 'libmdf-*.tar.gz' -o \
+  -name 'cmdf-*.tar.gz' -o \
+  -name 'libmdf-lua-*.tar.gz' -o \
+  -name 'libmdf-*-1.rockspec' -o \
+  -name 'libmdf-*-1.src.rock' -o \
+  -name 'libmdf-*-CHECKSUMS' \
+\) ! \( \
+  -name "libmdf-$VERSION.tar.gz" \
+\) -exec rm -f {} +
 
 strip_tool_for_preset() {
-  cache="$ROOT/build/$1/CMakeCache.txt"
-  if [ -f "$cache" ]; then
-    sed -n 's/^CMAKE_STRIP:FILEPATH=//p' "$cache" | sed -n '1p'
-  fi
+  preset=$1
+  target=${preset%-release}
+  "$ROOT/scripts/discover_target_tools.sh" --root "$ROOT" --target "$target" --preset "$preset" strip 2>/dev/null || true
 }
 
 strip_release_file() {
@@ -51,10 +66,17 @@ for target in $TARGETS; do
   rm -rf "$lib_root"
   rm -f "$ROOT/build/$preset/cmdf"
   "$ROOT/scripts/configure_preset.sh" "$preset" package -DCMAKE_INSTALL_PREFIX="$install"
-  cmake --build --preset "$preset"
+  "$ROOT/scripts/with_target_env.sh" "$preset" cmake --build --preset "$preset"
   test -x "$ROOT/build/$preset/cmdf"
-  cmake --install "$ROOT/build/$preset"
-  strip_tool=$(strip_tool_for_preset "$preset")
+  "$ROOT/scripts/with_target_env.sh" "$preset" cmake --install "$ROOT/build/$preset"
+  case "$target" in
+    *-apple-darwin)
+      strip_tool=
+      ;;
+    *)
+      strip_tool=$(strip_tool_for_preset "$preset")
+      ;;
+  esac
   strip_release_tree "$strip_tool" "$install"
   tar -C "$lib_root" -czf "$ROOT/dist/$lib_name.tar.gz" "$lib_name"
   rm -rf "$cmdf_root"

@@ -54,6 +54,17 @@ run_case() {
         -table-buffers full \
         -table-wires line
       ;;
+    ansi_inline_code_punctuation)
+      "$JUDGE" -mode ansi -compare-libmdf \
+        -suite "$ROOT/tests/parity-inline-code-regressions" \
+        -chunks "1 4096" \
+        -widths 80 \
+        -themes all \
+        -borings false \
+        -osc8s false \
+        -table-buffers full \
+        -table-wires line
+      ;;
     html_regressions)
       "$JUDGE" -mode html -compare-libmdf \
         -suite "$ROOT/testdata/parity-html-regressions" \
@@ -79,5 +90,6 @@ else
   run_case ansi_table_boring
   run_case ansi_table_row_trace
   run_case ansi_regressions
+  run_case ansi_inline_code_punctuation
   run_case html_regressions
 fi

@@ -3,27 +3,13 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
-MANIFEST="$ROOT/dist/libmdf-$VERSION-CHECKSUMS"
+DIST=${LIBMDF_DIST_DIR:-$ROOT/dist}
+MANIFEST="$DIST/libmdf-$VERSION-CHECKSUMS"
 
 find_darwin_tool() {
-  name=$1
-  if command -v "$name" >/dev/null 2>&1; then
-    command -v "$name"
-    return 0
-  fi
-  for cache in $(find "$ROOT/build" -name CMakeCache.txt -type f 2>/dev/null); do
-    for key in CMAKE_C_COMPILER CMAKE_STRIP CMAKE_INSTALL_NAME_TOOL CMAKE_OTOOL; do
-      tool=$(sed -n "s/^$key:FILEPATH=//p" "$cache" | sed -n '1p')
-      if [ -n "$tool" ]; then
-        dir=$(dirname "$tool")
-        if [ -x "$dir/$name" ]; then
-          printf '%s\n' "$dir/$name"
-          return 0
-        fi
-      fi
-    done
-  done
-  return 1
+  target=$1
+  name=$2
+  "$ROOT/scripts/discover_target_tools.sh" --root "$ROOT" --target "$target" --preset "$target-release" "$name"
 }
 
 verify_cmdf_static() {
@@ -46,20 +32,27 @@ verify_cmdf_static() {
       fi
       ;;
     *-apple-darwin)
-      otool=$(find_darwin_tool otool || true)
-      if [ -n "$otool" ] && "$otool" -L "$cmdf" > "$dyn" 2>/dev/null; then
-        if grep -q 'libmdf' "$dyn"; then
+      otool=$(find_darwin_tool "$target" otool || true)
+      if [ -z "$otool" ]; then
+        printf '%s\n' "$cmdf is a Darwin release binary but no target-correct otool was found" >&2
+        exit 1
+      fi
+      if "$otool" -L "$cmdf" > "$dyn" 2>/dev/null; then
+        if sed '1d' "$dyn" | grep -q 'libmdf'; then
           printf '%s\n' "$cmdf links project shared libmdf; cmdf must embed libmdf statically" >&2
           exit 1
         fi
+      else
+        printf '%s\n' "$otool could not inspect $cmdf" >&2
+        exit 1
       fi
       ;;
   esac
 }
 
 test -f "$MANIFEST"
-(cd "$ROOT/dist" && sha256sum -c "$(basename "$MANIFEST")")
-for artifact in "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz; do
+(cd "$DIST" && sha256sum -c "$(basename "$MANIFEST")")
+for artifact in "$DIST"/libmdf-"$VERSION"-*.tar.gz; do
   case "$artifact" in
     *CHECKSUMS*) continue ;;
   esac
@@ -71,11 +64,35 @@ for artifact in "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz; do
   test "$roots" -eq 1
   root=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
   test "$(basename "$artifact" .tar.gz)" = "$(basename "$root")"
+  target=$(basename "$artifact" .tar.gz)
+  target=${target#libmdf-$VERSION-}
   test -d "$root/include"
   test -d "$root/lib"
+  test -f "$root/lib/pkgconfig/libmdf.pc"
+  test -f "$root/lib/cmake/libmdf/libmdfConfig.cmake"
+  test -f "$root/lib/cmake/libmdf/libmdfConfigVersion.cmake"
+  test -f "$root/share/libmdf/package-metadata.txt"
   test -f "$root/share/doc/libmdf/LICENSE"
   test ! -e "$root/bin/cmdf"
   test ! -f "$root/share/doc/libmdf/OFL.txt"
+  grep -q "^Name: libmdf$" "$root/lib/pkgconfig/libmdf.pc"
+  grep -q "^Version: $VERSION$" "$root/lib/pkgconfig/libmdf.pc"
+  grep -q '^prefix=${pcfiledir}/../..' "$root/lib/pkgconfig/libmdf.pc"
+  grep -q "^name=libmdf$" "$root/share/libmdf/package-metadata.txt"
+  grep -q "^version=$VERSION$" "$root/share/libmdf/package-metadata.txt"
+  grep -q "^target_id=$target$" "$root/share/libmdf/package-metadata.txt"
+  case "$target" in
+    *-linux-*)
+      grep -q '^target_os=linux$' "$root/share/libmdf/package-metadata.txt"
+      ;;
+    *-apple-darwin)
+      grep -q '^target_os=darwin$' "$root/share/libmdf/package-metadata.txt"
+      ;;
+  esac
+  if grep -R -a -F -e "$ROOT" -e "${HOME:-/dev/null}" "$root/lib/pkgconfig" "$root/lib/cmake" "$root/share/libmdf" >/dev/null 2>&1; then
+    printf '%s\n' "$artifact contains local paths in package metadata" >&2
+    exit 1
+  fi
   if find "$root" -name '*.inc' -print -quit | grep -q .; then
     printf '%s\n' "$artifact contains .inc files" >&2
     exit 1
@@ -89,7 +106,7 @@ for artifact in "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz; do
     exit 1
   fi
 done
-for artifact in "$ROOT"/dist/cmdf-"$VERSION"-*.tar.gz; do
+for artifact in "$DIST"/cmdf-"$VERSION"-*.tar.gz; do
   tmp="$ROOT/build/package-verify"
   rm -rf "$tmp"
   mkdir -p "$tmp"
@@ -124,7 +141,7 @@ for artifact in "$ROOT"/dist/cmdf-"$VERSION"-*.tar.gz; do
     exit 1
   fi
 done
-if [ -f "$ROOT/dist/libmdf-$VERSION-1.src.rock" ] || [ -f "$ROOT/dist/libmdf-lua-$VERSION.tar.gz" ]; then
-  "$ROOT/scripts/verify_lua_artifacts.sh"
+if [ -f "$DIST/libmdf-$VERSION-1.src.rock" ] || [ -f "$DIST/libmdf-lua-$VERSION.tar.gz" ]; then
+  LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_lua_artifacts.sh"
 fi
-"$ROOT/scripts/verify_release_privacy.sh"
+LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh"

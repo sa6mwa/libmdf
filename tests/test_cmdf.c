@@ -165,6 +165,68 @@ static int run_cmdf(char *const argv[], run_result *out)
     return 0;
 }
 
+static int run_cmdf_stderr(char *const argv[], run_result *out)
+{
+    int pipefd[2];
+    pid_t pid;
+    char chunk[256];
+    ssize_t n;
+    long started;
+    long finished;
+    size_t cap;
+    int status;
+    int null_fd;
+
+    memset(out, 0, sizeof(*out));
+    if (pipe(pipefd) != 0) {
+        return -1;
+    }
+    started = now_ms();
+    pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(pipefd[0]);
+        null_fd = open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            dup2(null_fd, STDOUT_FILENO);
+            close(null_fd);
+        }
+        if (dup2(pipefd[1], STDERR_FILENO) < 0) {
+            _exit(127);
+        }
+        close(pipefd[1]);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    cap = 0;
+    while ((n = read(pipefd[0], chunk, sizeof(chunk))) != 0) {
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(pipefd[0]);
+            return -1;
+        }
+        if (grow_buf(&out->buf, &out->len, &cap, chunk, (size_t)n) != 0) {
+            close(pipefd[0]);
+            return -1;
+        }
+    }
+    close(pipefd[0]);
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    finished = now_ms();
+    out->status = status;
+    out->elapsed_ms = finished - started;
+    return 0;
+}
+
 static int run_cmdf_first_chunk(char *const argv[], run_result *out, char **first_chunk_out, long *first_ms_out)
 {
     int pipefd[2];
@@ -260,6 +322,151 @@ static int run_cmdf_first_chunk(char *const argv[], run_result *out, char **firs
         }
     }
     close(pipefd[0]);
+    if (waitpid(pid, &status, 0) < 0) {
+        free(first_chunk);
+        return -1;
+    }
+    finished = now_ms();
+    out->status = status;
+    out->elapsed_ms = finished - started;
+    *first_chunk_out = first_chunk;
+    *first_ms_out = first_ms;
+    return 0;
+}
+
+static int run_cmdf_stdin_first_chunk(char *const argv[],
+                                      const char *prefix,
+                                      const char *suffix,
+                                      run_result *out,
+                                      char **first_chunk_out,
+                                      long *first_ms_out)
+{
+    int stdout_pipe[2];
+    int stdin_pipe[2];
+    pid_t pid;
+    fd_set rfds;
+    struct timeval tv;
+    char chunk[256];
+    ssize_t n;
+    long started;
+    long first_ms;
+    long finished;
+    size_t cap;
+    int status;
+    int saw_first;
+    char *first_chunk;
+    size_t first_len;
+    size_t first_cap;
+
+    memset(out, 0, sizeof(*out));
+    *first_chunk_out = NULL;
+    *first_ms_out = -1;
+    if (pipe(stdout_pipe) != 0) {
+        return -1;
+    }
+    if (pipe(stdin_pipe) != 0) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        return -1;
+    }
+    started = now_ms();
+    pid = fork();
+    if (pid < 0) {
+        close(stdout_pipe[0]);
+        close(stdout_pipe[1]);
+        close(stdin_pipe[0]);
+        close(stdin_pipe[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(stdout_pipe[0]);
+        close(stdin_pipe[1]);
+        if (dup2(stdout_pipe[1], STDOUT_FILENO) < 0 ||
+            dup2(stdin_pipe[0], STDIN_FILENO) < 0) {
+            _exit(127);
+        }
+        close(stdout_pipe[1]);
+        close(stdin_pipe[0]);
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    close(stdout_pipe[1]);
+    close(stdin_pipe[0]);
+    if (write_all(stdin_pipe[1], prefix, strlen(prefix)) != 0) {
+        close(stdout_pipe[0]);
+        close(stdin_pipe[1]);
+        return -1;
+    }
+    cap = 0;
+    first_ms = -1;
+    saw_first = 0;
+    first_chunk = NULL;
+    first_len = 0;
+    first_cap = 0;
+    for (;;) {
+        FD_ZERO(&rfds);
+        FD_SET(stdout_pipe[0], &rfds);
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        status = select(stdout_pipe[0] + 1, &rfds, NULL, NULL, &tv);
+        if (status < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(stdout_pipe[0]);
+            close(stdin_pipe[1]);
+            free(first_chunk);
+            return -1;
+        }
+        if (status == 0) {
+            close(stdout_pipe[0]);
+            close(stdin_pipe[1]);
+            free(first_chunk);
+            errno = ETIMEDOUT;
+            return -1;
+        }
+        n = read(stdout_pipe[0], chunk, sizeof(chunk));
+        if (n <= 0) {
+            close(stdout_pipe[0]);
+            close(stdin_pipe[1]);
+            free(first_chunk);
+            errno = n == 0 ? EPIPE : errno;
+            return -1;
+        }
+        first_ms = now_ms() - started;
+        saw_first = 1;
+        if (grow_buf(&first_chunk, &first_len, &first_cap, chunk, (size_t)n) != 0 ||
+            grow_buf(&out->buf, &out->len, &cap, chunk, (size_t)n) != 0) {
+            close(stdout_pipe[0]);
+            close(stdin_pipe[1]);
+            free(first_chunk);
+            return -1;
+        }
+        break;
+    }
+    if (saw_first && write_all(stdin_pipe[1], suffix, strlen(suffix)) != 0) {
+        close(stdout_pipe[0]);
+        close(stdin_pipe[1]);
+        free(first_chunk);
+        return -1;
+    }
+    close(stdin_pipe[1]);
+    while ((n = read(stdout_pipe[0], chunk, sizeof(chunk))) != 0) {
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            close(stdout_pipe[0]);
+            free(first_chunk);
+            return -1;
+        }
+        if (grow_buf(&out->buf, &out->len, &cap, chunk, (size_t)n) != 0) {
+            close(stdout_pipe[0]);
+            free(first_chunk);
+            return -1;
+        }
+    }
+    close(stdout_pipe[0]);
     if (waitpid(pid, &status, 0) < 0) {
         free(first_chunk);
         return -1;
@@ -596,9 +803,16 @@ static int expect(int cond, const char *msg)
 int main(int argc, char **argv)
 {
     char input_path[64];
+    char output_path[96];
+    char output_path_2[96];
     char *ascii_html_args[8];
     char *chunk_args[8];
     char *implicit_args[7];
+    char *infer_html_args[6];
+    char *html_title_args[8];
+    char *html_title_stdin_args[5];
+    char *html_autotitle_stdin_args[3];
+    char *html_paragraph_title_args[5];
     char *html_trace_args[8];
     char *html_stream_args[8];
     char *theme_args[8];
@@ -608,6 +822,7 @@ int main(int argc, char **argv)
     long first_ms;
     char *trace_args[8];
     char *trace;
+    char *html_text;
     run_result result;
     int fails;
 
@@ -741,6 +956,188 @@ int main(int argc, char **argv)
     fails += expect(first_ms >= 0 && first_ms + 20L < result.elapsed_ms,
                     "cmdf html emits before process completion under simulate delay");
     free(first_chunk);
+    free(result.buf);
+
+    html_title_stdin_args[0] = argv[1];
+    html_title_stdin_args[1] = "--html";
+    html_title_stdin_args[2] = "-T";
+    html_title_stdin_args[3] = "Pipe Title";
+    html_title_stdin_args[4] = NULL;
+    first_chunk = NULL;
+    first_ms = -1;
+    if (run_cmdf_stdin_first_chunk(html_title_stdin_args,
+                                   "unfinished paragraph",
+                                   "\n\n# Later Heading\n",
+                                   &result,
+                                   &first_chunk,
+                                   &first_ms) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf html stdin title stream probe: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html stdin title override exits successfully");
+    fails += expect(first_chunk != NULL && strstr(first_chunk, "<title>Pipe Title</title>") != NULL,
+                    "cmdf html stdin title override emits shell before completed input");
+    fails += expect(first_ms >= 0 && first_ms < 1500L,
+                    "cmdf html stdin title override does not wait for a heading");
+    free(first_chunk);
+    free(result.buf);
+
+    html_autotitle_stdin_args[0] = argv[1];
+    html_autotitle_stdin_args[1] = "--html";
+    html_autotitle_stdin_args[2] = NULL;
+    first_chunk = NULL;
+    first_ms = -1;
+    if (run_cmdf_stdin_first_chunk(html_autotitle_stdin_args,
+                                   "unfinished paragraph",
+                                   "\n\n# Later Heading\n",
+                                   &result,
+                                   &first_chunk,
+                                   &first_ms) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf html stdin autotitle skip stream probe: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html stdin autotitle skip exits successfully");
+    fails += expect(first_chunk != NULL && strstr(first_chunk, "<title>mdf</title>") != NULL,
+                    "cmdf html stdin autotitle skip emits default shell before completed input");
+    fails += expect(first_ms >= 0 && first_ms < 1500L,
+                    "cmdf html stdin autotitle skip does not wait for paragraph newline");
+    fails += expect(result.buf != NULL && strstr(result.buf, "unfinished paragraph") != NULL,
+                    "cmdf html stdin autotitle skip replays prescanned paragraph prefix");
+    free(first_chunk);
+    free(result.buf);
+
+    snprintf(output_path, sizeof(output_path), "/tmp/libmdf-cmdf-%ld.html", (long)getpid());
+    snprintf(output_path_2, sizeof(output_path_2), "/tmp/libmdf-cmdf-%ld-2.html", (long)getpid());
+    unlink(output_path);
+    unlink(output_path_2);
+    infer_html_args[0] = argv[1];
+    infer_html_args[1] = "-o";
+    infer_html_args[2] = output_path;
+    infer_html_args[3] = input_path;
+    infer_html_args[4] = NULL;
+    if (run_cmdf_stderr(infer_html_args, &result) != 0) {
+        unlink(input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf inferred html: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf inferred html run exits successfully");
+    fails += expect(result.buf != NULL && strstr(result.buf, "warning") != NULL &&
+                    strstr(result.buf, "--html") != NULL,
+                    "cmdf warns when inferring html output from extension");
+    free(result.buf);
+    html_text = NULL;
+    if (read_file_text(output_path, &html_text) != 0) {
+        unlink(input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "read inferred html output: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(strstr(html_text, "<!doctype html>") != NULL,
+                    "cmdf inferred .html output renders html");
+    fails += expect(strstr(html_text, "<title>Demo</title>") != NULL,
+                    "cmdf inferred html title uses first heading without marker");
+    free(html_text);
+
+    html_title_args[0] = argv[1];
+    html_title_args[1] = "--html";
+    html_title_args[2] = "-T";
+    html_title_args[3] = "Manual & <Title>";
+    html_title_args[4] = "-o";
+    html_title_args[5] = output_path_2;
+    html_title_args[6] = input_path;
+    html_title_args[7] = NULL;
+    if (run_cmdf(html_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf html title override: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html title override exits successfully");
+    free(result.buf);
+    html_text = NULL;
+    if (read_file_text(output_path_2, &html_text) != 0) {
+        unlink(input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "read html title override output: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(strstr(html_text, "<title>Manual &amp; &lt;Title&gt;</title>") != NULL,
+                    "cmdf html title override is escaped");
+    free(html_text);
+    unlink(output_path);
+    unlink(output_path_2);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "\t\n# Tab Title\n\nbody\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            return 1;
+        }
+    }
+    html_paragraph_title_args[0] = argv[1];
+    html_paragraph_title_args[1] = "--html";
+    html_paragraph_title_args[2] = input_path;
+    html_paragraph_title_args[3] = NULL;
+    if (run_cmdf(html_paragraph_title_args, &result) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf tab-blank-before-title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html tab-blank-before-heading exits successfully");
+    fails += expect(result.buf != NULL && strstr(result.buf, "<title>Tab Title</title>") != NULL,
+                    "cmdf html title ignores tab-only leading blank lines");
+    free(result.buf);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "intro paragraph\n\n# Later Heading\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            return 1;
+        }
+    }
+    html_paragraph_title_args[0] = argv[1];
+    html_paragraph_title_args[1] = "--html";
+    html_paragraph_title_args[2] = input_path;
+    html_paragraph_title_args[3] = NULL;
+    if (run_cmdf(html_paragraph_title_args, &result) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf paragraph-before-title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html paragraph-before-heading exits successfully");
+    fails += expect(result.buf != NULL && strstr(result.buf, "<title>mdf</title>") != NULL,
+                    "cmdf html title defaults when a paragraph precedes the first heading");
     free(result.buf);
 
     bad_delay_args[0] = argv[1];

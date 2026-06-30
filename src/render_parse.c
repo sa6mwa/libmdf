@@ -3001,6 +3001,8 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
     size_t quote_text_style_len;
     table_wire_chars chars;
     int space_wire;
+    char combo_styles[2][128];
+    int combo_style_idx;
 
     if (table_render_prefix(impl, sink, indent_prefix, quote_content_indent, quote_prefix) != 0) return -1;
     wire_style = mdf_theme_table_wire(impl);
@@ -3013,6 +3015,7 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
     space_wire = impl->opts.table_wire_mode == MDF_TABLE_WIRE_SPACE;
     current_style = NULL;
     current_len = 0;
+    combo_style_idx = 0;
     for (i = 0; i < cols; i++) {
         table_text_line *line;
         size_t j;
@@ -3061,7 +3064,6 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
             for (j = 0; j < line->piece_count; j++) {
                 const char *style;
                 size_t style_len;
-                char combo[128];
 
                 style = line->pieces[j].style;
                 style_len = line->pieces[j].style_len;
@@ -3070,12 +3072,13 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
                     style = "";
                     style_len = 0;
                 } else if (header && style_len > 0) {
-                    if (header_style_len + style_len >= sizeof(combo)) {
+                    if (header_style_len + style_len >= sizeof(combo_styles[0])) {
                         return -1;
                     }
-                    memcpy(combo, header_style, header_style_len);
-                    memcpy(combo + header_style_len, style, style_len);
-                    style = combo;
+                    combo_style_idx = 1 - combo_style_idx;
+                    memcpy(combo_styles[combo_style_idx], header_style, header_style_len);
+                    memcpy(combo_styles[combo_style_idx] + header_style_len, style, style_len);
+                    style = combo_styles[combo_style_idx];
                     style_len += header_style_len;
                 } else if (header && style_len == 0) {
                     style = header_style;

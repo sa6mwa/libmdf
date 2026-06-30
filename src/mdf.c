@@ -613,6 +613,7 @@ static void mdf_impl_release_heap_state(mdf_impl *impl)
     mdf_free_mem(allocator, impl->inline_entity, impl->inline_entity_cap);
     mdf_free_mem(allocator, impl->ansi_word, impl->ansi_word_cap);
     mdf_free_mem(allocator, impl->pre_code_buf, impl->pre_code_cap);
+    mdf_free_mem(allocator, impl->html_title, impl->html_title_cap);
     if (impl->emit_owns_buf && impl->emit_buf != NULL && impl->emit_workspace_owned) {
         mdf_free_mem(allocator, impl->emit_buf, impl->emit_cap);
     } else if (impl->emit_owns_buf && impl->emit_buf != NULL) {
@@ -815,6 +816,42 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     mdf_bind_receiver_methods(r);
     r->impl = impl;
     *out = r;
+    return MDF_OK;
+}
+
+mdf_status mdf_set_html_title(mdf *self, const char *title)
+{
+    mdf_impl *impl;
+    char *next;
+    size_t len;
+    size_t cap;
+
+    if (self == NULL || self->impl == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_impl *)self->impl;
+    if (impl->format != MDF_FORMAT_HTML) {
+        return MDF_ERROR_INVALID;
+    }
+    if (title == NULL) {
+        mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
+        impl->html_title = NULL;
+        impl->html_title_cap = 0;
+        return MDF_OK;
+    }
+    len = strlen(title);
+    if (len + 1 < len) {
+        return MDF_ERROR_NOMEM;
+    }
+    cap = len + 1;
+    next = (char *)mdf_realloc_mem(&impl->allocator, NULL, 0, cap);
+    if (next == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    memcpy(next, title, len + 1);
+    mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
+    impl->html_title = next;
+    impl->html_title_cap = cap;
     return MDF_OK;
 }
 

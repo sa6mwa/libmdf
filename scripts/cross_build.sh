@@ -8,5 +8,5 @@ for target in $TARGETS; do
   preset="$target-release"
   echo "==> $preset"
   "$ROOT/scripts/configure_preset.sh" "$preset" release
-  cmake --build --preset "$preset"
+  "$ROOT/scripts/with_target_env.sh" "$preset" cmake --build --preset "$preset"
 done

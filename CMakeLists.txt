@@ -189,6 +189,12 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME version_source_archive COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_version_source.sh)
   set_tests_properties(version_source_archive PROPERTIES LABELS "unit;packaging" TIMEOUT 10)
 
+  add_test(NAME release_privacy_negative COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release_privacy_negative.sh)
+  set_tests_properties(release_privacy_negative PROPERTIES
+    LABELS "unit;packaging"
+    TIMEOUT 10
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   add_test(NAME emission_surface_invariants COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_emission_surface.sh)
   set_tests_properties(emission_surface_invariants PROPERTIES LABELS "unit;streaming" TIMEOUT 10)
 
@@ -196,6 +202,24 @@ if(LIBMDF_BUILD_TESTS)
   set_tests_properties(package_install_cache PROPERTIES
     LABELS "packaging"
     TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME discover_target_tools COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_discover_target_tools.sh)
+  set_tests_properties(discover_target_tools PROPERTIES
+    LABELS "unit;packaging"
+    TIMEOUT 10
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME verify_release_privacy_macho COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_verify_release_privacy_macho.sh)
+  set_tests_properties(verify_release_privacy_macho PROPERTIES
+    LABELS "unit;packaging"
+    TIMEOUT 10
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME darwin_linker_route COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_darwin_linker_route.sh)
+  set_tests_properties(darwin_linker_route PROPERTIES
+    LABELS "unit;packaging"
+    TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME configure_profiles COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_configure_profiles.sh)
@@ -215,6 +239,7 @@ if(LIBMDF_BUILD_TESTS)
       ansi_table_boring
       ansi_table_row_trace
       ansi_regressions
+      ansi_inline_code_punctuation
       html_regressions)
     add_test(NAME parityjudge_option_${case_name}
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_parityjudge_options.sh ${case_name})
@@ -266,9 +291,11 @@ if(LIBMDF_INSTALL)
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion)
   configure_file(cmake/libmdf.pc.in ${CMAKE_CURRENT_BINARY_DIR}/libmdf.pc @ONLY)
+  configure_file(cmake/package-metadata.txt.in ${CMAKE_CURRENT_BINARY_DIR}/package-metadata.txt @ONLY)
   install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/libmdfConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/libmdfConfigVersion.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmdf)
   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libmdf.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+  install(FILES ${CMAKE_CURRENT_BINARY_DIR}/package-metadata.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/libmdf)
 endif()

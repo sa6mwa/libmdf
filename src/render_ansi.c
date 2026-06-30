@@ -2372,6 +2372,7 @@ static void ansi_pending_emit_clear(mdf_impl *impl)
     impl->ansi_pending_emit_len = 0;
     impl->ansi_pending_emit_offsets_len = 0;
     impl->ansi_pending_emit_start_col = 0;
+    impl->ansi_pending_emit_leading_space = 0;
 }
 
 static int ansi_flush_pending_code_emit(mdf_impl *impl, mdf_sink *sink)
@@ -2412,11 +2413,68 @@ static int ansi_flush_pending_code_emit(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
+static int ansi_pending_code_can_move_to_continuation(mdf_impl *impl, int code_cols)
+{
+    size_t text_start;
+    int continuation_col;
+
+    text_start = impl->ansi_pending_emit_leading_space ? 1 : 0;
+    if (impl->opts.width <= 0 ||
+        impl->ansi_pending_emit_len == 0 ||
+        code_cols < 8 ||
+        memchr(impl->ansi_pending_emit + text_start, ' ', impl->ansi_pending_emit_len - text_start) != NULL ||
+        memchr(impl->ansi_pending_emit, '\n', impl->ansi_pending_emit_len) != NULL) {
+        return 0;
+    }
+    continuation_col = ansi_current_prefix_width(impl);
+    if (impl->ansi_wrap_indent > continuation_col) {
+        continuation_col = impl->ansi_wrap_indent;
+    }
+    return continuation_col + code_cols + 1 <= impl->opts.width ||
+           code_cols + 1 <= impl->opts.width;
+}
+
+static int ansi_emit_pending_code_with_punct_on_continuation(mdf_impl *impl, mdf_sink *sink, char c, int code_cols)
+{
+    size_t start;
+    int saved_reset;
+
+    start = impl->ansi_pending_emit_leading_space ? 1 : 0;
+    saved_reset = impl->ansi_pending_style_reset;
+    impl->ansi_pending_style_reset = 0;
+    if (ansi_emit_newline(impl, sink) != 0) {
+        impl->ansi_pending_style_reset = saved_reset;
+        return -1;
+    }
+    if (saved_reset && !impl->opts.boring) {
+        if (ansi_pending_emit_append(impl, "\033[0m", 4) != 0) {
+            mdf_impl_mark_oom(impl);
+            ansi_pending_emit_clear(impl);
+            return -1;
+        }
+    }
+    if (ansi_pending_emit_append(impl, &c, 1) != 0) {
+        mdf_impl_mark_oom(impl);
+        ansi_pending_emit_clear(impl);
+        return -1;
+    }
+    if (mdf_emit_all(impl, sink, impl->ansi_pending_emit + start, impl->ansi_pending_emit_len - start) != 0) {
+        ansi_pending_emit_clear(impl);
+        return -1;
+    }
+    ansi_pending_emit_clear(impl);
+    impl->ansi_col += code_cols + 1;
+    impl->ansi_prev_char = c;
+    impl->ansi_line_has_space = 1;
+    return 0;
+}
+
 static int ansi_emit_pending_code_with_punct(mdf_impl *impl, mdf_sink *sink, char c)
 {
     int replay_chunks;
     int line_cols;
     int code_cols;
+    int code_cols_without_leading_space;
 
     if (!impl->ansi_pending_emit_valid || impl->ansi_pending_emit_len == 0) {
         return 0;
@@ -2426,11 +2484,18 @@ static int ansi_emit_pending_code_with_punct(mdf_impl *impl, mdf_sink *sink, cha
     if (code_cols < 0) {
         code_cols = line_cols;
     }
+    code_cols_without_leading_space = code_cols;
+    if (impl->ansi_pending_emit_leading_space && code_cols_without_leading_space > 0) {
+        code_cols_without_leading_space--;
+    }
     if (impl->opts.width > 0 &&
-        (line_cols + 1 >= impl->opts.width ||
+        (line_cols + 1 > impl->opts.width ||
          (impl->ansi_wrap_indent > 0 &&
-          impl->ansi_wrap_indent + code_cols + 1 >= impl->opts.width) ||
-         code_cols + 1 >= impl->opts.width - 2)) {
+          impl->ansi_wrap_indent + code_cols_without_leading_space + 1 > impl->opts.width) ||
+         code_cols_without_leading_space + 1 > impl->opts.width - 2)) {
+        if (ansi_pending_code_can_move_to_continuation(impl, code_cols_without_leading_space)) {
+            return ansi_emit_pending_code_with_punct_on_continuation(impl, sink, c, code_cols_without_leading_space);
+        }
         if (ansi_flush_pending_code_emit(impl, sink) != 0) return -1;
         if (ansi_emit_newline(impl, sink) != 0) return -1;
         return ansi_emit_visible_chunk(impl, sink, &c, 1);
@@ -3454,6 +3519,12 @@ static int ansi_inline_code_delim(unsigned long cp)
            cp == '[' || cp == ']' || cp == '<' || cp == '>' ||
            cp == '.' || cp == ',' || cp == ';' || cp == ':' ||
            cp == '/' || cp == '\\';
+}
+
+static int ansi_active_inline_style_is_code(mdf_impl *impl)
+{
+    return impl->ansi_active_inline_style != NULL &&
+           strcmp(impl->ansi_active_inline_style, mdf_theme_code_inline(impl)) == 0;
 }
 
 static int ansi_line_has_only_list_prefix(mdf_impl *impl)
@@ -5030,7 +5101,7 @@ static int ansi_inline_emit_link(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
-static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, size_t code_len)
+static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, size_t code_len, int leading_space)
 {
     ansi_pending_emit_sink pending;
     mdf_sink capture_sink;
@@ -5040,6 +5111,7 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, si
     impl->ansi_pending_emit_len = 0;
     impl->ansi_pending_emit_offsets_len = 0;
     impl->ansi_pending_emit_start_col = impl->ansi_col;
+    impl->ansi_pending_emit_leading_space = 0;
     if (impl->ansi_pending_emit_start_col < ansi_current_prefix_width(impl)) {
         impl->ansi_pending_emit_start_col = ansi_current_prefix_width(impl);
     }
@@ -5054,6 +5126,19 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, si
     saved_trace = impl->opts.write_trace;
     impl->opts.write_trace.userdata = NULL;
     impl->opts.write_trace.emit = NULL;
+    if (leading_space) {
+        if (ansi_pending_emit_append(impl, " ", 1) != 0) {
+            impl->opts.write_trace = saved_trace;
+            mdf_impl_mark_oom(impl);
+            impl->ansi_pending_emit_len = 0;
+            impl->ansi_pending_emit_offsets_len = 0;
+            impl->ansi_pending_emit_valid = 0;
+            impl->ansi_pending_emit_leading_space = 0;
+            return -1;
+        }
+        impl->ansi_pending_emit_leading_space = 1;
+        ansi_update_visible_output_state(impl, " ", 1);
+    }
     if (impl->inline_outer_paren_pending) {
         if (ansi_pending_emit_append(impl, "(", 1) != 0) {
             impl->opts.write_trace = saved_trace;
@@ -5061,9 +5146,12 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, si
             impl->ansi_pending_emit_len = 0;
             impl->ansi_pending_emit_offsets_len = 0;
             impl->ansi_pending_emit_valid = 0;
+            impl->ansi_pending_emit_leading_space = 0;
             return -1;
         }
-        impl->ansi_pending_emit_offsets_len = 0;
+        if (!leading_space) {
+            impl->ansi_pending_emit_offsets_len = 0;
+        }
         ansi_update_visible_output_state(impl, "(", 1);
         impl->inline_outer_paren_pending = 0;
     }
@@ -5075,6 +5163,7 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl, const char *code, si
         }
         impl->ansi_pending_emit_len = 0;
         impl->ansi_pending_emit_valid = 0;
+        impl->ansi_pending_emit_leading_space = 0;
         return -1;
     }
     return 0;
@@ -5090,6 +5179,7 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     size_t merged_cap;
     int trim_padding;
     int use_wrapped_code;
+    int capture_leading_space;
 
     code = impl->inline_code;
     code_len = impl->inline_code_len;
@@ -5107,6 +5197,7 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
         code_len -= 2;
     }
     use_wrapped_code = impl->opts.width > 0;
+    capture_leading_space = 0;
     if (impl->format == MDF_FORMAT_HTML && impl->inline_outer_paren_pending) {
         if (ansi_write_visible_cstr(impl, sink, "(") != 0) return -1;
         if (ansi_flush_word(impl, sink) != 0) return -1;
@@ -5157,7 +5248,19 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     if (impl->ansi_word_len > 0) {
         if (ansi_flush_word_reserved(impl, sink, code_len) != 0) return -1;
     } else if (use_wrapped_code) {
-        if (ansi_line_has_only_list_prefix(impl)) {
+        if (impl->ansi_pending_space &&
+            !ansi_line_has_only_list_prefix(impl) &&
+            (impl->ansi_active_inline_style == NULL || ansi_active_inline_style_is_code(impl)) &&
+            !ansi_word_contains_byte(code, code_len, ' ') &&
+            visible_cols(code, code_len) >= 8 &&
+            impl->opts.width > 0 &&
+            impl->ansi_col > 0 &&
+            impl->ansi_col + 1 + (int)visible_cols(code, code_len) <= impl->opts.width) {
+            capture_leading_space = 1;
+            impl->ansi_pending_space = 0;
+            impl->ansi_pending_space_no_split = 0;
+            impl->ansi_pending_space_plain = 0;
+        } else if (ansi_line_has_only_list_prefix(impl)) {
             size_t first_segment_cols;
 
             first_segment_cols = 1;
@@ -5186,7 +5289,7 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     }
     if (use_wrapped_code) {
         if (impl->inline_outer_paren_pending && ansi_ensure_left_margin(impl, sink) != 0) return -1;
-        if (code_len > 0 && ansi_capture_inline_code_wrapped(impl, code, code_len) != 0) return -1;
+        if (code_len > 0 && ansi_capture_inline_code_wrapped(impl, code, code_len, capture_leading_space) != 0) return -1;
         impl->inline_mode = 0;
         impl->inline_code_len = 0;
         impl->inline_code_delim_len = 0;

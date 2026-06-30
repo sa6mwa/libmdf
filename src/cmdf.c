@@ -17,6 +17,16 @@ typedef struct file_source {
     size_t reads;
 } file_source;
 
+typedef struct prefixed_file_source {
+    FILE *fp;
+    char *prefix;
+    size_t prefix_len;
+    size_t prefix_off;
+    size_t max_chunk;
+    double delay_seconds;
+    size_t reads;
+} prefixed_file_source;
+
 static int sleep_seconds(double seconds)
 {
     struct timespec req;
@@ -76,6 +86,53 @@ static size_t file_read(void *userdata, char *dst, size_t cap, int *err)
         src->reads++;
     }
     return (size_t)n;
+}
+
+static size_t prefixed_file_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    prefixed_file_source *src;
+    int fd;
+    size_t n;
+    ssize_t got;
+
+    src = (prefixed_file_source *)userdata;
+    if (src->max_chunk > 0 && cap > src->max_chunk) {
+        cap = src->max_chunk;
+    }
+    if (src->reads > 0) {
+        if (sleep_seconds(src->delay_seconds) != 0) {
+            *err = errno == 0 ? EIO : errno;
+            return 0;
+        }
+    }
+    if (src->prefix_off < src->prefix_len) {
+        n = src->prefix_len - src->prefix_off;
+        if (n > cap) {
+            n = cap;
+        }
+        memcpy(dst, src->prefix + src->prefix_off, n);
+        src->prefix_off += n;
+        if (n > 0) {
+            src->reads++;
+        }
+        return n;
+    }
+    fd = fileno(src->fp);
+    if (fd < 0) {
+        *err = errno == 0 ? EIO : errno;
+        return 0;
+    }
+    do {
+        got = read(fd, dst, cap);
+    } while (got < 0 && errno == EINTR);
+    if (got < 0) {
+        *err = errno == 0 ? EIO : errno;
+        return 0;
+    }
+    if (got > 0) {
+        src->reads++;
+    }
+    return (size_t)got;
 }
 
 typedef struct file_sink {
@@ -211,6 +268,7 @@ static void usage(FILE *fp)
     fprintf(fp, "  -b, --boring               Boring ANSI output\n");
     fprintf(fp, "  -o, --output PATH          Output file\n");
     fprintf(fp, "  -t, --theme NAME           Theme name\n");
+    fprintf(fp, "  -T, --title TITLE          HTML document title\n");
     fprintf(fp, "  -w, --width WIDTH          ANSI output width\n");
     fprintf(fp, "      --margin-left N        ANSI left margin in spaces\n");
     fprintf(fp, "      --margin-right N       ANSI right margin in spaces\n");
@@ -360,6 +418,260 @@ static void print_themes(void)
     }
 }
 
+static int has_html_extension(const char *path)
+{
+    const char *dot;
+    size_t len;
+
+    if (path == NULL) {
+        return 0;
+    }
+    dot = strrchr(path, '.');
+    if (dot == NULL) {
+        return 0;
+    }
+    len = strlen(dot);
+    if (len == 5) {
+        return (dot[0] == '.') &&
+               (dot[1] == 'h' || dot[1] == 'H') &&
+               (dot[2] == 't' || dot[2] == 'T') &&
+               (dot[3] == 'm' || dot[3] == 'M') &&
+               (dot[4] == 'l' || dot[4] == 'L');
+    }
+    if (len == 4) {
+        return (dot[0] == '.') &&
+               (dot[1] == 'h' || dot[1] == 'H') &&
+               (dot[2] == 't' || dot[2] == 'T') &&
+               (dot[3] == 'm' || dot[3] == 'M');
+    }
+    return 0;
+}
+
+static int append_prescan_byte(char **buf, size_t *len, size_t *cap, char ch)
+{
+    char *next;
+    size_t new_cap;
+
+    if (*len + 1 < *len) {
+        return -1;
+    }
+    if (*len + 1 > *cap) {
+        new_cap = *cap == 0 ? 512 : *cap;
+        while (new_cap < *len + 1) {
+            if (new_cap > ((size_t)-1) / 2) {
+                return -1;
+            }
+            new_cap *= 2;
+        }
+        next = (char *)realloc(*buf, new_cap);
+        if (next == NULL) {
+            return -1;
+        }
+        *buf = next;
+        *cap = new_cap;
+    }
+    (*buf)[*len] = ch;
+    *len += 1;
+    return 0;
+}
+
+static int copy_trimmed_title(const char *start, const char *end, char **out)
+{
+    char *title;
+    size_t len;
+
+    while (start < end && (*start == ' ' || *start == '\t')) {
+        start++;
+    }
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '#')) {
+        if (end[-1] == '#') {
+            const char *hash = end;
+
+            while (hash > start && hash[-1] == '#') {
+                hash--;
+            }
+            if (hash == start || (hash[-1] != ' ' && hash[-1] != '\t')) {
+                break;
+            }
+            end = hash - 1;
+            while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+                end--;
+            }
+            continue;
+        }
+        end--;
+    }
+    len = (size_t)(end - start);
+    title = (char *)malloc(len + 1);
+    if (title == NULL) {
+        return -1;
+    }
+    memcpy(title, start, len);
+    title[len] = '\0';
+    *out = title;
+    return 0;
+}
+
+static int detect_html_title_line(const char *line_start, const char *line_end, char **title_out, int *decided)
+{
+    const char *q;
+    int spaces;
+    int hashes;
+
+    q = line_start;
+    spaces = 0;
+    while (q < line_end && *q == ' ' && spaces < 4) {
+        q++;
+        spaces++;
+    }
+    if (q == line_end) {
+        *decided = 0;
+        return 0;
+    }
+    *decided = 1;
+    if (spaces < 4 && *q == '#') {
+        hashes = 0;
+        while (q < line_end && *q == '#' && hashes < 7) {
+            q++;
+            hashes++;
+        }
+        if (hashes >= 1 && hashes <= 6 && (q == line_end || *q == ' ' || *q == '\t')) {
+            return copy_trimmed_title(q, line_end, title_out);
+        }
+    }
+    return 0;
+}
+
+static int read_title_prescan_byte(int fd, char *ch, char **prefix, size_t *prefix_len, size_t *prefix_cap)
+{
+    ssize_t n;
+
+    do {
+        n = read(fd, ch, 1);
+    } while (n < 0 && errno == EINTR);
+    if (n < 0) {
+        return -1;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    if (append_prescan_byte(prefix, prefix_len, prefix_cap, *ch) != 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+    return 1;
+}
+
+static int detect_html_title_from_file(FILE *fp, char **title_out, char **prefix_out, size_t *prefix_len_out)
+{
+    char *prefix;
+    size_t prefix_len;
+    size_t prefix_cap;
+    size_t line_start;
+    int fd;
+
+    *title_out = NULL;
+    *prefix_out = NULL;
+    *prefix_len_out = 0;
+    fd = fileno(fp);
+    if (fd < 0) {
+        return -1;
+    }
+    prefix = NULL;
+    prefix_len = 0;
+    prefix_cap = 0;
+    for (;;) {
+        char ch;
+        int spaces;
+        int hash_count;
+        int rc;
+        int saw_tab;
+
+        line_start = prefix_len;
+        spaces = 0;
+        saw_tab = 0;
+        for (;;) {
+            rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
+            if (rc < 0) {
+                free(prefix);
+                return -1;
+            }
+            if (rc == 0) {
+                break;
+            }
+            if (ch == '\n') {
+                break;
+            }
+            if (ch == '\r') {
+                continue;
+            }
+            if (ch == '\t') {
+                saw_tab = 1;
+                continue;
+            }
+            if (ch == ' ') {
+                spaces++;
+                continue;
+            }
+            if (!saw_tab && spaces < 4 && ch == '#') {
+                hash_count = 1;
+                for (;;) {
+                    rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
+                    if (rc < 0) {
+                        free(prefix);
+                        return -1;
+                    }
+                    if (rc == 0) {
+                        break;
+                    }
+                    if (ch != '#') {
+                        break;
+                    }
+                    hash_count++;
+                }
+                if (hash_count >= 1 && hash_count <= 6 &&
+                    (rc == 0 || ch == '\n' || ch == '\r' || ch == ' ' || ch == '\t')) {
+                    while (rc > 0 && ch != '\n') {
+                        rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
+                        if (rc < 0) {
+                            free(prefix);
+                            return -1;
+                        }
+                    }
+                    {
+                        const char *line;
+                        const char *line_end;
+                        int decided;
+
+                        line = prefix + line_start;
+                        line_end = prefix + prefix_len;
+                        while (line_end > line && (line_end[-1] == '\n' || line_end[-1] == '\r')) {
+                            line_end--;
+                        }
+                        decided = 0;
+                        if (detect_html_title_line(line, line_end, title_out, &decided) != 0) {
+                            free(prefix);
+                            return -1;
+                        }
+                    }
+                }
+                *prefix_out = prefix;
+                *prefix_len_out = prefix_len;
+                return 0;
+            }
+            *prefix_out = prefix;
+            *prefix_len_out = prefix_len;
+            return 0;
+        }
+        if (prefix_len == line_start) {
+            break;
+        }
+    }
+    *prefix_out = prefix;
+    *prefix_len_out = prefix_len;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     int opt;
@@ -371,8 +683,10 @@ int main(int argc, char **argv)
     int width_flag;
     int list_themes;
     const char *theme_name;
+    const char *title_override;
     const char *trace_writes_path;
     int simulate_enabled;
+    int format_explicit;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
@@ -380,6 +694,7 @@ int main(int argc, char **argv)
         {"boring", no_argument, NULL, 'b'},
         {"output", required_argument, NULL, 'o'},
         {"theme", required_argument, NULL, 't'},
+        {"title", required_argument, NULL, 'T'},
         {"width", required_argument, NULL, 'w'},
         {"margin-left", required_argument, NULL, 1007},
         {"margin-right", required_argument, NULL, 1008},
@@ -400,12 +715,17 @@ int main(int argc, char **argv)
     mdf_format format;
     mdf *renderer;
     file_source source_data;
+    prefixed_file_source prefixed_source_data;
     file_sink sink_data;
     trace_output trace_data;
     mdf_source source;
     mdf_sink sink;
     mdf_status st;
     FILE *trace_fp;
+    char *prefix_buf;
+    size_t prefix_len;
+    char *detected_title;
+    int use_prefixed_source;
 
     mdf_options_init(&opts);
     opts.osc8 = mdf_detect_osc8_support();
@@ -416,11 +736,13 @@ int main(int argc, char **argv)
     width_flag = 0;
     list_themes = 0;
     theme_name = "default";
+    title_override = NULL;
     trace_writes_path = NULL;
     simulate_enabled = 0;
+    format_explicit = 0;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
-    while ((opt = getopt_long(argc, argv, "hVHbo:t:w:8:S:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(stdout);
@@ -430,6 +752,7 @@ int main(int argc, char **argv)
             return 0;
         case 'H':
             format = MDF_FORMAT_HTML;
+            format_explicit = 1;
             break;
         case 'b':
             opts.boring = 1;
@@ -439,6 +762,9 @@ int main(int argc, char **argv)
             break;
         case 't':
             theme_name = optarg;
+            break;
+        case 'T':
+            title_override = optarg;
             break;
         case 'w':
             if (parse_int(optarg, &width_flag) != 0) {
@@ -533,6 +859,10 @@ int main(int argc, char **argv)
         return 2;
     }
     opts.theme_name = theme_name;
+    if (!format_explicit && has_html_extension(out_path)) {
+        format = MDF_FORMAT_HTML;
+        fprintf(stderr, "cmdf: warning: inferring --html from output path %s\n", out_path);
+    }
     if (format == MDF_FORMAT_HTML && opts.table_wire_mode == MDF_TABLE_WIRE_ASCII) {
         fprintf(stderr, "cmdf: --table-wire ascii is not supported with --html; use line or space\n");
         return 2;
@@ -558,6 +888,10 @@ int main(int argc, char **argv)
     in_fp = stdin;
     out_fp = stdout;
     trace_fp = NULL;
+    prefix_buf = NULL;
+    prefix_len = 0;
+    detected_title = NULL;
+    use_prefixed_source = 0;
     if (in_path != NULL) {
         in_fp = fopen(in_path, "rb");
         if (in_fp == NULL) {
@@ -572,6 +906,15 @@ int main(int argc, char **argv)
             if (in_fp != stdin) fclose(in_fp);
             return 1;
         }
+    }
+    if (format == MDF_FORMAT_HTML && title_override == NULL) {
+        if (detect_html_title_from_file(in_fp, &detected_title, &prefix_buf, &prefix_len) != 0) {
+            fprintf(stderr, "cmdf: detect HTML title: %s\n", errno == 0 ? "input read failed" : strerror(errno));
+            if (out_fp != stdout) fclose(out_fp);
+            if (in_fp != stdin) fclose(in_fp);
+            return 1;
+        }
+        use_prefixed_source = 1;
     }
     if (trace_writes_path != NULL) {
         if (strcmp(trace_writes_path, "-") == 0) {
@@ -594,18 +937,45 @@ int main(int argc, char **argv)
     st = mdf_create(format, &opts, &renderer);
     if (st != MDF_OK) {
         fprintf(stderr, "cmdf: create renderer: %s\n", mdf_status_string(st));
+        free(detected_title);
+        free(prefix_buf);
         if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
         if (out_fp != stdout) fclose(out_fp);
         if (in_fp != stdin) fclose(in_fp);
         return 1;
+    }
+    if (format == MDF_FORMAT_HTML && (title_override != NULL || detected_title != NULL)) {
+        st = mdf_set_html_title(renderer, title_override != NULL ? title_override : detected_title);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: set HTML title: %s\n", mdf_status_string(st));
+            renderer->destroy(renderer);
+            free(detected_title);
+            free(prefix_buf);
+            if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
+            if (out_fp != stdout) fclose(out_fp);
+            if (in_fp != stdin) fclose(in_fp);
+            return 1;
+        }
     }
     source_data.fp = in_fp;
     source_data.max_chunk = simulate_chunk;
     source_data.delay_seconds = simulate_delay_seconds;
     source_data.reads = 0;
     sink_data.fp = out_fp;
-    source.userdata = &source_data;
-    source.read = file_read;
+    prefixed_source_data.fp = in_fp;
+    prefixed_source_data.prefix = prefix_buf;
+    prefixed_source_data.prefix_len = prefix_len;
+    prefixed_source_data.prefix_off = 0;
+    prefixed_source_data.max_chunk = simulate_chunk;
+    prefixed_source_data.delay_seconds = simulate_delay_seconds;
+    prefixed_source_data.reads = 0;
+    if (use_prefixed_source) {
+        source.userdata = &prefixed_source_data;
+        source.read = prefixed_file_read;
+    } else {
+        source.userdata = &source_data;
+        source.read = file_read;
+    }
     sink.userdata = &sink_data;
     sink.write = file_write;
     st = renderer->render(renderer, &source, &sink);
@@ -615,6 +985,8 @@ int main(int argc, char **argv)
         rc = 1;
     }
     renderer->destroy(renderer);
+    free(detected_title);
+    free(prefix_buf);
     if (trace_fp != NULL && trace_fp != stderr && fclose(trace_fp) != 0) {
         fprintf(stderr, "cmdf: close trace output: %s\n", strerror(errno));
         rc = 1;

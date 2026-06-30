@@ -4,25 +4,48 @@ PREFIX ?= /usr/local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
+	@printf '%s\n' '  make deps-debug            Report debug dependency acquisition status'
+	@printf '%s\n' '  make deps-release          Report release dependency acquisition status'
+	@printf '%s\n' '  make deps-cross            Report cross dependency acquisition status'
 	@printf '%s\n' '  make build                  Build static cmdf for local install'
 	@printf '%s\n' '  make build-debug            Configure and build debug preset'
+	@printf '%s\n' '  make build-release          Configure and build host release preset'
 	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
 	@printf '%s\n' '  make test                   Run debug tests'
+	@printf '%s\n' '  make test-all               Run tests, sanitizers, fuzz smoke, and parity'
 	@printf '%s\n' '  make parity                 Run exhaustive ANSI, HTML, streaming, and Lua parity gates'
 	@printf '%s\n' '  make parity-quick           Run bounded ANSI, HTML, and streaming parity smoke'
+	@printf '%s\n' '  make parity-tokens          Run token parity'
 	@printf '%s\n' '  make lua-test               Run Lua facade and cmdf.lua parity smoke tests'
+	@printf '%s\n' '  make lua-env                Print Lua local development environment'
+	@printf '%s\n' '  make lua-rock               Build local Lua rock'
 	@printf '%s\n' '  make release-lua-artifacts  Build Lua source archive and source rock'
+	@printf '%s\n' '  make verify-lua-artifacts   Verify Lua release artifacts'
 	@printf '%s\n' '  make asan                   Run AddressSanitizer + UBSan tests'
 	@printf '%s\n' '  make tsan                   Run ThreadSanitizer tests'
 	@printf '%s\n' '  make msan                   Run MemorySanitizer tests'
 	@printf '%s\n' '  make fuzz-smoke             Run bounded libFuzzer smoke'
 	@printf '%s\n' '  make fuzz                   Run standard bounded libFuzzer job'
+	@printf '%s\n' '  make fuzz-long              Run longer bounded libFuzzer job'
 	@printf '%s\n' '  make package                Build release SDK archives'
+	@printf '%s\n' '  make package-source         Build source archive'
+	@printf '%s\n' '  make package-source-smoke   Build and test the source archive'
+	@printf '%s\n' '  make package-checksums      Generate release checksum manifest'
 	@printf '%s\n' '  make package-verify         Verify release SDK archives'
 	@printf '%s\n' '  make verify-release-privacy Verify release artifacts for local path leaks'
+	@printf '%s\n' '  make verify-release-archives Verify release archive checks'
 	@printf '%s\n' '  make release-matrix         Build all configured release targets'
+	@printf '%s\n' '  make finalize-slice         Run format and local test gate'
+	@printf '%s\n' '  make prerelease             Run deterministic prerelease gate'
+	@printf '%s\n' '  make prerelease-hardening   Run prerelease plus release matrix'
 	@printf '%s\n' '  make release                Run full local release gate'
+	@printf '%s\n' '  make print-release-version  Print packaging version'
+	@printf '%s\n' '  make format                 Format project-owned C sources'
+	@printf '%s\n' '  make cross-build            Build configured cross targets'
+	@printf '%s\n' '  make test-install-tree      Build and verify install tree packages'
+	@printf '%s\n' '  make example-smoke-local    Run local example smoke'
 	@printf '%s\n' '  make clean                  Remove generated build, dist, and cache state'
+	@printf '%s\n' '  make clean-dist             Remove generated dist artifacts'
 
 deps-debug deps-release deps-cross:
 	@printf '%s\n' 'libmdf has no c.pkt.systems dependency bundle to acquire.'
@@ -121,7 +144,7 @@ package-source:
 	@scripts/package_source.sh
 
 package-source-smoke: package-source
-	@printf '%s\n' 'source archive produced'
+	@scripts/test_release_from_source.sh
 
 package-checksums:
 	@scripts/package_checksums.sh
@@ -152,7 +175,7 @@ print-release-version:
 	@scripts/release_version.sh
 
 format:
-	@cmake -E true
+	@scripts/format.sh
 
 test-install-tree:
 	@scripts/package.sh
