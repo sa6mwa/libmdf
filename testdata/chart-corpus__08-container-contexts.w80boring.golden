@@ -1,0 +1,139 @@
+# Container Contexts
+
+Blockquote horizontal chart.
+
+>               Quote Build │ █████████████████████████ 40 53.3%
+>               Quote Test  │ ████████████████          25 33.3%
+>               Quote Ship  │ ██████                    10 13.3%
+
+Blockquote vertical chart.
+
+>              7 ┤                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │      ██████          ██████                     
+>           3.50 ┤      ██████          ██████                     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>              0 └─────────────────────────────────────────────────
+>                         n               e               d        
+
+Blockquote tile chart.
+
+>   █████████████Quote Build█████████████████████Quote Test███████Quote Ship
+>   ████████████████53.3%██████████████████████████33.3%████████████13.3%███
+> 
+>              ■ Quote Build 40  ■ Quote Test 25  ■ Quote Ship 10
+
+Unordered-list horizontal chart.
+
+- Charts in a list:
+
+                List Build │ ██████████████████████████ 40 53.3%
+                List Test  │ ████████████████           25 33.3%
+                List Ship  │ ███████                    10 13.3%
+
+Unordered-list vertical chart.
+
+- Charts in a list:
+
+               7 ┤                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │      ██████          ██████                     
+            3.50 ┤      ██████          ██████                     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+               0 └─────────────────────────────────────────────────
+                          n               e               d        
+
+Unordered-list tile chart.
+
+- Charts in a list:
+
+    ██████████████List Build█████████████████████List Test████████List Ship█
+    ████████████████53.3%██████████████████████████33.3%████████████13.3%███
+  
+                ■ List Build 40  ■ List Test 25  ■ List Ship 10
+
+Ordered-list horizontal chart.
+
+1. Charts in an ordered list:
+
+                Ordered Build │ ███████████████████████ 40 53.3%
+                Ordered Test  │ ██████████████          25 33.3%
+                Ordered Ship  │ ██████                  10 13.3%
+
+Ordered-list vertical chart.
+
+1. Charts in an ordered list:
+
+               7 ┤                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │                      ██████                     
+                 │      ██████          ██████                     
+            3.50 ┤      ██████          ██████                     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+                 │      ██████          ██████          ██████     
+               0 └─────────────────────────────────────────────────
+                          n               e               d        
+
+Ordered-list tile chart.
+
+1. Charts in an ordered list:
+
+    ████████████Ordered Build███████████████████Ordered Test████████████████
+    ████████████████53.3%██████████████████████████33.3%████████████13.3%███
+   
+            ■ Ordered Build 40  ■ Ordered Test 25  ■ Ordered Ship 10
+
+Blockquoted-list horizontal chart.
+
+> - Charts in a quoted list:
+>
+>               Quoted List Buil │ ████████████████████ 40 53.3%
+>               Quoted List Test │ █████████████        25 33.3%
+>               Quoted List Ship │ █████                10 13.3%
+
+Blockquoted-list vertical chart.
+
+> - Charts in a quoted list:
+>
+>              7 ┤                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │                      ██████                     
+>                │      ██████          ██████                     
+>           3.50 ┤      ██████          ██████                     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>                │      ██████          ██████          ██████     
+>              0 └─────────────────────────────────────────────────
+>                         n               e               d        
+
+Blockquoted-list tile chart.
+
+> - Charts in a quoted list:
+>
+>   ██████████Quoted List Build███████████████Quoted List Test██████████████
+>   ████████████████53.3%██████████████████████████33.3%████████████13.3%███
+> 
+>     ■ Quoted List Build 40  ■ Quoted List Test 25  ■ Quoted List Ship 10

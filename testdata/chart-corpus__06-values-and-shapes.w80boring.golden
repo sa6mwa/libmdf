@@ -1,0 +1,26 @@
+# Values And Shapes
+
+Zero-heavy bar chart.
+
+                None  │                                0 0.0%
+                Tiny  │ █                              1 1.0%
+                Small │ █                              2 1.9%
+                Large │ ██████████████████████████████ 100 97.1%
+
+Decimal values.
+
+                Latency    │ ███                     12.50 7.1%
+                Throughput │ ███████████████████████ 98.75 56.5%
+                Errors     │ █                       0.25 0.1%
+                Saturation │ ███████████████         63.40 36.2%
+
+No header row.
+
+                Alpha │ ████████                        8 14.3%
+                Beta  │ ████████████████                16 28.6%
+                Gamma │ ███████████████████████████████ 32 57.1%
+
+Non-chart fenced code should remain ordinary code.
+
+mdf-bar-chart
+This is text, not chart data.

@@ -39,6 +39,7 @@ BORINGS=${LIBMDF_PARITY_BORINGS:-$DEFAULT_BORINGS}
 OSC8S=${LIBMDF_PARITY_OSC8S:-$DEFAULT_OSC8S}
 TABLE_BUFFERS=${LIBMDF_PARITY_TABLE_BUFFERS:-$DEFAULT_TABLE_BUFFERS}
 TABLE_WIRES=${LIBMDF_PARITY_TABLE_WIRES:-$DEFAULT_TABLE_WIRES}
+EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus"}
 STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/cmdf_fonts.c" "$ROOT/src/cmdf_fonts.h" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
 child_pid=
 
@@ -67,10 +68,10 @@ trap 'cleanup_child; exit 143' TERM HUP
 
 if [ "$MODE" = "ansi" ] || [ "$MODE" = "html" ]; then
   if [ "$MODE" = "ansi" ]; then
-    run_child "$JUDGE" -mode ansi -compare-libmdf -suite "$ROOT/testdata" -chunks "$CHUNKS" -widths "$WIDTHS" \
+    run_child "$JUDGE" -mode ansi -compare-libmdf -suite "$ROOT/testdata" -exclude "$EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
       -themes "$THEMES" -borings "$BORINGS" -osc8s "$OSC8S" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"
   else
-    run_child "$JUDGE" -mode html -compare-libmdf -suite "$ROOT/testdata" -chunks "$CHUNKS" \
+    run_child "$JUDGE" -mode html -compare-libmdf -suite "$ROOT/testdata" -exclude "$EXCLUDES" -chunks "$CHUNKS" \
       -themes "$THEMES" -borings "$BORINGS" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"
   fi
   exit $?
@@ -81,7 +82,7 @@ if [ ! -x "$BUILD/cmdf" ]; then
 fi
 
 fail=0
-for md in $(find "$ROOT/testdata" -type f -name '*.md' | sort); do
+for md in $(find "$ROOT/testdata" -path "$ROOT/testdata/chart-corpus" -prune -o -type f -name '*.md' -print | sort); do
   for chunk in $CHUNKS; do
     if [ "$MODE" = "ansi" ]; then
       run_widths=$WIDTHS

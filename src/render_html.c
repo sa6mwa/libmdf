@@ -5,6 +5,7 @@ static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
 static const char *html_rgb_for_fg(mdf_impl *impl, int fg, int bold, char *buf, size_t buf_len);
 
 #define MDF_HTML_DEFAULT_FONT_STACK "ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace"
+#define MDF_HTML_BG_CELL_STYLE "display:inline-block;height:1lh;line-height:1lh;vertical-align:top;"
 
 static int html_escape(mdf_sink *sink, const char *s, size_t len)
 {
@@ -45,6 +46,98 @@ static int html_escape(mdf_sink *sink, const char *s, size_t len)
             break;
         }
     }
+    return 0;
+}
+
+static int html_is_full_block_at(const char *s, size_t len, size_t off)
+{
+    return off + 3 <= len &&
+           (unsigned char)s[off] == 0xe2 &&
+           (unsigned char)s[off + 1] == 0x96 &&
+           (unsigned char)s[off + 2] == 0x88;
+}
+
+static const char *html_chart_box_glyph_style(const char *s, size_t len, size_t off)
+{
+    if (off + 3 > len || (unsigned char)s[off] != 0xe2 || (unsigned char)s[off + 1] != 0x94) {
+        return NULL;
+    }
+    switch ((unsigned char)s[off + 2]) {
+    case 0x80: /* U+2500 BOX DRAWINGS LIGHT HORIZONTAL */
+        return "background:linear-gradient(to bottom,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em));";
+    case 0x82: /* U+2502 BOX DRAWINGS LIGHT VERTICAL */
+        return "background:linear-gradient(to right,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em));";
+    case 0x94: /* U+2514 BOX DRAWINGS LIGHT UP AND RIGHT */
+        return "background:linear-gradient(to right,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em)) top left/100% 50% no-repeat,linear-gradient(to bottom,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em)) center right/50% 100% no-repeat;";
+    case 0xa4: /* U+2524 BOX DRAWINGS LIGHT VERTICAL AND LEFT */
+        return "background:linear-gradient(to right,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em)),linear-gradient(to bottom,transparent calc(50% - .045em),currentColor calc(50% - .045em),currentColor calc(50% + .045em),transparent calc(50% + .045em)) center left/50% 100% no-repeat;";
+    default:
+        return NULL;
+    }
+}
+
+static int html_write_chart_box_glyph(mdf_sink *sink, const char *glyph, const char *style)
+{
+    if (mdf_write_cstr(sink, "<span style=\"display:inline-block;width:1ch;height:1lh;line-height:1lh;vertical-align:top;color:inherit;-webkit-text-fill-color:transparent;") != 0) return -1;
+    if (mdf_write_cstr(sink, style) != 0) return -1;
+    if (mdf_write_cstr(sink, "\">") != 0) return -1;
+    if (mdf_write_all(sink, glyph, 3) != 0) return -1;
+    return mdf_write_cstr(sink, "</span>");
+}
+
+static int html_write_solid_cells(mdf_impl *impl, mdf_sink *sink, int fg, int bold, size_t cells)
+{
+    char rgb[32];
+    const char *color;
+    size_t i;
+
+    color = html_rgb_for_fg(impl, fg, bold, rgb, sizeof(rgb));
+    if (mdf_write_cstr(sink, "<span style=\"display:inline-block;height:1lh;line-height:1lh;vertical-align:top;white-space:pre;color:transparent;background-color:rgb(") != 0) return -1;
+    if (mdf_write_cstr(sink, color) != 0) return -1;
+    if (mdf_write_cstr(sink, ");\">") != 0) return -1;
+    for (i = 0; i < cells; i++) {
+        if (mdf_write_cstr(sink, "█") != 0) return -1;
+    }
+    return mdf_write_cstr(sink, "</span>");
+}
+
+static int html_escape_styled_cells(mdf_impl *impl, mdf_sink *sink, const char *s, size_t len, int fg, int bold, int render_cells)
+{
+    size_t start;
+    size_t i;
+
+    if (!render_cells) {
+        return html_escape(sink, s, len);
+    }
+    start = 0;
+    i = 0;
+    while (i < len) {
+        if (html_is_full_block_at(s, len, i)) {
+            size_t cells;
+
+            if (i > start && html_escape(sink, s + start, i - start) != 0) return -1;
+            cells = 0;
+            while (html_is_full_block_at(s, len, i)) {
+                cells++;
+                i += 3;
+            }
+            if (html_write_solid_cells(impl, sink, fg, bold, cells) != 0) return -1;
+            start = i;
+        } else {
+            const char *box_style;
+
+            box_style = html_chart_box_glyph_style(s, len, i);
+            if (box_style != NULL) {
+                if (i > start && html_escape(sink, s + start, i - start) != 0) return -1;
+                if (html_write_chart_box_glyph(sink, s + i, box_style) != 0) return -1;
+                i += 3;
+                start = i;
+            } else {
+                i++;
+            }
+        }
+    }
+    if (start < len && html_escape(sink, s + start, len - start) != 0) return -1;
     return 0;
 }
 
@@ -510,6 +603,7 @@ typedef struct html_bridge_scope {
     int save_width;
     int save_osc8;
     int save_boring;
+    int save_chart_suppress_centering;
 } html_bridge_scope;
 
 html_state *html_state_get(mdf_impl *impl)
@@ -526,6 +620,8 @@ html_state *html_state_get(mdf_impl *impl)
     }
     memset(state, 0, sizeof(*state));
     state->fg = -1;
+    state->bg = -1;
+    state->stream_bg = -1;
     impl->html_state = state;
     return state;
 }
@@ -621,6 +717,7 @@ static void html_segment_free(mdf_allocator *allocator, html_segment *seg)
     mdf_free_mem(allocator, seg->link, seg->link_cap);
     memset(seg, 0, sizeof(*seg));
     seg->fg = -1;
+    seg->bg = -1;
 }
 
 static int html_segment_same(const html_segment *seg, const html_state *state)
@@ -628,7 +725,8 @@ static int html_segment_same(const html_segment *seg, const html_state *state)
     if (seg->bold != state->bold ||
         seg->italic != state->italic ||
         seg->underline != state->underline ||
-        seg->fg != state->fg) {
+        seg->fg != state->fg ||
+        seg->bg != state->bg) {
         return 0;
     }
     if (seg->link_len != state->link_len) {
@@ -665,6 +763,7 @@ static int html_state_push_segment(mdf_impl *impl, html_state *state)
     seg->italic = state->italic;
     seg->underline = state->underline;
     seg->fg = state->fg;
+    seg->bg = state->bg;
     if (state->link_len > 0) {
         if (html_buf_assign(&impl->allocator, &seg->link, &seg->link_len, &seg->link_cap, state->link, state->link_len) != 0) {
             return -1;
@@ -716,6 +815,7 @@ static void html_state_reset_stream_line(html_state *state)
     state->stream_italic = 0;
     state->stream_underline = 0;
     state->stream_fg = -1;
+    state->stream_bg = -1;
     state->stream_link_len = 0;
     state->stream_utf8_len = 0;
     state->stream_utf8_need = 0;
@@ -730,6 +830,7 @@ static void html_state_reset_style(html_state *state)
     state->italic = 0;
     state->underline = 0;
     state->fg = -1;
+    state->bg = -1;
 }
 
 static long html_parse_sgr_value(char *s)
@@ -801,6 +902,10 @@ static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
             state->underline = 0;
         } else if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) {
             state->fg = (int)value;
+        } else if (value >= 40 && value <= 47) {
+            state->bg = (int)(value - 10);
+        } else if (value >= 100 && value <= 107) {
+            state->bg = (int)(value - 10);
         } else if (value == 38) {
             if (html_sgr_next(tmp, len, &off, &mode) &&
                 mode == 5 &&
@@ -808,8 +913,17 @@ static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
                 color >= 0 && color <= 255) {
                 state->fg = 1000 + (int)color;
             }
+        } else if (value == 48) {
+            if (html_sgr_next(tmp, len, &off, &mode) &&
+                mode == 5 &&
+                html_sgr_next(tmp, len, &off, &color) &&
+                color >= 0 && color <= 255) {
+                state->bg = 1000 + (int)color;
+            }
         } else if (value == 39) {
             state->fg = -1;
+        } else if (value == 49) {
+            state->bg = -1;
         }
     }
 }
@@ -939,6 +1053,11 @@ static const char *html_fg_rgb(mdf_impl *impl, const html_segment *seg, char *bu
     return html_rgb_for_fg(impl, seg->fg, seg->bold, buf, buf_len);
 }
 
+static const char *html_bg_rgb(mdf_impl *impl, const html_segment *seg, char *buf, size_t buf_len)
+{
+    return html_rgb_for_fg(impl, seg->bg, 0, buf, buf_len);
+}
+
 const char *html_theme_quote_rgb(mdf_impl *impl, char *buf, size_t buf_len)
 {
     html_state quote;
@@ -949,8 +1068,9 @@ const char *html_theme_quote_rgb(mdf_impl *impl, char *buf, size_t buf_len)
 
 int html_write_style(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, int list_marker)
 {
-    char buf[160];
+    char buf[320];
     char rgb_buf[32];
+    char bg_buf[32];
     int heading_level;
     size_t len;
 
@@ -958,6 +1078,16 @@ int html_write_style(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, in
     heading_level = html_semantic_heading_level(impl, seg->fg, seg->bold, seg->italic, seg->underline, list_marker);
     if (snprintf(buf, sizeof(buf), "color:rgb(%s);", html_fg_rgb(impl, seg, rgb_buf, sizeof(rgb_buf))) < 0) return -1;
     len = strlen(buf);
+    if (seg->bg != -1) {
+        const char *bg;
+
+        bg = html_bg_rgb(impl, seg, bg_buf, sizeof(bg_buf));
+        len += (size_t)snprintf(buf + len, sizeof(buf) - len, "background-color:rgb(%s);", bg);
+        if (len >= sizeof(buf)) return -1;
+        if (len + strlen(MDF_HTML_BG_CELL_STYLE) >= sizeof(buf)) return -1;
+        memcpy(buf + len, MDF_HTML_BG_CELL_STYLE, strlen(MDF_HTML_BG_CELL_STYLE));
+        len += strlen(MDF_HTML_BG_CELL_STYLE);
+    }
     if (heading_level > 0) {
         const char *size_css;
         size_css = html_heading_span_size(heading_level);
@@ -983,10 +1113,11 @@ int html_write_style(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, in
     return mdf_write_all(sink, buf, len);
 }
 
-static int html_write_style_effective(mdf_impl *impl, mdf_sink *sink, int fg, int bold, int italic, int underline, int list_marker)
+static int html_write_style_effective(mdf_impl *impl, mdf_sink *sink, int fg, int bg, int bold, int italic, int underline, int list_marker)
 {
-    char buf[160];
+    char buf[320];
     char rgb_buf[32];
+    char bg_buf[32];
     const char *rgb;
     int heading_level;
     size_t len;
@@ -995,6 +1126,16 @@ static int html_write_style_effective(mdf_impl *impl, mdf_sink *sink, int fg, in
     heading_level = html_semantic_heading_level(impl, fg, bold, italic, underline, list_marker);
     if (snprintf(buf, sizeof(buf), "color:rgb(%s);", rgb) < 0) return -1;
     len = strlen(buf);
+    if (bg != -1) {
+        const char *bg_rgb;
+
+        bg_rgb = html_rgb_for_fg(impl, bg, 0, bg_buf, sizeof(bg_buf));
+        len += (size_t)snprintf(buf + len, sizeof(buf) - len, "background-color:rgb(%s);", bg_rgb);
+        if (len >= sizeof(buf)) return -1;
+        if (len + strlen(MDF_HTML_BG_CELL_STYLE) >= sizeof(buf)) return -1;
+        memcpy(buf + len, MDF_HTML_BG_CELL_STYLE, strlen(MDF_HTML_BG_CELL_STYLE));
+        len += strlen(MDF_HTML_BG_CELL_STYLE);
+    }
     if (heading_level > 0) {
         const char *size_css;
         size_css = html_heading_span_size(heading_level);
@@ -1024,6 +1165,7 @@ static int html_stream_plain_ensure_style(mdf_impl *impl,
                                           html_state *state,
                                           mdf_sink *sink,
                                           int fg,
+                                          int bg,
                                           int bold,
                                           int italic,
                                           int underline,
@@ -1048,6 +1190,7 @@ static int html_stream_plain_ensure_style(mdf_impl *impl,
     same = state->stream_span_open &&
            state->stream_italic == italic &&
            state->stream_underline == underline &&
+           state->stream_bg == bg &&
            old_level == new_level &&
            old_bold_effect == new_bold_effect &&
            html_stream_same_link_buf(state->stream_link, state->stream_link_len, link, link_len);
@@ -1072,24 +1215,15 @@ static int html_stream_plain_ensure_style(mdf_impl *impl,
         state->stream_link_open = 1;
     }
     {
-        html_buf_sink span;
-        mdf_sink span_sink;
-
-        memset(&span, 0, sizeof(span));
-        span.allocator = &impl->allocator;
-        span_sink.userdata = &span;
-        span_sink.write = html_buf_sink_write;
-        if (mdf_write_cstr(&span_sink, "<span style=\"") != 0 ||
-            html_write_style_effective(impl, &span_sink, fg, bold, italic, underline, 0) != 0 ||
-            mdf_write_cstr(&span_sink, "\">") != 0 ||
-            mdf_write_all(sink, span.buf, span.len) != 0) {
-            mdf_free_mem(&impl->allocator, span.buf, span.cap);
+        if (mdf_write_cstr(sink, "<span style=\"") != 0 ||
+            html_write_style_effective(impl, sink, fg, bg, bold, italic, underline, 0) != 0 ||
+            mdf_write_cstr(sink, "\">") != 0) {
             return -1;
         }
-        mdf_free_mem(&impl->allocator, span.buf, span.cap);
     }
     state->stream_span_open = 1;
     state->stream_fg = fg;
+    state->stream_bg = bg;
     state->stream_bold = bold;
     state->stream_italic = italic;
     state->stream_underline = underline;
@@ -1111,6 +1245,7 @@ static int html_stream_emit_buffered_plain(mdf_impl *impl, html_state *state, md
                                            state,
                                            sink,
                                            seg->fg,
+                                           seg->bg,
                                            seg->bold,
                                            seg->italic,
                                            seg->underline,
@@ -1118,7 +1253,7 @@ static int html_stream_emit_buffered_plain(mdf_impl *impl, html_state *state, md
                                            seg->link_len) != 0) {
             return -1;
         }
-        if (html_escape(sink, seg->text, seg->len) != 0) {
+        if (html_escape_styled_cells(impl, sink, seg->text, seg->len, seg->fg, seg->bold, 0) != 0) {
             return -1;
         }
     }
@@ -1163,6 +1298,7 @@ static int html_stream_emit_current_char(mdf_impl *impl, html_state *state, mdf_
                                                state,
                                                sink,
                                                state->fg,
+                                               state->bg,
                                                state->bold,
                                                state->italic,
                                                state->underline,
@@ -1171,7 +1307,13 @@ static int html_stream_emit_current_char(mdf_impl *impl, html_state *state, mdf_
                 return -1;
             }
         }
-        if (html_escape(sink, state->stream_utf8_buf, state->stream_utf8_len) != 0) {
+        if (html_escape_styled_cells(impl,
+                                     sink,
+                                     state->stream_utf8_buf,
+                                     state->stream_utf8_len,
+                                     state->fg,
+                                     state->bold,
+                                     0) != 0) {
             return -1;
         }
         state->stream_utf8_len = 0;
@@ -1185,6 +1327,7 @@ static int html_stream_emit_current_char(mdf_impl *impl, html_state *state, mdf_
                                        state,
                                        sink,
                                        state->fg,
+                                       state->bg,
                                        state->bold,
                                        state->italic,
                                        state->underline,
@@ -1366,7 +1509,7 @@ static int html_emit_plain_segment_table(mdf_impl *impl, mdf_sink *sink, const c
     return 0;
 }
 
-int html_emit_segment_slice(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, size_t off, size_t len, const html_segment *base_style, int list_marker, int suppress_link)
+int html_emit_segment_slice(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, size_t off, size_t len, const html_segment *base_style, int list_marker, int suppress_link, int render_cells)
 {
     int use_wrapper;
 
@@ -1397,7 +1540,7 @@ int html_emit_segment_slice(mdf_impl *impl, mdf_sink *sink, const html_segment *
         }
         mdf_free_mem(&impl->allocator, span.buf, span.cap);
     }
-    if (html_escape(sink, seg->text + off, len) != 0) return -1;
+    if (html_escape_styled_cells(impl, sink, seg->text + off, len, seg->fg, seg->bold, render_cells) != 0) return -1;
     if (use_wrapper) {
         if (mdf_write_cstr(sink, "</span>") != 0) return -1;
     }
@@ -1478,6 +1621,109 @@ size_t html_line_prefix_len(const char *s, size_t len)
         break;
     }
     return any ? i : 0;
+}
+
+static size_t html_chart_container_prefix_len(const char *s, size_t len)
+{
+    size_t i;
+    size_t prefix;
+    int any;
+
+    i = 0;
+    prefix = 0;
+    any = 0;
+    while (i < len) {
+        while (i < len && s[i] == ' ') {
+            i++;
+        }
+        if (i + 1 < len && s[i] == '>' && s[i + 1] == ' ') {
+            i += 2;
+            prefix = i;
+            any = 1;
+            continue;
+        }
+        break;
+    }
+    return any ? prefix : 0;
+}
+
+static int html_vertical_chart_axis_at(const char *s, size_t len, size_t off)
+{
+    if (off + 3 > len ||
+        (unsigned char)s[off] != 0xe2 ||
+        (unsigned char)s[off + 1] != 0x94) {
+        return 0;
+    }
+    return (unsigned char)s[off + 2] == 0x82 ||
+           (unsigned char)s[off + 2] == 0x94 ||
+           (unsigned char)s[off + 2] == 0xa4;
+}
+
+static size_t html_vertical_chart_axis_col(const char *s, size_t len, size_t start, int *found)
+{
+    size_t i;
+
+    i = start;
+    while (i < len) {
+        if (html_vertical_chart_axis_at(s, len, i)) {
+            *found = 1;
+            return i - start;
+        }
+        i++;
+    }
+    *found = 0;
+    return 0;
+}
+
+static size_t html_vertical_chart_content_start(html_state *state, const char *s, size_t len, size_t start)
+{
+    size_t i;
+    size_t label_start;
+    size_t label_len;
+    size_t axis_col;
+    size_t trim;
+    int found;
+
+    i = start;
+    while (i < len && s[i] == ' ') {
+        i++;
+    }
+    label_start = i;
+    if (i < len && (s[i] == '-' || s[i] == '+')) {
+        i++;
+    }
+    while (i < len && ((s[i] >= '0' && s[i] <= '9') || s[i] == '.')) {
+        i++;
+    }
+    label_len = i - label_start;
+    if (label_len > 0 && label_len < 4 &&
+        i + 4 <= len &&
+        s[i] == ' ' &&
+        (unsigned char)s[i + 1] == 0xe2 &&
+        (unsigned char)s[i + 2] == 0x94 &&
+        (unsigned char)s[i + 3] == 0xa4 &&
+        start < label_start &&
+        s[start] == ' ') {
+        start++;
+    }
+    axis_col = html_vertical_chart_axis_col(s, len, start, &found);
+    if (!found) {
+        return start;
+    }
+    if (!state->chart_vertical_axis_col_valid) {
+        state->chart_vertical_axis_col = axis_col;
+        state->chart_vertical_axis_col_valid = 1;
+        return start;
+    }
+    if (axis_col <= state->chart_vertical_axis_col) {
+        return start;
+    }
+    trim = axis_col - state->chart_vertical_axis_col;
+    while (trim > 0 && start < len && s[start] == ' ') {
+        start++;
+        trim--;
+    }
+    return start;
 }
 
 static int html_heading_level(const char *s, size_t len)
@@ -1723,6 +1969,9 @@ static int html_maybe_start_stream_line(mdf_renderer *self, mdf_sink *sink)
     if (state == NULL || state->stream_mode != 0) {
         return 0;
     }
+    if (state->chart_mode) {
+        return 0;
+    }
     kind = html_line_stream_kind(state, &heading_level);
     if (kind == 0) {
         return 0;
@@ -1732,23 +1981,11 @@ static int html_maybe_start_stream_line(mdf_renderer *self, mdf_sink *sink)
         if (base_seg == NULL) {
             return 0;
         }
-        {
-            html_buf_sink span;
-            mdf_sink span_sink;
-
-            memset(&span, 0, sizeof(span));
-            span.allocator = &impl->allocator;
-            span_sink.userdata = &span;
-            span_sink.write = html_buf_sink_write;
-            if (mdf_write_cstr(&span_sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
-                html_write_style(impl, &span_sink, base_seg, 0) != 0 ||
-                html_write_heading_suffix(&span_sink, heading_level) != 0 ||
-                mdf_write_cstr(&span_sink, "\">") != 0 ||
-                mdf_write_all(sink, span.buf, span.len) != 0) {
-                mdf_free_mem(&impl->allocator, span.buf, span.cap);
-                return -1;
-            }
-            mdf_free_mem(&impl->allocator, span.buf, span.cap);
+        if (mdf_write_cstr(sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
+            html_write_style(impl, sink, base_seg, 0) != 0 ||
+            html_write_heading_suffix(sink, heading_level) != 0 ||
+            mdf_write_cstr(sink, "\">") != 0) {
+            return -1;
         }
         heading_marker_len = html_heading_marker_len(state->line_plain, state->line_plain_len, heading_level);
         if (heading_marker_len > 0 && mdf_write_all(sink, state->line_plain, heading_marker_len) != 0) return -1;
@@ -2098,7 +2335,8 @@ int html_emit_line_range(mdf_impl *impl, html_state *state, mdf_sink *sink, size
                                     off,
                                     base_style,
                                     prefix_mode && html_is_list_marker_text(seg->text + slice_start, off),
-                                    suppress_link) != 0) {
+                                    suppress_link,
+                                    state->chart_mode) != 0) {
             return -1;
         }
         pos = seg_end;
@@ -2130,7 +2368,13 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
     if (state->line_plain_len == 0) {
         return mdf_write_cstr(sink, "\n");
     }
-    prefix_len = html_line_prefix_len(state->line_plain, state->line_plain_len);
+    if (state->chart_mode) {
+        prefix_len = state->chart_kind == MDF_CHART_KIND_TILE ?
+                     html_line_prefix_len(state->line_plain, state->line_plain_len) :
+                     html_chart_container_prefix_len(state->line_plain, state->line_plain_len);
+    } else {
+        prefix_len = html_line_prefix_len(state->line_plain, state->line_plain_len);
+    }
     heading_level = prefix_len == 0 ? html_heading_level(state->line_plain, state->line_plain_len) : 0;
     base_seg = state->segment_count > 0 ? &state->segments[0] : NULL;
     content_seg = NULL;
@@ -2242,6 +2486,29 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         if (!final_line && mdf_write_cstr(sink, "\n") != 0) return -1;
         return 0;
     }
+    if (state->chart_mode && prefix_len > 0) {
+        size_t content_start;
+
+        content_start = prefix_len;
+        if (state->chart_kind == MDF_CHART_KIND_HORIZONTAL_BAR) {
+            while (content_start < state->line_plain_len && state->line_plain[content_start] == ' ') {
+                content_start++;
+            }
+        } else if (state->chart_kind == MDF_CHART_KIND_VERTICAL_BAR) {
+            content_start = html_vertical_chart_content_start(state, state->line_plain, state->line_plain_len, content_start);
+        }
+        if (mdf_write_cstr(sink, state->chart_kind == MDF_CHART_KIND_TILE ?
+                           "<span class=\"mdf-line mdf-chart-line\" style=\"display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\">" :
+                           "<span class=\"mdf-line mdf-chart-line\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\">") != 0) return -1;
+        if (html_emit_line_range(impl, state, sink, content_start, state->line_plain_len, NULL, 0, 0) != 0) return -1;
+        if (final_line) {
+            return 0;
+        }
+        if (state->chart_kind == MDF_CHART_KIND_TILE) {
+            return mdf_write_cstr(sink, "</span></span>");
+        }
+        return mdf_write_cstr(sink, "</span></span>\n");
+    }
     if (prefix_len > 0) {
         whole_line_link = 0;
         whole_link = NULL;
@@ -2276,13 +2543,13 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         if (whole_line_link && whole_link != NULL) {
             if (html_write_open_link_grouped(impl, sink, whole_link, whole_link_len) != 0) return -1;
         }
-        if (mdf_write_cstr(sink, "<span class=\"mdf-line\"><span class=\"mdf-prefix\">") != 0) return -1;
+        if (mdf_write_cstr(sink, state->chart_mode ? "<span class=\"mdf-line mdf-chart-line\" style=\"white-space:pre;overflow-wrap:normal;\"><span class=\"mdf-prefix\">" : "<span class=\"mdf-line\"><span class=\"mdf-prefix\">") != 0) return -1;
         if (impl->opts.boring && html_prefix_can_coalesce_boring(impl, state, prefix_len)) {
             if (mdf_write_cstr(sink, "<span style=\"color:rgb(0,0,0);\">") != 0 ||
                 html_escape(sink, state->line_plain, prefix_len) != 0 ||
                 mdf_write_cstr(sink, "</span>") != 0) return -1;
         } else if (html_emit_line_range(impl, state, sink, 0, prefix_len, NULL, 1, 0) != 0) return -1;
-        if (mdf_write_cstr(sink, "</span><span class=\"mdf-content\">") != 0) return -1;
+        if (mdf_write_cstr(sink, state->chart_mode ? "</span><span class=\"mdf-content\" style=\"white-space:pre;overflow-wrap:normal;\">" : "</span><span class=\"mdf-content\">") != 0) return -1;
         if (html_emit_line_range(impl, state, sink, prefix_len, state->line_plain_len, NULL, 0, whole_line_link) != 0) return -1;
         if (whole_line_link) {
             if (mdf_write_cstr(sink, "</a>") != 0) return -1;
@@ -2293,6 +2560,29 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         if (mdf_write_cstr(sink, "</span></span>") != 0) return -1;
         if (mdf_write_cstr(sink, "\n") != 0) return -1;
         return 0;
+    }
+    if (state->chart_mode) {
+        size_t content_start;
+
+        content_start = 0;
+        if (state->chart_kind == MDF_CHART_KIND_HORIZONTAL_BAR) {
+            while (content_start < state->line_plain_len && state->line_plain[content_start] == ' ') {
+                content_start++;
+            }
+        } else if (state->chart_kind == MDF_CHART_KIND_VERTICAL_BAR) {
+            content_start = html_vertical_chart_content_start(state, state->line_plain, state->line_plain_len, content_start);
+        }
+        if (mdf_write_cstr(sink, state->chart_kind == MDF_CHART_KIND_TILE ?
+                           "<span class=\"mdf-line mdf-chart-line\" style=\"display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\">" :
+                           "<span class=\"mdf-line mdf-chart-line\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\">") != 0) return -1;
+        if (html_emit_line_range(impl, state, sink, content_start, state->line_plain_len, NULL, 0, 0) != 0) return -1;
+        if (final_line) {
+            return 0;
+        }
+        if (state->chart_kind == MDF_CHART_KIND_TILE) {
+            return mdf_write_cstr(sink, "</span></span>");
+        }
+        return mdf_write_cstr(sink, "</span></span>\n");
     }
     if (html_emit_line_range(impl, state, sink, 0, state->line_plain_len, NULL, 0, 0) != 0) return -1;
     if (final_line) {
@@ -2458,6 +2748,7 @@ static void html_bridge_scope_begin(mdf_renderer *self, mdf_sink *sink, html_bri
     scope->save_width = impl->opts.width;
     scope->save_osc8 = impl->opts.osc8;
     scope->save_boring = impl->opts.boring;
+    scope->save_chart_suppress_centering = impl->chart_suppress_centering;
     impl->opts.width = 0;
     impl->opts.osc8 = 1;
     impl->opts.boring = 0;
@@ -2468,6 +2759,7 @@ static void html_bridge_scope_end(html_bridge_scope *scope)
     scope->impl->opts.width = scope->save_width;
     scope->impl->opts.osc8 = scope->save_osc8;
     scope->impl->opts.boring = scope->save_boring;
+    scope->impl->chart_suppress_centering = scope->save_chart_suppress_centering;
 }
 
 static int html_should_flush_ansi_word_after_text(const mdf_impl *impl, const mdf_token *token)
@@ -2485,24 +2777,104 @@ static int html_should_flush_ansi_word_after_text(const mdf_impl *impl, const md
            impl->ansi_word_len > 0;
 }
 
+static int html_pending_line_is_quote_prefix_only(const html_state *state)
+{
+    size_t i;
+
+    if (state == NULL || state->pending_newline || state->line_plain_len == 0) {
+        return 0;
+    }
+    i = 0;
+    while (i < state->line_plain_len && state->line_plain[i] == ' ') {
+        i++;
+    }
+    if (i >= state->line_plain_len || state->line_plain[i] != '>') {
+        return 0;
+    }
+    i++;
+    while (i < state->line_plain_len && state->line_plain[i] == ' ') {
+        i++;
+    }
+    return i == state->line_plain_len;
+}
+
 static int html_bridge_run_token(mdf_renderer *self, mdf_sink *sink, const mdf_token *token)
 {
     mdf_impl *impl;
+    html_state *state;
     html_bridge_scope bridge;
+    int chart_width;
+    int chart_token;
+    int saved_chart_mode;
+    int saved_chart_kind;
+    int saved_chart_vertical_axis_col_valid;
+    size_t saved_chart_vertical_axis_col;
+    int rc;
 
     impl = (mdf_impl *)self->impl;
-    html_bridge_scope_begin(self, sink, &bridge);
-    if (ansi_write_token(self, token, &bridge.sink) != 0) {
-        html_bridge_scope_end(&bridge);
+    state = html_state_get(impl);
+    if (state == NULL) {
         return -1;
     }
-    if (html_should_flush_ansi_word_after_text(impl, token) &&
-        ansi_flush_word(impl, &bridge.sink) != 0) {
-        html_bridge_scope_end(&bridge);
+    chart_token = token->type == MDF_TOKEN_CHART_BLOCK;
+    saved_chart_mode = state->chart_mode;
+    saved_chart_kind = state->chart_kind;
+    saved_chart_vertical_axis_col_valid = state->chart_vertical_axis_col_valid;
+    saved_chart_vertical_axis_col = state->chart_vertical_axis_col;
+    if (chart_token) {
+        if (html_pending_line_is_quote_prefix_only(state)) {
+            html_state_clear_line(impl, state);
+        } else if (html_flush_pending_lines(self, sink, 0, '\n') != 0) {
+            return -1;
+        }
+    }
+    if (chart_token && state->stream_mode != 0 && html_stream_close_line(self, sink, 0) != 0) {
         return -1;
+    }
+    state->chart_mode = chart_token ? 1 : saved_chart_mode;
+    state->chart_kind = chart_token ? (token->level & MDF_CHART_KIND_MASK) : saved_chart_kind;
+    if (chart_token) {
+        state->chart_vertical_axis_col_valid = 0;
+        state->chart_vertical_axis_col = 0;
+    }
+    if (chart_token && mdf_write_cstr(sink, "<div class=\"mdf-chart-block\" style=\"width:100%;text-align:center;\"><span class=\"mdf-chart-box\" style=\"display:inline-block;text-align:left;\">") != 0) {
+        state->chart_mode = saved_chart_mode;
+        state->chart_kind = saved_chart_kind;
+        state->chart_vertical_axis_col_valid = saved_chart_vertical_axis_col_valid;
+        state->chart_vertical_axis_col = saved_chart_vertical_axis_col;
+        return -1;
+    }
+    html_bridge_scope_begin(self, sink, &bridge);
+    if (chart_token) {
+        chart_width = (int)(impl->opts.html_content_width_ch + 0.5);
+        if (chart_width > 0) {
+            impl->opts.width = chart_width;
+        }
+        impl->chart_suppress_centering = 1;
+        if (bridge.save_boring) {
+            impl->opts.boring = 1;
+            bridge.bridge.boring = 1;
+        }
+    }
+    rc = 0;
+    if (ansi_write_token(self, token, &bridge.sink) != 0) {
+        rc = -1;
+    } else if (html_should_flush_ansi_word_after_text(impl, token) &&
+               ansi_flush_word(impl, &bridge.sink) != 0) {
+        rc = -1;
+    }
+    if (rc == 0 && chart_token && html_flush_pending_lines(self, sink, 0, '\n') != 0) {
+        rc = -1;
     }
     html_bridge_scope_end(&bridge);
-    return 0;
+    if (chart_token && mdf_write_cstr(sink, "</span></div>") != 0) {
+        rc = -1;
+    }
+    state->chart_mode = saved_chart_mode;
+    state->chart_kind = saved_chart_kind;
+    state->chart_vertical_axis_col_valid = saved_chart_vertical_axis_col_valid;
+    state->chart_vertical_axis_col = saved_chart_vertical_axis_col;
+    return rc;
 }
 
 int html_bridge_run_ansi_newline(mdf_renderer *self, mdf_sink *sink)
@@ -2524,7 +2896,9 @@ void html_state_reset(html_state *state)
 {
     memset(state, 0, sizeof(*state));
     state->fg = -1;
+    state->bg = -1;
     state->stream_fg = -1;
+    state->stream_bg = -1;
 }
 
 void html_state_release(mdf_impl *impl, html_state *state)
@@ -2640,31 +3014,21 @@ int html_emit_inline_state(mdf_impl *impl, html_state *state, mdf_sink *sink, in
         use_span = 0;
         group_text = html_segment_needs_grouped_table_text(state, i, header, &bracket_group);
         if (header) {
-            if (seg->bold || seg->italic || seg->underline || seg->fg != -1 || seg->link_len > 0) {
+            if (seg->bold || seg->italic || seg->underline || seg->fg != -1 || seg->bg != -1 || seg->link_len > 0) {
                 use_span = 1;
             }
-        } else if (seg->bold || seg->italic || seg->underline || seg->fg != -1) {
+        } else if (seg->bold || seg->italic || seg->underline || seg->fg != -1 || seg->bg != -1) {
             use_span = 1;
         }
         if (seg->link_len > 0) {
             if (html_write_open_link_grouped(impl, sink, seg->link, seg->link_len) != 0) return -1;
         }
         if (use_span) {
-            html_buf_sink span;
-            mdf_sink span_sink;
-
-            memset(&span, 0, sizeof(span));
-            span.allocator = &impl->allocator;
-            span_sink.userdata = &span;
-            span_sink.write = html_buf_sink_write;
-            if (mdf_write_cstr(&span_sink, "<span style=\"") != 0 ||
-                html_write_style_effective(impl, &span_sink, fg, bold, italic, underline, 0) != 0 ||
-                mdf_write_cstr(&span_sink, "\">") != 0 ||
-                mdf_write_all(sink, span.buf, span.len) != 0) {
-                mdf_free_mem(&impl->allocator, span.buf, span.cap);
+            if (mdf_write_cstr(sink, "<span style=\"") != 0 ||
+                html_write_style_effective(impl, sink, fg, seg->bg, bold, italic, underline, 0) != 0 ||
+                mdf_write_cstr(sink, "\">") != 0) {
                 return -1;
             }
-            mdf_free_mem(&impl->allocator, span.buf, span.cap);
         }
         if (group_text) {
             if (bracket_group && mdf_write_all(sink, seg->text, 1) != 0) {
@@ -2678,13 +3042,14 @@ int html_emit_inline_state(mdf_impl *impl, html_state *state, mdf_sink *sink, in
         } else {
             if (!header &&
                 seg->fg == -1 &&
+                seg->bg == -1 &&
                 !seg->bold &&
                 !seg->italic &&
                 !seg->underline &&
                 seg->link_len == 0) {
                 if (html_emit_plain_segment_table(impl, sink, seg->text, seg->len) != 0) return -1;
             } else {
-                if (html_escape(sink, seg->text, seg->len) != 0) return -1;
+                if (html_escape_styled_cells(impl, sink, seg->text, seg->len, fg, bold, state->chart_mode) != 0) return -1;
             }
         }
         if (use_span) {

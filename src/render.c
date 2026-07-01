@@ -2,7 +2,7 @@
 
 int render_token_is_text(mdf_token_type t)
 {
-    return t == MDF_TOKEN_TEXT || t == MDF_TOKEN_SPACE || t == MDF_TOKEN_CODE_TEXT;
+    return t == MDF_TOKEN_TEXT || t == MDF_TOKEN_SPACE || t == MDF_TOKEN_CODE_TEXT || t == MDF_TOKEN_CHART_BLOCK;
 }
 
 mdf_status mdf_renderer_fail_session(mdf_renderer *self, mdf_status st, const char *msg)

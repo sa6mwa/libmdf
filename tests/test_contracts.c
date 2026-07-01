@@ -531,6 +531,53 @@ static int test_table_contract(void)
     return fails;
 }
 
+static int test_chart_trace_contract(void)
+{
+    static const char markdown[] =
+        "```mdf-bar-chart,sort\n"
+        "Build,40\n"
+        "Test,25\n"
+        "Ship,10\n"
+        "```\n"
+        "\n"
+        "```mdf-vertical-bar-chart\n"
+        "A,1\n"
+        "B,3\n"
+        "C,2\n"
+        "```\n"
+        "\n"
+        "```mdf-tile-chart\n"
+        "Build,40\n"
+        "Test,25\n"
+        "Ship,10\n"
+        "```\n";
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    char *visible;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.width = 60;
+    opts.margin_left = 4;
+    opts.margin_right = 3;
+    opts.boring = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 3, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi chart trace corpus render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi chart writes match traces");
+    fails += expect_line_margins(cap.out, 4, 57, "ansi charts honor margins under trace");
+    fails += expect_no_styled_line_without_margin(cap.out, "ansi chart styles never precede left margin");
+    visible = strip_ansi(cap.out);
+    fails += expect(visible != NULL, "ansi chart visible output strips styles");
+    fails += expect_contains(visible, "53.3%", "horizontal chart percentage is present");
+    fails += expect_contains(visible, "│", "vertical chart axis is present");
+    fails += expect_contains(visible, "Build 40", "tile chart raw-value legend is present");
+    free(visible);
+    capture_free(&cap);
+    return fails;
+}
+
 static int test_html_link_safety_contract(void)
 {
     static const char markdown[] =
@@ -1084,6 +1131,7 @@ int main(void)
     fails += test_stream_trace_contract();
     fails += test_margin_contract();
     fails += test_table_contract();
+    fails += test_chart_trace_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();

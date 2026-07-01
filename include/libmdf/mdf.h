@@ -12,6 +12,7 @@ extern "C" {
 #define LIBMDF_VERSION_MINOR 0
 #define LIBMDF_VERSION_PATCH 0
 
+/** Result codes returned by libmdf constructors and render entry points. */
 typedef enum mdf_status {
     MDF_OK = 0,
     MDF_ERROR_INVALID = 1,
@@ -20,22 +21,32 @@ typedef enum mdf_status {
     MDF_ERROR_PARSE = 4
 } mdf_status;
 
+/**
+ * Output renderer selection.
+ *
+ * MDF_FORMAT_ANSI emits terminal-oriented styled text. MDF_FORMAT_HTML emits a
+ * complete HTML document. libmdf-specific chart fences are supported by both
+ * renderers and use the active theme in both formats.
+ */
 typedef enum mdf_format {
     MDF_FORMAT_ANSI = 0,
     MDF_FORMAT_HTML = 1
 } mdf_format;
 
+/** Streaming/buffering mode for Markdown table rendering. */
 typedef enum mdf_table_buffer_mode {
     MDF_TABLE_BUFFER_FULL = 0,
     MDF_TABLE_BUFFER_ROW = 1
 } mdf_table_buffer_mode;
 
+/** Border style used for ANSI table output. */
 typedef enum mdf_table_wire_mode {
     MDF_TABLE_WIRE_LINE = 0,
     MDF_TABLE_WIRE_ASCII = 1,
     MDF_TABLE_WIRE_SPACE = 2
 } mdf_table_wire_mode;
 
+/** Optional allocator hooks. Leave zeroed to use the C runtime allocator. */
 typedef struct mdf_allocator {
     void *userdata;
     void *(*alloc)(void *userdata, size_t size);
@@ -43,16 +54,25 @@ typedef struct mdf_allocator {
     void (*free)(void *userdata, void *ptr, size_t size);
 } mdf_allocator;
 
+/** Optional reusable-memory retention limits. Zero selects library defaults. */
 typedef struct mdf_memory_options {
     size_t max_retained_bytes;
     size_t max_reusable_block_bytes;
 } mdf_memory_options;
 
+/**
+ * ANSI emission trace callback.
+ *
+ * Trace events describe the exact sink write that just happened. Chart fences
+ * rendered as ANSI participate in the same decision-emission surface as normal
+ * text, so charts can be traced without a separate output path.
+ */
 typedef struct mdf_write_trace {
     void *userdata;
     int (*emit)(void *userdata, mdf_format format, const char *src, size_t len);
 } mdf_write_trace;
 
+/** Optional per-renderer emission buffer configuration for ANSI writes. */
 typedef struct mdf_emission_buffer {
     void *data;
     size_t cap;
@@ -66,6 +86,7 @@ typedef struct mdf_emission_buffer {
 #define MDF_HTML_FONT_FORMAT_WOFF2 1
 #define MDF_HTML_FONT_FORMAT_TTF 2
 
+/** One HTML font face supplied as memory bytes or a streaming read callback. */
 typedef struct mdf_html_font_face {
     int format;
     const unsigned char *data;
@@ -74,39 +95,71 @@ typedef struct mdf_html_font_face {
     size_t (*read)(void *userdata, size_t offset, unsigned char *dst, size_t cap, int *err);
 } mdf_html_font_face;
 
+/** Optional HTML font family used by MDF_FORMAT_HTML. */
 typedef struct mdf_html_font {
     const char *family;
     mdf_html_font_face regular;
     mdf_html_font_face italic;
 } mdf_html_font;
 
+/**
+ * Renderer options.
+ *
+ * Call mdf_options_init before setting fields. Chart fences use these options
+ * like the rest of the renderer: ANSI charts honor width, margins, boring,
+ * osc8, theme_name, write_trace, allocator, memory, and emission_buffer. HTML
+ * charts honor theme_name, boring, html_content_width_ch, and html_font.
+ */
 typedef struct mdf_options {
+    /** ANSI wrap width. Horizontal/vertical/tile charts fit to this width after margins. */
     int width;
+    /** ANSI-only left margin emitted on non-empty lines, including chart lines. */
     int margin_left;
+    /** ANSI-only right margin; reduces available text and chart width. */
     int margin_right;
+    /** Disable styling. Charts still render shapes and calculated percentages. */
     int boring;
+    /** Enable OSC8 hyperlinks for ANSI link output. */
     int osc8;
+    /** Built-in theme name. Charts use theme accents for labels, values, and marks. */
     const char *theme_name;
+    /** HTML document width in ch. HTML charts are centered inside this content width. */
     double html_content_width_ch;
+    /** Optional HTML font. cmdf supplies JetBrains Mono; the library does not. */
     mdf_html_font html_font;
+    /** Table buffering mode; does not affect chart fence buffering. */
     mdf_table_buffer_mode table_buffer_mode;
+    /** ANSI table border style; does not affect chart fence drawing. */
     mdf_table_wire_mode table_wire_mode;
+    /** ANSI emission buffer policy. */
     mdf_emission_buffer emission_buffer;
+    /** Reusable-memory retention policy. */
     mdf_memory_options memory;
+    /** ANSI write trace callback. */
     mdf_write_trace write_trace;
+    /** Allocator hooks. */
     mdf_allocator allocator;
 } mdf_options;
 
+/** Streaming input source. Return bytes read, 0 for EOF, and set *err on error. */
 typedef struct mdf_source {
     void *userdata;
     size_t (*read)(void *userdata, char *dst, size_t cap, int *err);
 } mdf_source;
 
+/** Streaming output sink. Return 0 on success and nonzero on write failure. */
 typedef struct mdf_sink {
     void *userdata;
     int (*write)(void *userdata, const char *src, size_t len);
 } mdf_sink;
 
+/**
+ * Renderer token type.
+ *
+ * Most applications should use render or render_cstr. MDF_TOKEN_CHART_BLOCK is
+ * emitted by the parser for libmdf-specific chart fences such as
+ * ```mdf-bar-chart, ```mdf-vertical-bar-chart, and ```mdf-tile-chart.
+ */
 typedef enum mdf_token_type {
     MDF_TOKEN_TEXT = 0,
     MDF_TOKEN_SPACE = 1,
@@ -124,37 +177,65 @@ typedef enum mdf_token_type {
     MDF_TOKEN_CODE_BLOCK_END = 13,
     MDF_TOKEN_CODE_TEXT = 14,
     MDF_TOKEN_THEMATIC_BREAK = 15,
-    MDF_TOKEN_DOCUMENT_END = 16
+    MDF_TOKEN_DOCUMENT_END = 16,
+    /**
+     * Complete chart fence body. token->text is the collected two-column CSV
+     * body and token->level carries the internal chart kind selected by the
+     * fence info string. Prefer Markdown chart fences over constructing this
+     * token manually; the chart-kind numeric values are not public API.
+     */
+    MDF_TOKEN_CHART_BLOCK = 17
 } mdf_token_type;
 
+/** Parser/renderer token passed to write_token implementations. */
 typedef struct mdf_token {
+    /** Token discriminator. */
     mdf_token_type type;
+    /** Token payload bytes. For MDF_TOKEN_CHART_BLOCK this is the chart CSV body. */
     const char *text;
+    /** Token payload byte length. */
     size_t len;
+    /** Token-specific metadata. For MDF_TOKEN_CHART_BLOCK this is an internal chart kind. */
     int level;
 } mdf_token;
 
 typedef struct mdf mdf;
 
 struct mdf {
+    /** Render one already-decided token. Usually called by the parser. */
     mdf_status (*write_token)(mdf *self, const mdf_token *token, mdf_sink *sink);
+    /** Finish streaming output and flush any pending renderer state. */
     mdf_status (*finish)(mdf *self, mdf_sink *sink);
+    /** Stream Markdown from source to sink. */
     mdf_status (*render)(mdf *self, mdf_source *source, mdf_sink *sink);
+    /** Render a NUL-terminated Markdown string into an allocated output string. */
     mdf_status (*render_cstr)(mdf *self, const char *markdown, char **out);
+    /** Return the renderer's latest diagnostic string, or NULL. */
     const char *(*error)(const mdf *self);
+    /** Destroy the renderer. */
     void (*destroy)(mdf *self);
+    /** Free strings returned by this renderer, including render_cstr output. */
     void (*string_free)(mdf *self, char *s);
     void *impl;
 };
 
+/** Initialize options to stable defaults. Must be called before mdf_create. */
 void mdf_options_init(mdf_options *opts);
+/** Create an ANSI or HTML renderer using the supplied options. */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
+/** Set or clear the HTML document title before rendering starts. */
 mdf_status mdf_set_html_title(mdf *self, const char *title);
+/** Stable string for a status code. */
 const char *mdf_status_string(mdf_status status);
+/** Number of built-in themes. */
 size_t mdf_theme_count(void);
+/** Built-in theme name by index, or NULL when index is out of range. */
 const char *mdf_theme_name(size_t index);
+/** Nonzero when name matches a built-in theme, case-insensitively. */
 int mdf_theme_exists(const char *name);
+/** Detect whether the current terminal is likely to support OSC8 links. */
 int mdf_detect_osc8_support(void);
+/** Return terminal width for fd, or fallback when it cannot be detected. */
 int mdf_terminal_width(int fd, int fallback);
 
 #ifdef __cplusplus

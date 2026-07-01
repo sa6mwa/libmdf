@@ -124,7 +124,8 @@ typedef enum mdf_token_type {
     MDF_TOKEN_CODE_BLOCK_END = 13,
     MDF_TOKEN_CODE_TEXT = 14,
     MDF_TOKEN_THEMATIC_BREAK = 15,
-    MDF_TOKEN_DOCUMENT_END = 16
+    MDF_TOKEN_DOCUMENT_END = 16,
+    MDF_TOKEN_CHART_BLOCK = 17
 } mdf_token_type;
 
 typedef struct mdf_token {

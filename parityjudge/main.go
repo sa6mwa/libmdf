@@ -397,11 +397,42 @@ func parityOptionSets(themes []string, borings []bool, osc8s []bool, buffers []m
 	return out
 }
 
-func collectMarkdownFiles(root string) ([]string, error) {
+func parseExcludeList(raw string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, filepath.Clean(part))
+		}
+	}
+	return out
+}
+
+func pathExcluded(path string, excludes []string) bool {
+	path = filepath.Clean(path)
+	for _, exclude := range excludes {
+		if path == exclude {
+			return true
+		}
+		rel, err := filepath.Rel(exclude, path)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func collectMarkdownFiles(root string, excludes []string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if pathExcluded(path, excludes) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			return nil
@@ -617,8 +648,8 @@ func compareLibmdfSuiteCase(mode string, tc paritySuiteCase, trace bool) error {
 	return nil
 }
 
-func compareLibmdfSuite(mode string, suite string, chunks []int, widths []int, optionSets []parityOptions, trace bool, jobs int) error {
-	files, err := collectMarkdownFiles(suite)
+func compareLibmdfSuite(mode string, suite string, excludes []string, chunks []int, widths []int, optionSets []parityOptions, trace bool, jobs int) error {
+	files, err := collectMarkdownFiles(suite, excludes)
 	if err != nil {
 		return err
 	}
@@ -719,6 +750,7 @@ func main() {
 	compareLibmdf := flag.Bool("compare-libmdf", false, "compare Go mdf against libmdf through CGO")
 	traceCompare := flag.Bool("trace-compare", false, "compare renderer-emission traces instead of final output")
 	suite := flag.String("suite", "", "run comparison over markdown files under directory")
+	excludeRaw := flag.String("exclude", "", "exclude markdown suite paths, separated by spaces or commas")
 	chunksRaw := flag.String("chunks", "", "chunk sizes for --suite, separated by spaces or commas")
 	widthsRaw := flag.String("widths", "", "ANSI widths for --suite, separated by spaces or commas")
 	themeRaw := flag.String("theme", "default", "theme for single render/compare")
@@ -789,7 +821,7 @@ func main() {
 				fmt.Fprintf(os.Stderr, "jobs: %v\n", err)
 				os.Exit(2)
 			}
-			if err := compareLibmdfSuite(*mode, *suite, chunks, widths, parityOptionSets(themes, borings, osc8s, tableBuffers, tableWires), *traceCompare, jobs); err != nil {
+			if err := compareLibmdfSuite(*mode, *suite, parseExcludeList(*excludeRaw), chunks, widths, parityOptionSets(themes, borings, osc8s, tableBuffers, tableWires), *traceCompare, jobs); err != nil {
 				fmt.Fprintf(os.Stderr, "compare: %v\n", err)
 				os.Exit(1)
 			}

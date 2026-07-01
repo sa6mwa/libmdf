@@ -211,15 +211,21 @@ int ansi_finish_list_item(mdf_impl *impl, mdf_sink *sink)
 
 int ansi_handle_pending_quote_block_start(mdf_impl *impl, mdf_sink *sink, const mdf_token *token)
 {
+    int visible_col;
+
     impl->pending_quote_end = 0;
     if (token->level <= 0 && impl->ansi_col > 0) {
         impl->quote_open = 1;
+        visible_col = impl->ansi_col;
+        if (impl->opts.margin_left > 0 && visible_col >= impl->opts.margin_left) {
+            visible_col -= impl->opts.margin_left;
+        }
         if (impl->pending_quote_reopen_prefix) {
             impl->pending_quote_reopen_prefix = 0;
             return 1;
         }
         if (impl->inline_mode != 5 &&
-            impl->ansi_col == impl->quote_prefix_indent + 2 &&
+            visible_col == impl->quote_prefix_indent + 2 &&
             impl->ansi_prev_char == ' ' &&
             !impl->ansi_pending_space) {
             return 1;
@@ -274,6 +280,8 @@ int ansi_begin_blockquote(mdf_impl *impl, mdf_sink *sink, int prior_quote_prefix
 
 int ansi_end_blockquote(mdf_impl *impl, mdf_sink *sink)
 {
+    int visible_col;
+
     if (ansi_flush_pre_code_if_active(impl, sink) != 0) return -1;
     if (impl->inline_mode != 5 && ansi_inline_flush_literal(impl, sink) != 0) return -1;
     if (ansi_flush_word(impl, sink) != 0) return -1;
@@ -292,7 +300,11 @@ int ansi_end_blockquote(mdf_impl *impl, mdf_sink *sink)
         }
         return 0;
     }
-    if (impl->ansi_col <= impl->quote_prefix_indent + 1 && impl->ansi_pending_space) {
+    visible_col = impl->ansi_col;
+    if (impl->opts.margin_left > 0 && visible_col >= impl->opts.margin_left) {
+        visible_col -= impl->opts.margin_left;
+    }
+    if (visible_col <= impl->quote_prefix_indent + 1 && impl->ansi_pending_space) {
         impl->ansi_pending_space = 0;
         impl->ansi_pending_space_no_split = 0;
         impl->ansi_pending_space_plain = 0;

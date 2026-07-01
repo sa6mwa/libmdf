@@ -1,0 +1,22 @@
+# Horizontal Bars
+
+Simple three-row bar chart with a header row.
+
+                Build │ ███████████████████████████████ 40 53.3%
+                Test  │ ███████████████████             25 33.3%
+                Ship  │ ████████                        10 13.3%
+
+Horizontal alias with close values.
+
+                Alpha   │ █████████████████████████████ 12 24.0%
+                Beta    │ ███████████████████████████   11 22.0%
+                Gamma   │ ████████████████████████      10 20.0%
+                Delta   │ ██████████████████████        9 18.0%
+                Epsilon │ ███████████████████           8 16.0%
+
+Long labels that force label and bar fitting.
+
+                North America En │ ███████████████████ 188 41.7%
+                Europe Platform  │ █████████████       124 27.5%
+                APAC Developer A │ █████████           92 20.4%
+                Internal Tooling │ █████               47 10.4%

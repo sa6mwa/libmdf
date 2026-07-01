@@ -11,6 +11,7 @@
 typedef struct counting_allocator {
     size_t allocs;
     size_t frees;
+    size_t fail_at_alloc;
 } counting_allocator;
 
 static void *test_alloc(void *userdata, size_t size)
@@ -18,6 +19,9 @@ static void *test_alloc(void *userdata, size_t size)
     counting_allocator *c;
 
     c = (counting_allocator *)userdata;
+    if (c->fail_at_alloc != 0 && c->allocs + 1 == c->fail_at_alloc) {
+        return NULL;
+    }
     c->allocs++;
     return malloc(size);
 }
@@ -29,6 +33,9 @@ static void *test_realloc(void *userdata, void *ptr, size_t old_size, size_t new
     (void)old_size;
     c = (counting_allocator *)userdata;
     if (ptr == NULL) {
+        if (c->fail_at_alloc != 0 && c->allocs + 1 == c->fail_at_alloc) {
+            return NULL;
+        }
         c->allocs++;
     }
     return realloc(ptr, new_size);
@@ -569,6 +576,607 @@ static size_t count_substr(const char *s, const char *needle)
         p += needle_len;
     }
     return count;
+}
+
+static int ansi_style_before(const char *text, const char *pos, const char **style, size_t *style_len)
+{
+    const char *p;
+
+    if (text == NULL || pos == NULL || pos <= text || style == NULL || style_len == NULL) {
+        return 0;
+    }
+    if (pos[-1] != 'm') {
+        return 0;
+    }
+    p = pos - 1;
+    while (p > text && *p != '\033' && *p != '\n') {
+        p--;
+    }
+    if (*p != '\033' || p[1] != '[') {
+        return 0;
+    }
+    *style = p;
+    *style_len = (size_t)(pos - p);
+    return *style_len > 0;
+}
+
+static int ansi_chart_label_matches_bar_style(const char *out, const char *label)
+{
+    const char *label_pos;
+    const char *bar_pos;
+    const char *label_style;
+    const char *bar_style;
+    size_t label_style_len;
+    size_t bar_style_len;
+
+    label_pos = strstr(out, label);
+    if (label_pos == NULL) {
+        return 0;
+    }
+    bar_pos = strstr(label_pos + strlen(label), "\342\226\210");
+    if (bar_pos == NULL) {
+        return 0;
+    }
+    if (!ansi_style_before(out, label_pos, &label_style, &label_style_len) ||
+        !ansi_style_before(out, bar_pos, &bar_style, &bar_style_len)) {
+        return 0;
+    }
+    return label_style_len == bar_style_len &&
+           memcmp(label_style, bar_style, label_style_len) == 0;
+}
+
+static int ansi_chart_texts_match_style(const char *out, const char *first, const char *second)
+{
+    const char *first_pos;
+    const char *second_pos;
+    const char *first_style;
+    const char *second_style;
+    size_t first_style_len;
+    size_t second_style_len;
+
+    first_pos = strstr(out, first);
+    second_pos = first_pos == NULL ? NULL : strstr(first_pos + strlen(first), second);
+    if (first_pos == NULL || second_pos == NULL) {
+        return 0;
+    }
+    if (!ansi_style_before(out, first_pos, &first_style, &first_style_len) ||
+        !ansi_style_before(out, second_pos, &second_style, &second_style_len)) {
+        return 0;
+    }
+    return first_style_len == second_style_len &&
+           memcmp(first_style, second_style, first_style_len) == 0;
+}
+
+static int html_span_style_for_text(const char *out, const char *text, const char **style, size_t *style_len)
+{
+    const char *pos;
+    const char *span;
+    const char *style_start;
+    const char *style_end;
+
+    pos = strstr(out, text);
+    if (pos == NULL) {
+        return 0;
+    }
+    span = pos;
+    while (span > out && strncmp(span, "<span style=\"", 13) != 0) {
+        span--;
+    }
+    if (strncmp(span, "<span style=\"", 13) != 0) {
+        return 0;
+    }
+    style_start = span + 13;
+    style_end = strchr(style_start, '"');
+    if (style_end == NULL || style == NULL || style_len == NULL) {
+        return 0;
+    }
+    *style = style_start;
+    *style_len = (size_t)(style_end - style_start);
+    return 1;
+}
+
+static int html_chart_texts_match_style(const char *out, const char *first, const char *second)
+{
+    const char *first_style;
+    const char *second_style;
+    size_t first_style_len;
+    size_t second_style_len;
+
+    if (!html_span_style_for_text(out, first, &first_style, &first_style_len) ||
+        !html_span_style_for_text(out, second, &second_style, &second_style_len)) {
+        return 0;
+    }
+    return first_style_len == second_style_len &&
+           memcmp(first_style, second_style, first_style_len) == 0;
+}
+
+static int html_chart_label_matches_bar_style(const char *out, const char *label)
+{
+    const char *label_pos;
+    const char *bar_pos;
+    const char *label_span;
+    const char *bar_span;
+    const char *label_style_start;
+    const char *label_style_end;
+    const char *bar_style_start;
+    const char *bar_style_end;
+    const char *label_color;
+    const char *bar_bg;
+    size_t label_style_len;
+    size_t bar_style_len;
+    size_t label_color_len;
+    size_t bar_bg_len;
+
+    label_pos = strstr(out, label);
+    bar_pos = label_pos == NULL ? NULL : strstr(label_pos + strlen(label), "\342\226\210");
+    if (label_pos == NULL || bar_pos == NULL) {
+        return 0;
+    }
+    label_span = label_pos;
+    while (label_span > out && strncmp(label_span, "<span style=\"", 13) != 0) {
+        label_span--;
+    }
+    bar_span = bar_pos;
+    while (bar_span > out && strncmp(bar_span, "<span style=\"", 13) != 0) {
+        bar_span--;
+    }
+    if (strncmp(label_span, "<span style=\"", 13) != 0 ||
+        strncmp(bar_span, "<span style=\"", 13) != 0) {
+        return 0;
+    }
+    label_style_start = label_span + 13;
+    bar_style_start = bar_span + 13;
+    label_style_end = strchr(label_style_start, '"');
+    bar_style_end = strchr(bar_style_start, '"');
+    if (label_style_end == NULL || bar_style_end == NULL) {
+        return 0;
+    }
+    label_style_len = (size_t)(label_style_end - label_style_start);
+    bar_style_len = (size_t)(bar_style_end - bar_style_start);
+    label_color = strstr(label_style_start, "color:rgb(");
+    bar_bg = strstr(bar_style_start, "background-color:rgb(");
+    if (label_color == NULL || label_color >= label_style_end ||
+        bar_bg == NULL || bar_bg >= bar_style_end) {
+        return label_style_len == bar_style_len &&
+               memcmp(label_style_start, bar_style_start, label_style_len) == 0;
+    }
+    label_color += strlen("color:rgb(");
+    bar_bg += strlen("background-color:rgb(");
+    if (strchr(label_color, ')') == NULL || strchr(bar_bg, ')') == NULL) {
+        return 0;
+    }
+    label_color_len = (size_t)(strchr(label_color, ')') - label_color);
+    bar_bg_len = (size_t)(strchr(bar_bg, ')') - bar_bg);
+    return label_color_len == bar_bg_len &&
+           memcmp(label_color, bar_bg, label_color_len) == 0;
+}
+
+static size_t max_visible_line_cols(const char *s)
+{
+    size_t max_cols;
+    size_t cols;
+    size_t i;
+
+    max_cols = 0;
+    cols = 0;
+    for (i = 0; s[i] != '\0'; i++) {
+        unsigned char c;
+
+        c = (unsigned char)s[i];
+        if (s[i] == '\n') {
+            if (cols > max_cols) {
+                max_cols = cols;
+            }
+            cols = 0;
+            continue;
+        }
+        if ((c & 0xc0) == 0x80) {
+            continue;
+        }
+        cols++;
+    }
+    if (cols > max_cols) {
+        max_cols = cols;
+    }
+    return max_cols;
+}
+
+static size_t max_ansi_visible_line_cols(const char *s)
+{
+    char *copy;
+    size_t cols;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    cols = max_visible_line_cols(copy);
+    free(copy);
+    return cols;
+}
+
+static int ansi_visible_contains(const char *s, const char *needle)
+{
+    char *copy;
+    int ok;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    ok = strstr(copy, needle) != NULL;
+    free(copy);
+    return ok;
+}
+
+static int ansi_visible_has_exact_trimmed_line(const char *s, const char *needle)
+{
+    char *copy;
+    const char *line;
+    int ok;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    ok = 0;
+    line = copy;
+    while (*line != '\0') {
+        const char *end;
+        const char *start;
+        size_t needle_len;
+
+        end = strchr(line, '\n');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        start = line;
+        while (start < end && *start == ' ') {
+            start++;
+        }
+        needle_len = strlen(needle);
+        if ((size_t)(end - start) == needle_len && memcmp(start, needle, needle_len) == 0) {
+            ok = 1;
+            break;
+        }
+        if (*end == '\0') {
+            break;
+        }
+        line = end + 1;
+    }
+    free(copy);
+    return ok;
+}
+
+static size_t visible_col_for_ptr(const char *line, const char *pos);
+
+static int first_ansi_visible_line_has_leading_spaces(const char *s, size_t min_spaces)
+{
+    char *copy;
+    const char *line;
+    int ok;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    ok = 0;
+    line = copy;
+    while (*line != '\0') {
+        const char *end;
+        size_t len;
+        size_t spaces;
+
+        end = strchr(line, '\n');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        len = (size_t)(end - line);
+        if (len > 0) {
+            spaces = 0;
+            while (spaces < len && line[spaces] == ' ') {
+                spaces++;
+            }
+            ok = spaces >= min_spaces;
+            break;
+        }
+        if (*end == '\0') {
+            break;
+        }
+        line = end + 1;
+    }
+    free(copy);
+    return ok;
+}
+
+static int visible_line_contains(const char *line, const char *end, const char *needle)
+{
+    size_t needle_len;
+    const char *p;
+
+    needle_len = strlen(needle);
+    if (needle_len == 0) {
+        return 1;
+    }
+    p = line;
+    while (p + needle_len <= end) {
+        if (memcmp(p, needle, needle_len) == 0) {
+            return 1;
+        }
+        p++;
+    }
+    return 0;
+}
+
+static int first_ansi_visible_label_col(const char *s, const char *label, size_t *out_col)
+{
+    char *copy;
+    const char *line;
+    int ok;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    ok = 0;
+    line = copy;
+    while (*line != '\0') {
+        const char *end;
+        const char *pos;
+
+        end = strchr(line, '\n');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        pos = strstr(line, label);
+        if (pos != NULL && pos < end) {
+            *out_col = visible_col_for_ptr(line, pos);
+            ok = 1;
+            break;
+        }
+        if (*end == '\0') {
+            break;
+        }
+        line = end + 1;
+    }
+    free(copy);
+    return ok;
+}
+
+static int ansi_visible_labels_share_col(const char *s, const char **labels, size_t label_count)
+{
+    size_t expected;
+    size_t col;
+    size_t i;
+
+    if (label_count == 0) {
+        return 1;
+    }
+    if (!first_ansi_visible_label_col(s, labels[0], &expected)) {
+        return 0;
+    }
+    for (i = 1; i < label_count; i++) {
+        if (!first_ansi_visible_label_col(s, labels[i], &col) || col != expected) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static mdf_status render_chunked_cstr(mdf *renderer, const char *src, size_t chunk, char **out)
+{
+    chunk_source input;
+    grow_sink output;
+    mdf_source source;
+    mdf_sink sink;
+    mdf_status st;
+
+    memset(&input, 0, sizeof(input));
+    memset(&output, 0, sizeof(output));
+    input.src = src;
+    input.len = strlen(src);
+    input.chunk = chunk;
+    source.userdata = &input;
+    source.read = chunk_read;
+    sink.userdata = &output;
+    sink.write = grow_write;
+    st = renderer->render(renderer, &source, &sink);
+    if (st != MDF_OK) {
+        grow_sink_free(&output);
+        *out = NULL;
+        return st;
+    }
+    if (grow_write(&output, "", 1) != 0) {
+        grow_sink_free(&output);
+        *out = NULL;
+        return MDF_ERROR_NOMEM;
+    }
+    output.len--;
+    *out = output.buf;
+    return MDF_OK;
+}
+
+static int ansi_visible_chart_lines_start_with(const char *s, const char *prefix)
+{
+    char *copy;
+    const char *line;
+    size_t prefix_len;
+    int saw_chart_line;
+    int ok;
+
+    copy = (char *)malloc(strlen(s) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, s);
+    strip_ansi_inplace(copy);
+    prefix_len = strlen(prefix);
+    saw_chart_line = 0;
+    ok = 1;
+    line = copy;
+    while (*line != '\0') {
+        const char *end;
+
+        end = strchr(line, '\n');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        if (visible_line_contains(line, end, "\342\224\202") ||
+            visible_line_contains(line, end, "\342\226\210") ||
+            visible_line_contains(line, end, "chart: no data")) {
+            saw_chart_line = 1;
+            if ((size_t)(end - line) < prefix_len || memcmp(line, prefix, prefix_len) != 0) {
+                ok = 0;
+                break;
+            }
+        }
+        if (*end == '\0') {
+            break;
+        }
+        line = end + 1;
+    }
+    free(copy);
+    return saw_chart_line && ok;
+}
+
+static int html_tile_chart_first_rows_are_adjacent(const char *s)
+{
+    const char *needle;
+    const char *first;
+    const char *second;
+
+    needle = "<span class=\"mdf-line mdf-chart-line\" style=\"display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"";
+    first = strstr(s, needle);
+    if (first == NULL) {
+        return 0;
+    }
+    second = strstr(first + strlen(needle), needle);
+    if (second == NULL) {
+        return 0;
+    }
+    return memchr(first, '\n', (size_t)(second - first)) == NULL;
+}
+
+static int html_quoted_chart_prefix_is_not_chart_line(const char *s)
+{
+    return strstr(s, "\">&gt;</span>\n<div class=\"mdf-chart-block\"") == NULL;
+}
+
+static int visible_line_has_marker_at_col(const char *line, const char *line_end, size_t target_col, const char *marker)
+{
+    size_t col;
+    size_t marker_len;
+    const char *p;
+
+    col = 0;
+    marker_len = strlen(marker);
+    p = line;
+    while (p < line_end && *p != '\0') {
+        unsigned char c;
+
+        c = (unsigned char)*p;
+        if ((c & 0xc0) == 0x80) {
+            p++;
+            continue;
+        }
+        if (col == target_col &&
+            (size_t)(line_end - p) >= marker_len &&
+            memcmp(p, marker, marker_len) == 0) {
+            return 1;
+        }
+        col++;
+        p++;
+    }
+    return 0;
+}
+
+static size_t visible_col_for_ptr(const char *line, const char *pos)
+{
+    const char *p;
+    size_t col;
+
+    col = 0;
+    p = line;
+    while (p < pos && *p != '\0') {
+        unsigned char c;
+
+        c = (unsigned char)*p;
+        if ((c & 0xc0) != 0x80) {
+            col++;
+        }
+        p++;
+    }
+    return col;
+}
+
+static int chart_tick_label_has_marker_above(const char *out, char label, const char *marker)
+{
+    char *copy;
+    const char *line;
+    const char *label_line;
+    const char *label_pos;
+    size_t label_col;
+    int ok;
+
+    copy = (char *)malloc(strlen(out) + 1);
+    if (copy == NULL) {
+        return 0;
+    }
+    strcpy(copy, out);
+    strip_ansi_inplace(copy);
+    label_line = NULL;
+    label_pos = NULL;
+    line = copy;
+    while (*line != '\0') {
+        const char *line_end;
+        const char *p;
+
+        line_end = strchr(line, '\n');
+        if (line_end == NULL) {
+            line_end = line + strlen(line);
+        }
+        p = line;
+        while (p < line_end) {
+            if (*p == label) {
+                label_line = line;
+                label_pos = p;
+            }
+            p++;
+        }
+        line = *line_end == '\n' ? line_end + 1 : line_end;
+    }
+    if (label_line == NULL || label_pos == NULL) {
+        free(copy);
+        return 0;
+    }
+    label_col = visible_col_for_ptr(label_line, label_pos);
+    ok = 0;
+    line = copy;
+    while (line < label_line && *line != '\0') {
+        const char *line_end;
+
+        line_end = strchr(line, '\n');
+        if (line_end == NULL) {
+            line_end = line + strlen(line);
+        }
+        if (visible_line_has_marker_at_col(line, line_end, label_col, marker)) {
+            ok = 1;
+            break;
+        }
+        line = *line_end == '\n' ? line_end + 1 : line_end;
+    }
+    free(copy);
+    return ok;
 }
 
 static int raw_ansi_lines_start_with_margin_outside_styles(const char *out, int left_margin)
@@ -1459,6 +2067,504 @@ int main(void)
     fails += expect(strstr(out, "```") == NULL && strstr(out, "code") != NULL && strstr(out, "\n\nnext") != NULL, "fenced code output");
     renderer->string_free(renderer, out);
     out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nkey,value\nA,10\nB,20\nC,5\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart fence render");
+    fails += expect(strstr(out, "```") == NULL &&
+                    strstr(out, "A ") != NULL &&
+                    strstr(out, "\342\224\202") != NULL &&
+                    strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "57.1%") != NULL &&
+                    strstr(out, "\n\nnext") != NULL,
+                    "horizontal chart renders bars, percentages, and following paragraph");
+    fails += expect(max_ansi_visible_line_cols(out) <= 64,
+                    "horizontal chart uses centered proportional content width by default");
+    fails += expect(first_ansi_visible_line_has_leading_spaces(out, 10),
+                    "ANSI horizontal chart preserves centered leading pad");
+    {
+        size_t top_col;
+        size_t quoted_col;
+        size_t list_col;
+
+        fails += expect(first_ansi_visible_label_col(out, "A ", &top_col),
+                        "top-level chart exposes first label column");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "> ```mdf-bar-chart\n> A,10\n> B,20\n> ```\n\nnext\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "quoted chart fence render");
+        fails += expect(out != NULL &&
+                        strstr(out, "```") == NULL &&
+                        strstr(out, "A ") != NULL &&
+                        strstr(out, "B ") != NULL &&
+                        strstr(out, "\n\nnext") != NULL,
+                        "quoted chart strips container prefixes from chart data and closing fence");
+        fails += expect(out != NULL && ansi_visible_chart_lines_start_with(out, "> "),
+                        "quoted chart emits quote prefix on each chart line");
+        fails += expect(out != NULL &&
+                        first_ansi_visible_label_col(out, "A ", &quoted_col) &&
+                        quoted_col == top_col,
+                        "quoted chart subtracts quote prefix from centered padding");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "- item\n\n  ```mdf-bar-chart\n  A,10\n  B,20\n  ```\n\nnext\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "listed chart fence render");
+        fails += expect(out != NULL &&
+                        strstr(out, "```") == NULL &&
+                        strstr(out, "A ") != NULL &&
+                        strstr(out, "B ") != NULL &&
+                        strstr(out, "\n\nnext") != NULL,
+                        "listed chart strips container indentation from chart body and closing fence");
+        fails += expect(out != NULL &&
+                        first_ansi_visible_label_col(out, "A ", &list_col) &&
+                        list_col == top_col,
+                        "listed chart subtracts list indentation from centered padding");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "> before\n> ```mdf-bar-chart\n> A,1\n> B,2\n> ```\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "quoted chart after text render");
+        fails += expect(out != NULL &&
+                        ansi_visible_contains(out, "> before\n> ") &&
+                        !ansi_visible_contains(out, "> before\n\n>") &&
+                        !ansi_visible_contains(out, "> before        A"),
+                        "quoted chart after text starts on next quote line without blank line");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "> before\n>\n> ```mdf-bar-chart\n> A,1\n> B,2\n> ```\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "quoted chart after blank quote line render");
+        fails += expect(out != NULL &&
+                        ansi_visible_contains(out, "> before\n>\n> ") &&
+                        !ansi_visible_contains(out, "> before\n>\n>\n> ") &&
+                        !ansi_visible_contains(out, "> before\n\n>"),
+                        "quoted chart after blank quote line does not add another quote blank");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "- before\n  ```mdf-bar-chart\n  A,1\n  B,2\n  ```\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "listed chart after text render");
+        fails += expect(out != NULL &&
+                        ansi_visible_contains(out, "- before\n ") &&
+                        !ansi_visible_contains(out, "- before\n\n") &&
+                        !ansi_visible_contains(out, "- before        A"),
+                        "listed chart after text starts on next list line without blank line");
+        renderer->string_free(renderer, out);
+        out = NULL;
+        st = renderer->render_cstr(renderer, "- before\n\n  ```mdf-bar-chart\n  A,1\n  B,2\n  ```\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "listed chart after blank list line render");
+        fails += expect(out != NULL &&
+                        ansi_visible_contains(out, "- before\n\n ") &&
+                        !ansi_visible_contains(out, "- before\n\n\n"),
+                        "listed chart after blank list line does not add another blank line");
+        renderer->string_free(renderer, out);
+        out = NULL;
+    }
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "renderer recreate before chart allocation failure");
+    memset(&sink_data, 0, sizeof(sink_data));
+    sink.userdata = &sink_data;
+    sink.write = mem_write;
+    tok.type = MDF_TOKEN_CHART_BLOCK;
+    tok.text = "A,10\n";
+    tok.len = 5;
+    tok.level = MDF_CHART_KIND_HORIZONTAL_BAR;
+    allocs.fail_at_alloc = allocs.allocs + 1;
+    st = renderer->write_token(renderer, &tok, &sink);
+    fails += expect(st == MDF_ERROR_NOMEM, "chart value allocation failure reports NOMEM");
+    fails += expect(renderer->error(renderer) != NULL &&
+                    strstr(renderer->error(renderer), "out of memory") != NULL,
+                    "chart value allocation failure preserves out-of-memory diagnostic");
+    allocs.fail_at_alloc = 0;
+    if (out != NULL) {
+        renderer->string_free(renderer, out);
+        out = NULL;
+    }
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "renderer recreate after chart allocation failure");
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\n\nA,10\nB,20\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart preserves blank lines inside fence");
+    fails += expect(strstr(out, "chart: no data") == NULL &&
+                    strstr(out, "A ") != NULL &&
+                    strstr(out, "B ") != NULL &&
+                    strstr(out, "\n\nnext") != NULL,
+                    "blank chart line does not terminate chart fence");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "foo\n```mdf-bar-chart\nA,1\n```\nbar\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "paragraph-adjacent chart fence render");
+    fails += expect(strstr(out, "foo ") == NULL &&
+                    strstr(out, "\nbar") != NULL &&
+                    strstr(out, "\n bar") == NULL &&
+                    strstr(out, "A ") != NULL,
+                    "paragraph-adjacent chart does not share text line or leak following space");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\n    ```,2\nA,1\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart preserves indented backtick labels");
+    fails += expect(strstr(out, "```") != NULL &&
+                    strstr(out, "A ") != NULL &&
+                    strstr(out, "next") != NULL,
+                    "four-space indented chart rows do not close the fence");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\n```Label,10\nA,1\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart preserves unindented backtick labels");
+    fails += expect(strstr(out, "Label") != NULL &&
+                    strstr(out, "A ") != NULL &&
+                    strstr(out, "next") != NULL,
+                    "chart row beginning with backticks does not close the fence");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1\n````\nAfter\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart accepts longer closing fence");
+    fails += expect(strstr(out, "A ") != NULL &&
+                    strstr(out, "\nAfter") != NULL &&
+                    strstr(out, "````") == NULL,
+                    "longer chart closing fence closes chart and preserves following text");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1\nOops,no\nB,2\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart skips malformed rows");
+    fails += expect(strstr(out, "A ") != NULL &&
+                    strstr(out, "B ") != NULL &&
+                    strstr(out, "Oops") == NULL &&
+                    strstr(out, "66.7%") != NULL,
+                    "malformed chart row does not truncate subsequent valid rows");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,10\nB,20\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart emits at EOF without closing fence");
+    fails += expect(strstr(out, "A ") != NULL &&
+                    strstr(out, "B ") != NULL &&
+                    strstr(out, "66.7%") != NULL,
+                    "unclosed chart fence renders collected rows");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nNanRow,nan\nInfRow,inf\nFinite,10\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart rejects non-finite values");
+    fails += expect(strstr(out, "Finite") != NULL &&
+                    strstr(out, "100.0%") != NULL &&
+                    strstr(out, "NanRow") == NULL &&
+                    strstr(out, "InfRow") == NULL &&
+                    strstr(out, "nan") == NULL &&
+                    strstr(out, "inf") == NULL,
+                    "non-finite chart rows are skipped");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nHuge,1e100\nSmall,1\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart renders huge finite values");
+    fails += expect(strstr(out, "Huge") != NULL &&
+                    strstr(out, "1e+100") != NULL &&
+                    strstr(out, "100.0%") != NULL,
+                    "huge finite chart value avoids integer formatting overflow");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1e308\nB,1e308\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizontal chart renders huge finite totals");
+    fails += expect(strstr(out, "50.0%") != NULL &&
+                    strstr(out, "nan") == NULL &&
+                    strstr(out, "-nan") == NULL,
+                    "huge finite chart totals keep finite percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 40;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "width 40 huge horizontal chart renderer create");
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nHuge,1.7976931348623157e308\nSmall,1\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "width 40 huge horizontal chart render");
+    fails += expect(strstr(out, "1.79769e+308") != NULL &&
+                    max_ansi_visible_line_cols(out) <= 40,
+                    "horizontal chart reserves actual huge value width");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 0;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "default chart renderer restore after width 40 huge chart");
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,sort=ascending\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "sorted ascending chart render");
+    fails += expect(strstr(out, "C ") != NULL && strstr(out, "A ") != NULL && strstr(out, "B ") != NULL &&
+                    strstr(out, "C ") < strstr(out, "A ") && strstr(out, "A ") < strstr(out, "B "),
+                    "sorted ascending chart orders by value");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,colored-bars=off\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "mono chart option render");
+    fails += expect(strstr(out, "\342\226\210") != NULL && strstr(out, "57.1%") != NULL,
+                    "mono chart option keeps bar output and percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    {
+        mdf_options styled_opts;
+        mdf *styled_renderer;
+        char *styled_out;
+
+        styled_opts = opts;
+        styled_opts.boring = 0;
+        styled_renderer = NULL;
+        styled_out = NULL;
+        st = mdf_create(MDF_FORMAT_ANSI, &styled_opts, &styled_renderer);
+        fails += expect(st == MDF_OK && styled_renderer != NULL, "styled chart color renderer create");
+        if (styled_renderer != NULL) {
+            st = styled_renderer->render_cstr(styled_renderer, "```mdf-bar-chart\nA,10\nB,20\nC,5\n```\n", &styled_out);
+            fails += expect(st == MDF_OK && styled_out != NULL, "styled chart color render");
+            fails += expect(styled_out != NULL && ansi_chart_label_matches_bar_style(styled_out, "A"),
+                            "horizontal chart labels match row bar color");
+            fails += expect(styled_out != NULL && ansi_chart_texts_match_style(styled_out, "A", "10") &&
+                            ansi_chart_texts_match_style(styled_out, "A", " 28.6%"),
+                            "horizontal chart values and percentages match row bar color");
+            styled_renderer->string_free(styled_renderer, styled_out);
+            styled_out = NULL;
+            st = styled_renderer->render_cstr(styled_renderer, "```mdf-bar-chart,colored-bars=off\nA,10\nB,20\nC,5\n```\n", &styled_out);
+            fails += expect(st == MDF_OK && styled_out != NULL, "styled mono chart color render");
+            fails += expect(styled_out != NULL && ansi_chart_label_matches_bar_style(styled_out, "A"),
+                            "mono chart option keeps labels matched to mono bar color");
+            styled_renderer->string_free(styled_renderer, styled_out);
+            styled_out = NULL;
+            st = styled_renderer->render_cstr(styled_renderer, "```mdf-tile-chart\nBuild,40\nTest,25\nShip,10\n```\n", &styled_out);
+            fails += expect(st == MDF_OK && styled_out != NULL, "styled tile chart render");
+            fails += expect(styled_out != NULL &&
+                            strstr(styled_out, "\033[30;") != NULL &&
+                            strstr(styled_out, "Build") != NULL &&
+                            strstr(styled_out, "53.3%") != NULL &&
+                            strstr(styled_out, "■") != NULL,
+                            "styled tile chart renders separated in-bar text and legend");
+            fails += expect(styled_out != NULL && ansi_chart_texts_match_style(styled_out, "■", "40"),
+                            "styled tile chart legend values match segment color");
+            styled_renderer->string_free(styled_renderer, styled_out);
+            styled_out = NULL;
+            st = styled_renderer->render_cstr(styled_renderer,
+                "```mdf-tile-chart\nS01,4\nS02,5\nS03,6\nS04,7\nS05,8\nS06,9\nS07,10\nS08,11\n```\n",
+                &styled_out);
+            fails += expect(st == MDF_OK && styled_out != NULL, "styled dense tile chart render");
+            fails += expect(styled_out != NULL && strstr(styled_out, "\033[4m") == NULL,
+                            "styled dense tile chart color cycle does not underline legend entries");
+            styled_renderer->string_free(styled_renderer, styled_out);
+            styled_renderer->destroy(styled_renderer);
+        }
+    }
+    st = renderer->render_cstr(renderer, "```mdf-vertical-bar-chart\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "vertical chart fence render");
+    fails += expect(strstr(out, "\342\224\224") != NULL &&
+                    strstr(out, "\342\224\200") != NULL &&
+                    strstr(out, "\342\226\210") != NULL,
+                    "vertical chart renders axis and bars");
+    fails += expect(ansi_visible_contains(out, "20 \342\224\244") &&
+                    ansi_visible_contains(out, "10 \342\224\244") &&
+                    ansi_visible_contains(out, " 0 \342\224\224"),
+                    "vertical chart renders y-axis values and ticks");
+    fails += expect(max_ansi_visible_line_cols(out) >= 48,
+                    "vertical chart expands small datasets toward content width");
+    fails += expect(chart_tick_label_has_marker_above(out, 'B', "\342\226\210"),
+                    "vertical chart centers tick labels under bars");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-line-chart\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "line chart fence falls back to code render");
+    fails += expect(strstr(out, "mdf-line-chart") == NULL &&
+                    strstr(out, "A,10") != NULL &&
+                    strstr(out, "\342\227\217") == NULL,
+                    "removed line chart syntax is ordinary fenced code");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-tile-chart\nBuild,40\nTest,25\nShip,10\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "tile chart fence render");
+    fails += expect(strstr(out, "Build") != NULL &&
+                    strstr(out, "53.3%") != NULL &&
+                    strstr(out, "Test") != NULL &&
+                    strstr(out, "33.3%") != NULL &&
+                    strstr(out, "Build 40") != NULL &&
+                    strstr(out, "Test 25") != NULL,
+                    "tile chart renders separated labels, percentages, and raw-value legend");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-tile-chart\nA,0\nB,0\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "zero-total tile chart render");
+    fails += expect(strstr(out, "A 0") != NULL &&
+                    strstr(out, "B 0") != NULL &&
+                    strstr(out, "0.0%") == NULL,
+                    "zero-total tile chart keeps legend without fake in-bar percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 20;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "narrow chart renderer create");
+    st = renderer->render_cstr(renderer,
+        "```mdf-horizontal-bar-chart\nLong label one,1000\nLong label two,500\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "narrow horizontal chart render");
+    fails += expect(max_visible_line_cols(out) <= 20, "narrow horizontal chart scales to configured width");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 8;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "very narrow utf8 chart renderer create");
+    st = renderer->render_cstr(renderer,
+        "```mdf-horizontal-bar-chart\n\303\205ngstr\303\266m,10\nBeta,5\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "very narrow utf8 chart render");
+    fails += expect(strstr(out, "\303\205") != NULL &&
+                    strstr(out, "\303\033") == NULL &&
+                    strstr(out, "\303 ") == NULL,
+                    "narrow chart labels truncate on utf8 boundaries");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 20;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "narrow chart renderer restore after utf8 chart");
+    st = renderer->render_cstr(renderer,
+        "```mdf-tile-chart\nA,1\nB,2\nC,3\nD,4\nE,5\nF,6\nG,7\nH,8\nI,9\nJ,10\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "narrow tile chart render");
+    fails += expect(max_visible_line_cols(out) <= 20, "narrow tile chart scales to configured width");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 60;
+    opts.margin_left = 8;
+    opts.margin_right = 6;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "margin chart renderer create");
+    st = renderer->render_cstr(renderer,
+        "```mdf-bar-chart,sort\nBuild,40\nTest,25\nShip,10\n```\n"
+        "```mdf-vertical-bar-chart\nA,1\nB,3\nC,2\n```\n"
+        "```mdf-tile-chart\nBuild,40\nTest,25\nShip,10\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "margin chart render");
+    fails += expect(out != NULL && raw_ansi_lines_have_margin_before_styles(out, opts.margin_left),
+                    "charts honor ANSI left margin before styles");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    {
+        static const struct {
+            int width;
+            int left;
+            int right;
+        } chart_layout_cases[] = {
+            {60, 0, 0},
+            {80, 0, 0},
+            {60, 20, 20},
+            {72, 4, 8},
+            {96, 20, 20}
+        };
+        static const char *quote_labels[] = {"x", "y", "z"};
+        static const char *list_labels[] = {"@", "~", "?"};
+        static const char *quoted_list_labels[] = {"{", "}", "="};
+        const char *container_chart_src =
+            "Quoted chart.\n\n"
+            "> ```mdf-bar-chart\n"
+            "> x,40\n"
+            "> y,25\n"
+            "> z,10\n"
+            "> ```\n\n"
+            "Listed chart.\n\n"
+            "- item:\n\n"
+            "  ```mdf-bar-chart\n"
+            "  @,40\n"
+            "  ~,25\n"
+            "  ?,10\n"
+            "  ```\n\n"
+            "Quoted list chart.\n\n"
+            "> - item:\n"
+            ">\n"
+            ">   ```mdf-bar-chart\n"
+            ">   {,40\n"
+            ">   },25\n"
+            ">   =,10\n"
+            ">   ```\n";
+        size_t ci;
+
+        for (ci = 0; ci < sizeof(chart_layout_cases) / sizeof(chart_layout_cases[0]); ci++) {
+            opts.width = chart_layout_cases[ci].width;
+            opts.margin_left = chart_layout_cases[ci].left;
+            opts.margin_right = chart_layout_cases[ci].right;
+            opts.boring = 0;
+            renderer->destroy(renderer);
+            renderer = NULL;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+            fails += expect(st == MDF_OK && renderer != NULL, "chunked container chart renderer create");
+            if (renderer != NULL) {
+                st = render_chunked_cstr(renderer, container_chart_src, 3, &out);
+                fails += expect(st == MDF_OK && out != NULL, "chunked container chart render");
+                fails += expect(out != NULL &&
+                                strstr(out, "```") == NULL &&
+                                strstr(out, "> >") == NULL &&
+                                strstr(out, "key,value") == NULL,
+                                "chunked container chart does not leak fences or nested quote prefixes");
+                fails += expect(out != NULL && raw_ansi_lines_have_margin_before_styles(out, opts.margin_left),
+                                "chunked container charts honor margin before styles");
+                fails += expect(out != NULL && max_ansi_visible_line_cols(out) <= (size_t)opts.width,
+                                "chunked container charts stay within configured width");
+                fails += expect(out != NULL &&
+                                ansi_visible_labels_share_col(out, quote_labels, sizeof(quote_labels) / sizeof(quote_labels[0])),
+                                "quoted chunked chart labels share a visible column");
+                fails += expect(out != NULL &&
+                                ansi_visible_labels_share_col(out, list_labels, sizeof(list_labels) / sizeof(list_labels[0])),
+                                "listed chunked chart labels share a visible column");
+                fails += expect(out != NULL &&
+                                ansi_visible_labels_share_col(out, quoted_list_labels, sizeof(quoted_list_labels) / sizeof(quoted_list_labels[0])),
+                                "quoted-list chunked chart labels share a visible column");
+                fails += expect(out != NULL &&
+                                ansi_visible_has_exact_trimmed_line(out, ">"),
+                                "quoted-list chunked chart preserves blank quote line before chart");
+                free(out);
+                out = NULL;
+            }
+        }
+    }
+    opts.width = 0;
+    opts.margin_left = 0;
+    opts.margin_right = 0;
+    opts.boring = 1;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "default width renderer restore after chart tests");
+    {
+        emission_probe probe;
+
+        memset(&probe, 0, sizeof(probe));
+        renderer->destroy(renderer);
+        renderer = NULL;
+        opts.write_trace.userdata = &probe;
+        opts.write_trace.emit = emission_probe_trace_emit;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+        fails += expect(st == MDF_OK && renderer != NULL, "chart trace renderer create");
+        if (st == MDF_OK && renderer != NULL) {
+            mdf_sink trace_sink;
+            chunk_source trace_src;
+            mdf_source trace_source;
+
+            trace_src.src = "```mdf-bar-chart\nA,10\nB,20\n```\n";
+            trace_src.len = strlen(trace_src.src);
+            trace_src.off = 0;
+            trace_src.chunk = 5;
+            trace_source.userdata = &trace_src;
+            trace_source.read = chunk_read;
+            trace_sink.userdata = &probe;
+            trace_sink.write = emission_probe_sink_write;
+            st = renderer->render(renderer, &trace_source, &trace_sink);
+            fails += expect(st == MDF_OK, "chart trace render succeeds");
+            fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
+                            "chart trace events match sink writes one-to-one");
+        }
+        opts.write_trace.userdata = NULL;
+        opts.write_trace.emit = NULL;
+        renderer->destroy(renderer);
+        renderer = NULL;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+        fails += expect(st == MDF_OK && renderer != NULL, "default renderer restore after chart trace");
+    }
     st = renderer->render_cstr(renderer, "* If `.golangci.yml` exists:\n\n```yaml\nversion: \"2\"\nlinters:\n  disable:\n    - errcheck\n```\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "list fenced code render");
     fails += expect(strstr(out, "yamlversion") == NULL && strstr(out, "  version: \"2\"\n  linters:\n    disable:\n      - errcheck") != NULL, "list fenced code strips info and indents");
@@ -1786,6 +2892,13 @@ int main(void)
                     "html safe link schemes remain active anchors");
     renderer->string_free(renderer, out);
     out = NULL;
+    st = renderer->render_cstr(renderer, "Literal \342\226\210 block.\n\n```\n\342\226\210\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html literal block glyph render");
+    fails += expect(strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "display:inline-block;width:1ch;height:1lh;line-height:1lh;vertical-align:top;background-color:rgb(") == NULL,
+                    "html literal block glyphs are not rewritten outside chart output");
+    renderer->string_free(renderer, out);
+    out = NULL;
     st = renderer->render_cstr(renderer,
         "[js](javascript:alert(1)) [case](JaVaScRiPt:alert(1)) [data](data:text/html,boom) [ctrl](java\tscript:alert(1)) [jsurl](javascript://example.com/%0aalert(1))\n",
         &out);
@@ -1828,6 +2941,240 @@ int main(void)
     fails += expect(st == MDF_OK && out != NULL, "html table render");
     fails += expect(strstr(out, "<table class=\"mdf-table mdf-table-bordered\"><thead><tr><th style=\"text-align:left;\">A</th><th style=\"text-align:left;\">B</th></tr></thead><tbody><tr><td style=\"text-align:left;\">1</td><td style=\"text-align:left;\">2</td></tr></tbody></table>") != NULL,
                     "html table renders bordered table structure");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart render");
+    fails += expect(strstr(out, "<div class=\"mdf-chart-block\" style=\"width:100%;text-align:center;\"><span class=\"mdf-chart-box\" style=\"display:inline-block;text-align:left;\">") != NULL &&
+                    strstr(out, "<div class=\"mdf-chart-block\" style=\"text-align:center;\">") == NULL &&
+                    strstr(out, "<div class=\"mdf-chart-block\" style=\"display:table;margin-left:auto;margin-right:auto;text-align:left;\">") == NULL &&
+                    strstr(out, "<span class=\"mdf-line mdf-chart-line\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\"") != NULL &&
+                    strstr(out, "<span class=\"mdf-content\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\">") != NULL &&
+                    strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "background-color:rgb(") != NULL &&
+                    strstr(out, "57.1%") != NULL &&
+                    strstr(out, "color:rgb(") != NULL,
+                    "html chart preserves themed styled chart output without prose wrapping");
+    fails += expect(strstr(out, ">\342\226\210\342\226\210") != NULL &&
+                    strstr(out, "\342\226\210</span>") != NULL,
+                    "html chart paints full block background while preserving glyph text");
+    fails += expect(strstr(out, "display:inline-block;height:1lh;line-height:1lh;vertical-align:top;white-space:pre;color:transparent;background-color:rgb(") != NULL &&
+                    strstr(out, "display:inline-block;width:1ch;height:1lh;line-height:1lh;vertical-align:top;color:inherit;-webkit-text-fill-color:transparent;") != NULL &&
+                    strstr(out, "ch;height:1lh;line-height:1lh;vertical-align:top;white-space:pre;overflow:hidden;color:transparent;background-color:rgb(") == NULL,
+                    "html chart block cells fill row height while axis glyphs remain one-cell spans");
+    fails += expect(html_chart_label_matches_bar_style(out, ">A</span>"),
+                    "html chart labels match row bar color");
+    fails += expect(html_chart_texts_match_style(out, ">A</span>", "10 28.6%"),
+                    "html chart values and percentages match row bar color");
+    fails += expect(strstr(out, "<span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\"><span style=\"color:rgb(") != NULL,
+                    "html horizontal chart trims ANSI centering prefix");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer,
+                               "> ```mdf-vertical-bar-chart\n"
+                               "> Quote Build,4\n"
+                               "> Quote Test,7\n"
+                               "> Quote Ship,3\n"
+                               "> ```\n"
+                               "\n"
+                               "> ```mdf-tile-chart\n"
+                               "> Quote Build,40\n"
+                               "> Quote Test,25\n"
+                               "> Quote Ship,10\n"
+                               "> ```\n",
+                               &out);
+    fails += expect(st == MDF_OK && out != NULL, "html quoted chart geometry render");
+    fails += expect(strstr(out, "<span style=\"color:rgb(220,220,220);\">   7</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
+                    strstr(out, ">│</span> </span>") != NULL &&
+                    strstr(out, "<span style=\"color:rgb(220,220,220);\">3.50</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
+                    strstr(out, ">┤</span> </span>") != NULL,
+                    "html quoted vertical chart centers compact y-axis glyph cells after quote prefix");
+    fails += expect(strstr(out, "display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\"><span style=\"color:rgb(0,205,0);background-color:rgb(0,205,0);display:inline-block;height:1lh;line-height:1lh;vertical-align:top;font-weight:700;\">") != NULL &&
+                    strstr(out, "display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\"><span style=\"color:rgb(220,220,220);\"> </span><span style=\"color:rgb(0,205,0);background-color:rgb(0,205,0);") == NULL,
+                    "html quoted tile chart trims unstyled leading tile padding");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer,
+                               "- Charts in a list:\n"
+                               "\n"
+                               "  ```mdf-vertical-bar-chart\n"
+                               "  Quote Build,4\n"
+                               "  Quote Test,7\n"
+                               "  Quote Ship,3\n"
+                               "  ```\n",
+                               &out);
+    fails += expect(st == MDF_OK && out != NULL, "html list vertical chart geometry render");
+    fails += expect(strstr(out, "<span style=\"color:rgb(220,220,220);\">    7</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
+                    strstr(out, "<span style=\"color:rgb(220,220,220);\"> 3.50</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL,
+                    "html list vertical chart centers compact y-axis glyph cells");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    {
+        mdf_options boring_html_opts;
+        mdf *boring_html_renderer;
+        char *boring_html_out;
+
+        boring_html_opts = opts;
+        boring_html_opts.boring = 1;
+        boring_html_renderer = NULL;
+        boring_html_out = NULL;
+        st = mdf_create(MDF_FORMAT_HTML, &boring_html_opts, &boring_html_renderer);
+        fails += expect(st == MDF_OK && boring_html_renderer != NULL, "boring html chart renderer create");
+        if (boring_html_renderer != NULL) {
+            st = boring_html_renderer->render_cstr(boring_html_renderer, "```mdf-bar-chart\nA,10\nB,20\n```\n", &boring_html_out);
+            fails += expect(st == MDF_OK && boring_html_out != NULL, "boring html chart render");
+            fails += expect(boring_html_out != NULL &&
+                            strstr(boring_html_out, "\342\226\210") != NULL &&
+                            strstr(boring_html_out, "color:rgb(205,0,205)") == NULL &&
+                            strstr(boring_html_out, "color:rgb(59,156,255)") == NULL &&
+                            strstr(boring_html_out, "background-color:rgb(205,0,205)") == NULL &&
+                            strstr(boring_html_out, "background-color:rgb(59,156,255)") == NULL &&
+                            strstr(boring_html_out, "background-color:rgb(0,0,0)") != NULL,
+                            "boring html chart uses black boring output instead of themed ANSI colors");
+            boring_html_renderer->string_free(boring_html_renderer, boring_html_out);
+            boring_html_renderer->destroy(boring_html_renderer);
+        }
+    }
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\n\nA,10\nB,20\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart preserves blank lines inside fence");
+    fails += expect(strstr(out, "chart: no data") == NULL &&
+                    strstr(out, ">A</span>") != NULL &&
+                    strstr(out, ">B</span>") != NULL &&
+                    strstr(out, "next") != NULL,
+                    "html blank chart line does not terminate chart fence");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,10\nB,20\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart emits at EOF without closing fence");
+    fails += expect(strstr(out, ">A</span>") != NULL &&
+                    strstr(out, ">B</span>") != NULL &&
+                    strstr(out, "66.7%") != NULL,
+                    "html unclosed chart fence renders collected rows");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\n```Label,10\nA,1\n```\n\nnext\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart preserves unindented backtick labels");
+    fails += expect(strstr(out, "Label") != NULL &&
+                    strstr(out, ">A</span>") != NULL &&
+                    strstr(out, "next") != NULL,
+                    "html chart row beginning with backticks does not close the fence");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1\n````\nAfter\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart accepts longer closing fence");
+    fails += expect(strstr(out, ">A</span>") != NULL &&
+                    strstr(out, "After") != NULL &&
+                    strstr(out, "````") == NULL,
+                    "html longer chart closing fence closes chart and preserves following text");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1\nOops,no\nB,2\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart skips malformed rows");
+    fails += expect(strstr(out, ">A</span>") != NULL &&
+                    strstr(out, ">B</span>") != NULL &&
+                    strstr(out, "Oops") == NULL &&
+                    strstr(out, "66.7%") != NULL,
+                    "html malformed chart row does not truncate subsequent valid rows");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nNanRow,nan\nInfRow,inf\nFinite,10\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart rejects non-finite values");
+    fails += expect(strstr(out, "Finite") != NULL &&
+                    strstr(out, "100.0%") != NULL &&
+                    strstr(out, "NanRow") == NULL &&
+                    strstr(out, "InfRow") == NULL &&
+                    strstr(out, "nan") == NULL &&
+                    strstr(out, "inf") == NULL,
+                    "html non-finite chart rows are skipped");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nHuge,1e100\nSmall,1\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart renders huge finite values");
+    fails += expect(strstr(out, "Huge") != NULL &&
+                    strstr(out, "1e+100") != NULL &&
+                    strstr(out, "100.0%") != NULL,
+                    "html huge finite chart value avoids integer formatting overflow");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart\nA,1e308\nB,1e308\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html chart renders huge finite totals");
+    fails += expect(strstr(out, "50.0%") != NULL &&
+                    strstr(out, "nan") == NULL &&
+                    strstr(out, "-nan") == NULL,
+                    "html huge finite chart totals keep finite percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "Before chart.\n\n```mdf-bar-chart\nA,10\nB,20\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html prose before chart render");
+    if (out != NULL) {
+        const char *before = strstr(out, "Before chart.");
+        const char *chart_block = strstr(out, "<div class=\"mdf-chart-block\"");
+        const char *before_close = before != NULL ? strstr(before, "</span>") : NULL;
+
+        fails += expect(before != NULL &&
+                        chart_block != NULL &&
+                        before_close != NULL &&
+                        before_close < chart_block,
+                        "html chart block opens after preceding prose line closes");
+    } else {
+        fails += expect(0, "html chart block opens after preceding prose line closes");
+    }
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-tile-chart\nBuild,40\nTest,25\nShip,10\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html tile chart render");
+    fails += expect(strstr(out, "background-color:rgb(") != NULL &&
+                    strstr(out, "Build") != NULL &&
+                    strstr(out, "53.3%") != NULL &&
+                    strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "■") != NULL &&
+                    strstr(out, "40") != NULL,
+                    "html tile chart preserves printable block fills, separated in-bar text, and legend");
+    fails += expect(strstr(out, "<span class=\"mdf-line mdf-chart-line\" style=\"display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"") != NULL &&
+                    strstr(out, "<span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\">") != NULL,
+                    "html tile chart centers variable-width rows inside chart box");
+    fails += expect(out != NULL && html_tile_chart_first_rows_are_adjacent(out),
+                    "html tile chart keeps label and percentage rows contiguous");
+    fails += expect(strstr(out, "background-color:rgb(") != NULL &&
+                    strstr(out, "display:inline-block;height:1lh;line-height:1lh;vertical-align:top;") != NULL,
+                    "html tile chart background spans fill row height");
+    fails += expect(html_chart_texts_match_style(out, "■", ">40</span>"),
+                    "html tile chart legend values match segment color");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "> ```mdf-tile-chart\n> Build,40\n> Test,25\n> Ship,10\n> ```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html quoted tile chart render");
+    fails += expect(out != NULL && html_quoted_chart_prefix_is_not_chart_line(out),
+                    "html quoted tile chart does not center quote marker as a chart row");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-tile-chart\nA,0\nB,0\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html zero-total tile chart render");
+    fails += expect(strstr(out, ">A</span><span style=\"color:rgb(") != NULL &&
+                    strstr(out, ">B</span><span style=\"color:rgb(") != NULL &&
+                    strstr(out, ">0</span>") != NULL &&
+                    strstr(out, "0.0%") == NULL,
+                    "html zero-total tile chart keeps legend without fake in-bar percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer,
+        "```mdf-tile-chart\nS01,4\nS02,5\nS03,6\nS04,7\nS05,8\nS06,9\nS07,10\nS08,11\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "html dense tile chart render");
+    fails += expect(out != NULL && strstr(out, "<main") != NULL &&
+                    strstr(strstr(out, "<main"), "text-decoration:underline;") == NULL,
+                    "html dense tile chart color cycle does not underline legend entries");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer,
+        "```mdf-tile-chart\nBuild,40\nTest,25\nShip,10\n```\n\n"
+        "```mdf-bar-chart\nA,10\nB,20\n```\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "html mixed chart kind render");
+    fails += expect(out != NULL &&
+                    strstr(out, "<span class=\"mdf-line mdf-chart-line\" style=\"display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"") != NULL &&
+                    strstr(out, "<span class=\"mdf-line mdf-chart-line\" style=\"white-space:pre;overflow-wrap:normal;text-align:left;\"") != NULL,
+                    "html tile row centering does not leak into following bar chart");
     renderer->string_free(renderer, out);
     out = NULL;
     st = renderer->render_cstr(renderer, "| Name | Description |\n| --- | --- |\n| mixed long | plain text before *italic phrase* then **bold phrase** then ***combined phrase*** with enough words to wrap |\n", &out);

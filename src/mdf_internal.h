@@ -179,6 +179,7 @@ typedef struct mdf_impl {
     size_t inline_entity_cap;
     int inline_html_nbsp_pending;
     int inline_html_nbsp_prev_digit;
+    int chart_suppress_centering;
 } mdf_impl;
 
 typedef struct mdf_parser_impl {
@@ -208,7 +209,24 @@ typedef struct mdf_parser_impl {
     int pending_space;
     char marker[8];
     size_t marker_len;
+    int in_chart_block;
+    int pending_fence;
+    char fence_info[64];
+    size_t fence_info_len;
+    int chart_kind;
+    int chart_quote_depth;
+    char *chart_buf;
+    size_t chart_len;
+    size_t chart_cap;
 } mdf_parser_impl;
+
+#define MDF_CHART_KIND_HORIZONTAL_BAR 1
+#define MDF_CHART_KIND_VERTICAL_BAR 2
+#define MDF_CHART_KIND_TILE 3
+#define MDF_CHART_FLAG_SORT_ASC 0x100
+#define MDF_CHART_FLAG_SORT_DESC 0x200
+#define MDF_CHART_FLAG_MONO_BARS 0x400
+#define MDF_CHART_KIND_MASK 0x00ff
 
 typedef struct mdf_table_filter mdf_table_filter;
 

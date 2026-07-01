@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release install test test-debug test-all asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-tokens parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help deps-debug deps-release deps-cross build build-debug build-release install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-tokens parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
@@ -12,7 +12,8 @@ help:
 	@printf '%s\n' '  make build-release          Configure and build host release preset'
 	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
 	@printf '%s\n' '  make test                   Run debug tests'
-	@printf '%s\n' '  make test-all               Run tests, sanitizers, fuzz smoke, and parity'
+	@printf '%s\n' '  make test-all               Run bounded local gate: tests, ASan, fuzz smoke, quick parity'
+	@printf '%s\n' '  make test-hardening         Run tests, all sanitizers, fuzz smoke, and full parity'
 	@printf '%s\n' '  make parity                 Run exhaustive ANSI, HTML, streaming, and Lua parity gates'
 	@printf '%s\n' '  make parity-quick           Run bounded ANSI, HTML, and streaming parity smoke'
 	@printf '%s\n' '  make parity-tokens          Run token parity'
@@ -36,7 +37,7 @@ help:
 	@printf '%s\n' '  make verify-release-archives Verify release archive checks'
 	@printf '%s\n' '  make release-matrix         Build all configured release targets'
 	@printf '%s\n' '  make finalize-slice         Run format and local test gate'
-	@printf '%s\n' '  make prerelease             Run deterministic prerelease gate'
+	@printf '%s\n' '  make prerelease             Run deterministic prerelease gate, including full hardening'
 	@printf '%s\n' '  make prerelease-hardening   Run prerelease plus release matrix'
 	@printf '%s\n' '  make release                Run full local release gate'
 	@printf '%s\n' '  make print-release-version  Print packaging version'
@@ -65,7 +66,9 @@ install:
 test test-debug:
 	@scripts/test.sh debug
 
-test-all: test asan tsan msan fuzz-smoke parity
+test-all: test asan fuzz-smoke parity-quick
+
+test-hardening: test asan tsan msan fuzz-smoke parity
 
 asan:
 	@scripts/test.sh asan
@@ -89,7 +92,7 @@ parity: parity-ansi parity-html parity-stream parity-lua
 
 parity-full: parity
 
-parity-quick: parity-ansi-quick parity-html-quick parity-stream-quick parity-lua
+parity-quick: parity-ansi-quick parity-html-quick parity-stream-quick
 
 parity-ansi:
 	@scripts/parity.sh ansi
@@ -165,7 +168,7 @@ release-matrix:
 
 finalize-slice: format test
 
-prerelease: finalize-slice asan tsan msan fuzz-smoke parity package-source-smoke
+prerelease: format test-hardening package-source-smoke
 
 prerelease-hardening: prerelease release-matrix
 

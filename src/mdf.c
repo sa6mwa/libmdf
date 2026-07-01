@@ -747,6 +747,7 @@ void mdf_parser_destroy(mdf_parser *self)
     }
     impl = (mdf_parser_impl *)self->impl;
     allocator = impl->allocator;
+    mdf_free_mem(&allocator, impl->chart_buf, impl->chart_cap);
     mdf_free_mem(&allocator, impl, sizeof(*impl));
     mdf_free_mem(&allocator, self, sizeof(*self));
 }

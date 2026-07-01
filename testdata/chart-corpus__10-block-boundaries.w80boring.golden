@@ -1,0 +1,36 @@
+# Block Boundaries
+
+Paragraph before horizontal.
+
+                Boundary Horizon │ ███████████           1 33.3%
+                Still Horizontal │ █████████████████████ 2 66.7%
+
+After horizontal.
+
+Paragraph before vertical.
+
+               2 ┤                                ██████         
+                 │                                ██████         
+                 │                                ██████         
+                 │                                ██████         
+                 │                                ██████         
+                 │                                ██████         
+               1 ┤         ██████                 ██████         
+                 │         ██████                 ██████         
+                 │         ██████                 ██████         
+                 │         ██████                 ██████         
+                 │         ██████                 ██████         
+                 │         ██████                 ██████         
+               0 └───────────────────────────────────────────────
+                             l                      l            
+
+After vertical.
+
+Paragraph before tile.
+
+    █████Boundary Tile█████████████████████████Still Tile███████████████████
+    █████████33.3%███████████████████████████████66.7%██████████████████████
+
+                       ■ Boundary Tile 1  ■ Still Tile 2
+
+After tile.

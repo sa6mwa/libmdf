@@ -180,6 +180,15 @@ if(LIBMDF_BUILD_TESTS)
     endif()
     add_test(NAME test_cmdf COMMAND test_cmdf $<TARGET_FILE:cmdf>)
     set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 10)
+
+    add_test(NAME chart_corpus
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chart_corpus.sh
+              $<TARGET_FILE:cmdf>
+              ${CMAKE_CURRENT_SOURCE_DIR}/testdata/chart-corpus)
+    set_tests_properties(chart_corpus PROPERTIES
+      LABELS "integration;cli;charts"
+      TIMEOUT 20
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
   add_test(NAME header_self_sufficient

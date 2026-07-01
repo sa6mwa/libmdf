@@ -1,5 +1,9 @@
 #include "render_internal.h"
 
+#include <float.h>
+#include <limits.h>
+#include <math.h>
+
 int ansi_inline_append(mdf_impl *impl, char **buf, size_t *len, size_t *cap, const char *src, size_t n)
 {
     char *next;
@@ -3338,6 +3342,17 @@ static int ansi_current_prefix_width(mdf_impl *impl)
         if (!impl->quote_wrap_active) {
             width += impl->heading_level + 1;
         }
+    }
+    return width;
+}
+
+static int ansi_current_rendered_prefix_width(mdf_impl *impl)
+{
+    int width;
+
+    width = ansi_current_prefix_width(impl);
+    if (impl->opts.margin_left > 0 && !impl->ansi_pending_left_margin) {
+        width += impl->opts.margin_left;
     }
     return width;
 }
@@ -7370,6 +7385,1252 @@ static int ansi_handle_token_newline(mdf_impl *impl, mdf_sink *sink)
     return ansi_write_newline(impl, sink);
 }
 
+typedef struct ansi_chart_row {
+    char *label;
+    size_t label_len;
+    double value;
+} ansi_chart_row;
+
+typedef struct ansi_chart_data {
+    ansi_chart_row *rows;
+    size_t len;
+    size_t cap;
+    double max;
+    double total;
+    size_t label_width;
+} ansi_chart_data;
+
+typedef struct ansi_chart_plot_layout {
+    size_t points;
+    int step;
+    int bar_width;
+    int height;
+    size_t visible_width;
+    size_t scale_width;
+    int pad;
+    int show_labels;
+} ansi_chart_plot_layout;
+
+static void ansi_chart_free(mdf_impl *impl, ansi_chart_data *chart)
+{
+    size_t i;
+
+    for (i = 0; i < chart->len; i++) {
+        mdf_free_mem(&impl->allocator, chart->rows[i].label, chart->rows[i].label_len + 1);
+    }
+    mdf_free_mem(&impl->allocator, chart->rows, chart->cap * sizeof(chart->rows[0]));
+    memset(chart, 0, sizeof(*chart));
+}
+
+static void ansi_chart_trim(const char *src, size_t len, const char **out, size_t *out_len)
+{
+    while (len > 0 && (*src == ' ' || *src == '\t')) {
+        src++;
+        len--;
+    }
+    while (len > 0 && (src[len - 1] == ' ' || src[len - 1] == '\t' || src[len - 1] == '\r')) {
+        len--;
+    }
+    *out = src;
+    *out_len = len;
+}
+
+static int ansi_chart_parse_double(mdf_impl *impl, const char *src, size_t len, double *out)
+{
+    char *buf;
+    char *end;
+    double value;
+
+    buf = (char *)mdf_alloc(&impl->allocator, len + 1);
+    if (buf == NULL) {
+        mdf_impl_mark_oom(impl);
+        return -1;
+    }
+    memcpy(buf, src, len);
+    buf[len] = '\0';
+    value = strtod(buf, &end);
+    while (*end == ' ' || *end == '\t') {
+        end++;
+    }
+    if (end == buf || *end != '\0' || !isfinite(value) || value < 0.0) {
+        mdf_free_mem(&impl->allocator, buf, len + 1);
+        return 0;
+    }
+    *out = value;
+    mdf_free_mem(&impl->allocator, buf, len + 1);
+    return 1;
+}
+
+static int ansi_chart_append_row(mdf_impl *impl, ansi_chart_data *chart, const char *label, size_t label_len, double value)
+{
+    ansi_chart_row *next;
+    size_t cap;
+    char *copy;
+
+    if (label_len == 0) {
+        return 0;
+    }
+    if (chart->len == chart->cap) {
+        cap = chart->cap == 0 ? 8 : chart->cap * 2;
+        next = (ansi_chart_row *)mdf_realloc_mem(&impl->allocator,
+                                                 chart->rows,
+                                                 chart->cap * sizeof(chart->rows[0]),
+                                                 cap * sizeof(chart->rows[0]));
+        if (next == NULL) {
+            mdf_impl_mark_oom(impl);
+            return -1;
+        }
+        chart->rows = next;
+        chart->cap = cap;
+    }
+    copy = (char *)mdf_alloc(&impl->allocator, label_len + 1);
+    if (copy == NULL) {
+        mdf_impl_mark_oom(impl);
+        return -1;
+    }
+    memcpy(copy, label, label_len);
+    copy[label_len] = '\0';
+    chart->rows[chart->len].label = copy;
+    chart->rows[chart->len].label_len = label_len;
+    chart->rows[chart->len].value = value;
+    chart->len++;
+    if (value > chart->max) {
+        chart->max = value;
+    }
+    if (value > DBL_MAX - chart->total) {
+        chart->total = DBL_MAX;
+    } else {
+        chart->total += value;
+    }
+    {
+        size_t label_cols = visible_cols(label, label_len);
+        if (label_cols > chart->label_width) {
+            chart->label_width = label_cols;
+        }
+    }
+    return 0;
+}
+
+static int ansi_chart_parse(mdf_impl *impl, const char *src, size_t len, ansi_chart_data *chart)
+{
+    size_t line_start;
+    size_t line_end;
+    size_t comma;
+    const char *label;
+    const char *value_src;
+    size_t label_len;
+    size_t value_len;
+    double value;
+    int parsed;
+
+    memset(chart, 0, sizeof(*chart));
+    line_start = 0;
+    while (line_start <= len) {
+        line_end = line_start;
+        while (line_end < len && src[line_end] != '\n') {
+            line_end++;
+        }
+        comma = line_start;
+        while (comma < line_end && src[comma] != ',') {
+            comma++;
+        }
+        if (comma < line_end) {
+            ansi_chart_trim(src + line_start, comma - line_start, &label, &label_len);
+            ansi_chart_trim(src + comma + 1, line_end - comma - 1, &value_src, &value_len);
+            parsed = ansi_chart_parse_double(impl, value_src, value_len, &value);
+            if (parsed < 0) {
+                ansi_chart_free(impl, chart);
+                return -1;
+            }
+            if (parsed > 0) {
+                if (ansi_chart_append_row(impl, chart, label, label_len, value) != 0) {
+                    ansi_chart_free(impl, chart);
+                    return -1;
+                }
+            }
+        }
+        if (line_end == len) {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+    if (chart->label_width > 18) {
+        chart->label_width = 18;
+    }
+    return 0;
+}
+
+static void ansi_chart_sort(ansi_chart_data *chart, int flags)
+{
+    size_t i;
+    size_t j;
+    ansi_chart_row tmp;
+    int asc;
+
+    asc = (flags & MDF_CHART_FLAG_SORT_ASC) != 0;
+    if ((flags & (MDF_CHART_FLAG_SORT_ASC | MDF_CHART_FLAG_SORT_DESC)) == 0) {
+        return;
+    }
+    for (i = 0; i < chart->len; i++) {
+        for (j = i + 1; j < chart->len; j++) {
+            if ((asc && chart->rows[j].value < chart->rows[i].value) ||
+                (!asc && chart->rows[j].value > chart->rows[i].value)) {
+                tmp = chart->rows[i];
+                chart->rows[i] = chart->rows[j];
+                chart->rows[j] = tmp;
+            }
+        }
+    }
+}
+
+static int ansi_chart_append_style(mdf_impl *impl, const char *style)
+{
+    if (impl->opts.boring || style == NULL || style[0] == '\0') {
+        return 0;
+    }
+    return mdf_emit_buffer_append_cstr(impl, style);
+}
+
+static int ansi_chart_append_reset(mdf_impl *impl)
+{
+    if (impl->opts.boring) {
+        return 0;
+    }
+    return mdf_emit_buffer_append_cstr(impl, "\033[0m");
+}
+
+static int ansi_chart_append_styled(mdf_impl *impl, const char *style, const char *src, size_t len)
+{
+    int styled;
+
+    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    if (styled && ansi_chart_append_style(impl, style) != 0) return -1;
+    if (mdf_emit_buffer_append(impl, src, len) != 0) return -1;
+    if (styled && ansi_chart_append_reset(impl) != 0) return -1;
+    return 0;
+}
+
+static const char *ansi_chart_mark_style(mdf_impl *impl, size_t index, int flags)
+{
+    if ((flags & MDF_CHART_FLAG_MONO_BARS) != 0) {
+        return mdf_theme_heading(impl, 3);
+    }
+    switch (index % 8) {
+    case 0:
+        return mdf_theme_heading(impl, 1);
+    case 1:
+        return mdf_theme_heading(impl, 2);
+    case 2:
+        return mdf_theme_heading(impl, 3);
+    case 3:
+        return mdf_theme_heading(impl, 4);
+    case 4:
+        return mdf_theme_heading(impl, 5);
+    case 5:
+        return mdf_theme_heading(impl, 6);
+    case 6:
+        return mdf_theme_list_marker(impl);
+    default:
+        return mdf_theme_table_header(impl);
+    }
+}
+
+static int ansi_chart_style_bg_code(const char *style, char *buf, size_t buf_len)
+{
+    const char *p;
+    int basic_bg;
+    int xterm_bg;
+
+    basic_bg = -1;
+    xterm_bg = -1;
+    p = style;
+    while (p != NULL && *p != '\0') {
+        if (p[0] == '\033' && p[1] == '[') {
+            const char *end;
+            char tmp[96];
+            size_t len;
+            char *scan;
+
+            end = strchr(p + 2, 'm');
+            if (end == NULL) {
+                break;
+            }
+            len = (size_t)(end - (p + 2));
+            if (len >= sizeof(tmp)) {
+                len = sizeof(tmp) - 1;
+            }
+            memcpy(tmp, p + 2, len);
+            tmp[len] = '\0';
+            scan = tmp;
+            while (*scan != '\0') {
+                long value;
+                char *next;
+
+                value = strtol(scan, &next, 10);
+                if (next == scan) {
+                    break;
+                }
+                if (value >= 30 && value <= 37) {
+                    basic_bg = (int)value + 10;
+                } else if (value >= 90 && value <= 97) {
+                    basic_bg = (int)value + 10;
+                } else if (value == 38 && next[0] == ';' && next[1] == '5' && next[2] == ';') {
+                    long color;
+                    char *color_end;
+
+                    color = strtol(next + 3, &color_end, 10);
+                    if (color_end != next + 3 && color >= 0 && color <= 255) {
+                        xterm_bg = (int)color;
+                        next = color_end;
+                    }
+                }
+                if (*next == ';') {
+                    next++;
+                }
+                scan = next;
+            }
+            p = end + 1;
+        } else {
+            p++;
+        }
+    }
+    if (xterm_bg >= 0) {
+        return snprintf(buf, buf_len, "\033[30;48;5;%dm", xterm_bg) > 0 ? 0 : -1;
+    }
+    if (basic_bg >= 0) {
+        return snprintf(buf, buf_len, "\033[30;%dm", basic_bg) > 0 ? 0 : -1;
+    }
+    return snprintf(buf, buf_len, "\033[7m") > 0 ? 0 : -1;
+}
+
+static int ansi_chart_style_bg_only_code(const char *style, char *buf, size_t buf_len)
+{
+    const char *p;
+    int basic_bg;
+    int xterm_bg;
+
+    basic_bg = -1;
+    xterm_bg = -1;
+    p = style;
+    while (p != NULL && *p != '\0') {
+        const char *end;
+        const char *scan;
+        int prev;
+        int prev2;
+
+        if (*p != '\033' || p[1] != '[') {
+            p++;
+            continue;
+        }
+        end = strchr(p, 'm');
+        if (end == NULL) {
+            break;
+        }
+        scan = p + 2;
+        prev = -1;
+        prev2 = -1;
+        while (scan < end) {
+            int value;
+            const char *next;
+
+            value = 0;
+            next = scan;
+            while (next < end && *next >= '0' && *next <= '9') {
+                value = value * 10 + (*next - '0');
+                next++;
+            }
+            if (next == scan) {
+                value = 0;
+            }
+            if (value >= 30 && value <= 37) {
+                basic_bg = value + 10;
+            } else if (value >= 90 && value <= 97) {
+                basic_bg = value + 10;
+            } else if (prev2 == 38 && prev == 5) {
+                xterm_bg = value;
+            }
+            prev2 = prev;
+            prev = value;
+            if (next < end && *next == ';') {
+                scan = next + 1;
+            } else {
+                scan = next;
+            }
+        }
+        p = end + 1;
+    }
+    if (xterm_bg >= 0) {
+        return snprintf(buf, buf_len, "\033[48;5;%dm", xterm_bg) > 0 ? 0 : -1;
+    }
+    if (basic_bg >= 0) {
+        return snprintf(buf, buf_len, "\033[%dm", basic_bg) > 0 ? 0 : -1;
+    }
+    return snprintf(buf, buf_len, "\033[7m") > 0 ? 0 : -1;
+}
+
+static int ansi_chart_append_tile_segment(mdf_impl *impl, const char *style, const char *src, size_t len)
+{
+    char bg_style[64];
+    int styled;
+
+    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    if (styled) {
+        if (ansi_chart_style_bg_code(style, bg_style, sizeof(bg_style)) != 0) return -1;
+        if (ansi_chart_append_style(impl, bg_style) != 0) return -1;
+    }
+    if (mdf_emit_buffer_append(impl, src, len) != 0) return -1;
+    if (styled && ansi_chart_append_reset(impl) != 0) return -1;
+    return 0;
+}
+
+static int ansi_chart_append_tile_fill(mdf_impl *impl, const char *style)
+{
+    char bg_style[64];
+    int styled;
+
+    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    if (styled) {
+        if (ansi_chart_append_style(impl, style) != 0) return -1;
+        if (ansi_chart_style_bg_only_code(style, bg_style, sizeof(bg_style)) != 0) return -1;
+        if (ansi_chart_append_style(impl, bg_style) != 0) return -1;
+    }
+    if (mdf_emit_buffer_append(impl, "█", strlen("█")) != 0) return -1;
+    if (styled && ansi_chart_append_reset(impl) != 0) return -1;
+    return 0;
+}
+
+static int ansi_chart_append_spaces(mdf_impl *impl, size_t count)
+{
+    while (count > 0) {
+        if (mdf_emit_buffer_append_cstr(impl, " ") != 0) return -1;
+        count--;
+    }
+    return 0;
+}
+
+static int ansi_chart_append_line_margin(mdf_impl *impl)
+{
+    if (impl->opts.margin_left <= 0) {
+        return 0;
+    }
+    return ansi_chart_append_spaces(impl, (size_t)impl->opts.margin_left);
+}
+
+static int ansi_chart_append_line_prefix(mdf_impl *impl, size_t *container_cols)
+{
+    int quote_depth;
+    size_t quote_wrap_extra;
+    int i;
+
+    *container_cols = 0;
+    if (impl->ansi_col > 0) {
+        *container_cols = (size_t)impl->ansi_col;
+        if (impl->opts.margin_left > 0 && *container_cols >= (size_t)impl->opts.margin_left) {
+            *container_cols -= (size_t)impl->opts.margin_left;
+        }
+        return 0;
+    }
+    if (ansi_chart_append_line_margin(impl) != 0) {
+        return -1;
+    }
+    quote_depth = impl->quote_depth > 0 ? impl->quote_depth :
+                  ((impl->quote_open || impl->quote_wrap_active) ? 1 : 0);
+    if (quote_depth > 0) {
+        quote_wrap_extra = 0;
+        if (!impl->in_pre && impl->ansi_wrap_indent > 0 && impl->ansi_wrap_indent_in_quote) {
+            quote_wrap_extra = (size_t)impl->ansi_wrap_indent;
+        }
+        if (impl->quote_prefix_indent > 0 &&
+            ansi_chart_append_spaces(impl, (size_t)impl->quote_prefix_indent) != 0) {
+            return -1;
+        }
+        for (i = 0; i < quote_depth; i++) {
+            if (ansi_chart_append_styled(impl, mdf_theme_quote(impl), ">", 1) != 0) return -1;
+            if (ansi_chart_append_spaces(impl, 1) != 0) return -1;
+        }
+        if (quote_wrap_extra > 0 && ansi_chart_append_spaces(impl, quote_wrap_extra) != 0) {
+            return -1;
+        }
+        *container_cols = (size_t)impl->quote_prefix_indent + ((size_t)quote_depth * 2) + quote_wrap_extra;
+    } else if (!impl->in_pre && impl->list_item_open && impl->ansi_wrap_indent > 0) {
+        if (ansi_chart_append_spaces(impl, (size_t)impl->ansi_wrap_indent) != 0) {
+            return -1;
+        }
+        *container_cols = (size_t)impl->ansi_wrap_indent;
+    }
+    return 0;
+}
+
+static int ansi_chart_content_width(mdf_impl *impl)
+{
+    int width;
+
+    width = ansi_content_limit(impl);
+    return width > 0 ? width : 80;
+}
+
+static int ansi_chart_center_pad(mdf_impl *impl, size_t visible_width)
+{
+    int width;
+
+    if (impl->chart_suppress_centering) {
+        return 0;
+    }
+    width = ansi_chart_content_width(impl);
+    if (width <= 0 || visible_width >= (size_t)width) {
+        return 0;
+    }
+    return (int)(((size_t)width - visible_width) / 2);
+}
+
+static int ansi_chart_center_pad_after_prefix(mdf_impl *impl, size_t visible_width, size_t container_cols)
+{
+    int pad;
+
+    pad = ansi_chart_center_pad(impl, visible_width);
+    if (container_cols >= (size_t)pad) {
+        return 0;
+    }
+    return pad - (int)container_cols;
+}
+
+static int ansi_chart_clamp_int(int value, int min_value, int max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static void ansi_chart_plot_layout_init(mdf_impl *impl,
+                                        const ansi_chart_data *chart,
+                                        int vertical_bars,
+                                        ansi_chart_plot_layout *layout)
+{
+    int width;
+    size_t content_width;
+    size_t target_width;
+    size_t max_points;
+    size_t plot_width;
+
+    width = ansi_chart_content_width(impl);
+    content_width = width > 0 ? (size_t)width : 80;
+    memset(layout, 0, sizeof(*layout));
+    layout->points = chart->len;
+    if (content_width <= 3) {
+        layout->points = 1;
+    } else if (layout->points + 2 > content_width) {
+        max_points = content_width - 2;
+        layout->points = max_points > 0 ? max_points : 1;
+    }
+    if (layout->points == 0) {
+        layout->points = 1;
+    }
+    target_width = (content_width * 3) / 5;
+    if (target_width < 12 && content_width >= 12) {
+        target_width = 12;
+    }
+    if (target_width > content_width) {
+        target_width = content_width;
+    }
+    layout->step = 1;
+    if (target_width > 2 && layout->points > 0) {
+        layout->step = (int)(((target_width - 2) + layout->points - 1) / layout->points);
+    }
+    if (layout->step < 1) {
+        layout->step = 1;
+    }
+    if (layout->step < 2 && layout->points * 2 + 2 <= content_width) {
+        layout->step = 2;
+    }
+    while (layout->step > 1 && 2 + layout->points * (size_t)layout->step > content_width) {
+        layout->step--;
+    }
+    plot_width = layout->points * (size_t)layout->step;
+    layout->bar_width = 1;
+    if (vertical_bars && layout->step >= 3) {
+        layout->bar_width = ansi_chart_clamp_int((layout->step + 1) / 2, 1, 6);
+    }
+    layout->visible_width = 2 + plot_width;
+    layout->height = ansi_chart_clamp_int((int)(layout->visible_width / 4), 6, 16);
+    layout->pad = ansi_chart_center_pad(impl, layout->visible_width);
+    layout->show_labels = layout->step > 1 && layout->points <= 12;
+}
+
+static int ansi_chart_format_number(char *buf, size_t cap, double value)
+{
+    int n;
+
+    if (cap == 0) {
+        return -1;
+    }
+    if (value <= (double)LONG_MAX && value == (double)(long)value) {
+        n = snprintf(buf, cap, "%ld", (long)value);
+    } else if (value > (double)LONG_MAX) {
+        n = snprintf(buf, cap, "%.6g", value);
+    } else {
+        n = snprintf(buf, cap, "%.2f", value);
+    }
+    if (n < 0 || (size_t)n >= cap) {
+        return -1;
+    }
+    return n;
+}
+
+static size_t ansi_chart_number_width(double value)
+{
+    char buf[64];
+    int n;
+
+    n = ansi_chart_format_number(buf, sizeof(buf), value);
+    return n > 0 ? (size_t)n : 1;
+}
+
+static size_t ansi_chart_label_bytes_for_cols(const char *src, size_t len, size_t max_cols, size_t *out_cols)
+{
+    size_t i;
+    size_t cols;
+    size_t adv;
+    size_t w;
+    unsigned long cp;
+
+    i = 0;
+    cols = 0;
+    while (i < len) {
+        adv = utf8_decode_codepoint(src + i, len - i, &cp);
+        if (adv == 0) {
+            break;
+        }
+        w = utf8_display_width(cp);
+        if (cols + w > max_cols) {
+            break;
+        }
+        cols += w;
+        i += adv;
+    }
+    if (out_cols != NULL) {
+        *out_cols = cols;
+    }
+    return i;
+}
+
+static int ansi_chart_append_number(mdf_impl *impl, double value)
+{
+    char buf[64];
+    int n;
+
+    n = ansi_chart_format_number(buf, sizeof(buf), value);
+    if (n < 0) return -1;
+    return mdf_emit_buffer_append(impl, buf, (size_t)n);
+}
+
+static double ansi_chart_scaled_total(const ansi_chart_data *chart)
+{
+    size_t i;
+    double total;
+
+    if (chart->max <= 0.0) {
+        return 0.0;
+    }
+    total = 0.0;
+    for (i = 0; i < chart->len; i++) {
+        total += chart->rows[i].value / chart->max;
+    }
+    return total;
+}
+
+static double ansi_chart_percent_value(const ansi_chart_data *chart, double value)
+{
+    double total;
+    double percent;
+
+    total = ansi_chart_scaled_total(chart);
+    if (total <= 0.0 || chart->max <= 0.0) {
+        return 0.0;
+    }
+    percent = ((value / chart->max) * 100.0) / total;
+    if (!isfinite(percent)) {
+        return 0.0;
+    }
+    return percent;
+}
+
+static int ansi_chart_append_percent(mdf_impl *impl, const ansi_chart_data *chart, double value, const char *style)
+{
+    char buf[64];
+    int n;
+
+    n = sprintf(buf, " %.1f%%", ansi_chart_percent_value(chart, value));
+    if (n < 0 || (size_t)n >= sizeof(buf)) {
+        return -1;
+    }
+    return ansi_chart_append_styled(impl, style, buf, (size_t)n);
+}
+
+static size_t ansi_chart_percent_width(const ansi_chart_data *chart, double value)
+{
+    char buf[64];
+    int n;
+
+    n = snprintf(buf, sizeof(buf), " %.1f%%", ansi_chart_percent_value(chart, value));
+    return n > 0 ? (size_t)n : 1;
+}
+
+static double ansi_chart_bucket_value(const ansi_chart_data *chart, size_t index, size_t points)
+{
+    size_t start;
+    size_t end;
+    size_t i;
+    double max;
+
+    if (chart->len == 0) {
+        return 0.0;
+    }
+    if (points == 0 || points >= chart->len) {
+        return chart->rows[index].value;
+    }
+    start = (index * chart->len) / points;
+    end = ((index + 1) * chart->len) / points;
+    if (end <= start) {
+        end = start + 1;
+    }
+    if (end > chart->len) {
+        end = chart->len;
+    }
+    max = chart->rows[start].value;
+    for (i = start + 1; i < end; i++) {
+        if (chart->rows[i].value > max) {
+            max = chart->rows[i].value;
+        }
+    }
+    return max;
+}
+
+static size_t ansi_chart_bucket_label_index(const ansi_chart_data *chart, size_t index, size_t points)
+{
+    if (points == 0 || points >= chart->len) {
+        return index;
+    }
+    return (index * chart->len) / points;
+}
+
+static int ansi_chart_append_tick_label(mdf_impl *impl, const ansi_chart_row *row)
+{
+    size_t i;
+    size_t start;
+
+    if (row->label_len == 0) {
+        return ansi_chart_append_spaces(impl, 1);
+    }
+    i = row->label_len;
+    while (i > 0 && (row->label[i - 1] == ' ' || row->label[i - 1] == '\t')) {
+        i--;
+    }
+    while (i > 0 && (row->label[i - 1] & 0xc0) == 0x80) {
+        i--;
+    }
+    if (i == 0) {
+        return ansi_chart_append_spaces(impl, 1);
+    }
+    start = i - 1;
+    while (start > 0 && (row->label[start] & 0xc0) == 0x80) {
+        start--;
+    }
+    return ansi_chart_append_styled(impl, "", row->label + start, i - start);
+}
+
+static int ansi_chart_append_centered_tick_slot(mdf_impl *impl, const ansi_chart_row *row, int step, int mark_width)
+{
+    int mark_left;
+    int label_col;
+
+    if (step <= 1) {
+        return ansi_chart_append_tick_label(impl, row);
+    }
+    if (mark_width < 1) {
+        mark_width = 1;
+    }
+    if (mark_width > step) {
+        mark_width = step;
+    }
+    mark_left = (step - mark_width) / 2;
+    label_col = mark_left + ((mark_width - 1) / 2);
+    if (label_col > 0 && ansi_chart_append_spaces(impl, (size_t)label_col) != 0) return -1;
+    if (ansi_chart_append_tick_label(impl, row) != 0) return -1;
+    if (step - label_col - 1 > 0 &&
+        ansi_chart_append_spaces(impl, (size_t)(step - label_col - 1)) != 0) return -1;
+    return 0;
+}
+
+static int ansi_chart_commit_line(mdf_impl *impl, mdf_sink *sink)
+{
+    if (mdf_emit_buffer_append_cstr(impl, "\n") != 0) return -1;
+    if (mdf_emit_buffer_commit(impl, sink) != 0) return -1;
+    impl->ansi_col = 0;
+    impl->ansi_prev_char = '\n';
+    return 0;
+}
+
+static int ansi_chart_emit_empty(mdf_impl *impl, mdf_sink *sink)
+{
+    size_t container_cols;
+
+    if (mdf_emit_buffer_reset(impl) != 0) return -1;
+    if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+    if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), "chart: no data", 14) != 0) return -1;
+    return ansi_chart_commit_line(impl, sink);
+}
+
+static int ansi_chart_emit_horizontal(mdf_impl *impl, mdf_sink *sink, const ansi_chart_data *chart, int flags)
+{
+    size_t i;
+    size_t j;
+    size_t label_len;
+    size_t label_width;
+    size_t bar_width;
+    size_t filled;
+    int width;
+    size_t target_width;
+    size_t reserve;
+    const char *mark_style;
+
+    width = ansi_chart_content_width(impl);
+    target_width = ((size_t)width * 3) / 5;
+    if (target_width < 12 && width >= 12) {
+        target_width = 12;
+    }
+    if (target_width < 1) {
+        target_width = 1;
+    }
+    if (target_width > (size_t)width) {
+        target_width = (size_t)width;
+    }
+    reserve = 1;
+    for (i = 0; i < chart->len; i++) {
+        size_t row_reserve;
+
+        row_reserve = 1 +
+                      ansi_chart_number_width(chart->rows[i].value) +
+                      ansi_chart_percent_width(chart, chart->rows[i].value);
+        if (row_reserve > reserve) {
+            reserve = row_reserve;
+        }
+    }
+    label_width = chart->label_width;
+    if (width > 0 && label_width > target_width / 3) {
+        label_width = target_width / 3;
+    }
+    if (label_width < 1) {
+        label_width = 1;
+    }
+    while (label_width > 1 && label_width + 3 + 1 + reserve > target_width) {
+        label_width--;
+    }
+    if (target_width > label_width + reserve + 3) {
+        bar_width = target_width - label_width - reserve - 3;
+    } else {
+        bar_width = 1;
+    }
+    for (i = 0; i < chart->len; i++) {
+        size_t label_cols;
+        size_t container_cols;
+
+        label_len = ansi_chart_label_bytes_for_cols(chart->rows[i].label,
+                                                    chart->rows[i].label_len,
+                                                    label_width,
+                                                    &label_cols);
+        filled = chart->max > 0.0 ? (size_t)((chart->rows[i].value / chart->max) * (double)bar_width + 0.5) : 0;
+        if (filled == 0 && chart->rows[i].value > 0.0) {
+            filled = 1;
+        }
+        if (filled > bar_width) {
+            filled = bar_width;
+        }
+        mark_style = ansi_chart_mark_style(impl, i, flags);
+        if (mdf_emit_buffer_reset(impl) != 0) return -1;
+        if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, (size_t)ansi_chart_center_pad_after_prefix(impl, label_width + 3 + bar_width + reserve, container_cols)) != 0) return -1;
+        if (ansi_chart_append_styled(impl, mark_style, chart->rows[i].label, label_len) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, label_width - label_cols) != 0) return -1;
+        if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), " │ ", strlen(" │ ")) != 0) return -1;
+        for (j = 0; j < filled; j++) {
+            if (ansi_chart_append_styled(impl, mark_style, "█", strlen("█")) != 0) return -1;
+        }
+        if (ansi_chart_append_spaces(impl, bar_width - filled + 1) != 0) return -1;
+        if (ansi_chart_append_style(impl, mark_style) != 0) return -1;
+        if (ansi_chart_append_number(impl, chart->rows[i].value) != 0) return -1;
+        if (ansi_chart_append_reset(impl) != 0) return -1;
+        if (ansi_chart_append_percent(impl, chart, chart->rows[i].value, mark_style) != 0) return -1;
+        if (ansi_chart_commit_line(impl, sink) != 0) return -1;
+    }
+    return 0;
+}
+
+static int ansi_chart_emit_vertical(mdf_impl *impl, mdf_sink *sink, const ansi_chart_data *chart, int flags)
+{
+    int row;
+    size_t source_i;
+    size_t i;
+    int j;
+    int slot_left;
+    int slot_right;
+    int level;
+    int tick_row;
+    double value;
+    double tick_value;
+    size_t tick_width;
+    size_t plot_width;
+    ansi_chart_plot_layout layout;
+    const char *mark_style;
+
+    ansi_chart_plot_layout_init(impl, chart, 1, &layout);
+    plot_width = layout.points * (size_t)layout.step;
+    layout.scale_width = ansi_chart_number_width(chart->max);
+    tick_width = ansi_chart_number_width(chart->max / 2.0);
+    if (tick_width > layout.scale_width) {
+        layout.scale_width = tick_width;
+    }
+    tick_width = ansi_chart_number_width(0.0);
+    if (tick_width > layout.scale_width) {
+        layout.scale_width = tick_width;
+    }
+    layout.visible_width = layout.scale_width + 3 + plot_width;
+    layout.pad = ansi_chart_center_pad(impl, layout.visible_width);
+    for (row = layout.height; row >= 1; row--) {
+        size_t container_cols;
+
+        if (mdf_emit_buffer_reset(impl) != 0) return -1;
+        if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, (size_t)ansi_chart_center_pad_after_prefix(impl, layout.visible_width, container_cols)) != 0) return -1;
+        tick_row = row == layout.height || row == ((layout.height + 1) / 2);
+        if (tick_row) {
+            tick_value = row == layout.height ? chart->max : chart->max / 2.0;
+            tick_width = ansi_chart_number_width(tick_value);
+            if (layout.scale_width > tick_width &&
+                ansi_chart_append_spaces(impl, layout.scale_width - tick_width) != 0) return -1;
+            if (ansi_chart_append_number(impl, tick_value) != 0) return -1;
+            if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), " ┤ ", strlen(" ┤ ")) != 0) return -1;
+        } else {
+            if (ansi_chart_append_spaces(impl, layout.scale_width) != 0) return -1;
+            if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), " │ ", strlen(" │ ")) != 0) return -1;
+        }
+        for (i = 0; i < layout.points; i++) {
+            value = ansi_chart_bucket_value(chart, i, layout.points);
+            level = chart->max > 0.0 ? (int)((value / chart->max) * (double)layout.height + 0.5) : 0;
+            if (level == 0 && value > 0.0) {
+                level = 1;
+            }
+            mark_style = ansi_chart_mark_style(impl, i, flags);
+            slot_left = (layout.step - layout.bar_width) / 2;
+            slot_right = layout.step - slot_left - layout.bar_width;
+            if (slot_left > 0 && ansi_chart_append_spaces(impl, (size_t)slot_left) != 0) return -1;
+            if (level >= row) {
+                for (j = 0; j < layout.bar_width; j++) {
+                    if (ansi_chart_append_styled(impl, mark_style, "█", strlen("█")) != 0) return -1;
+                }
+            } else if (ansi_chart_append_spaces(impl, (size_t)layout.bar_width) != 0) return -1;
+            if (slot_right > 0 && ansi_chart_append_spaces(impl, (size_t)slot_right) != 0) return -1;
+        }
+        if (ansi_chart_commit_line(impl, sink) != 0) return -1;
+    }
+    if (mdf_emit_buffer_reset(impl) != 0) return -1;
+    {
+        size_t container_cols;
+
+        if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, (size_t)ansi_chart_center_pad_after_prefix(impl, layout.visible_width, container_cols)) != 0) return -1;
+    }
+    if (layout.scale_width > 1 && ansi_chart_append_spaces(impl, layout.scale_width - 1) != 0) return -1;
+    if (ansi_chart_append_number(impl, 0.0) != 0) return -1;
+    if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), " ", 1) != 0) return -1;
+    if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), "└", strlen("└")) != 0) return -1;
+    for (i = 0; i <= plot_width; i++) {
+        if (ansi_chart_append_styled(impl, mdf_theme_table_wire(impl), "─", strlen("─")) != 0) return -1;
+    }
+    if (ansi_chart_commit_line(impl, sink) != 0) return -1;
+    if (layout.show_labels) {
+        size_t container_cols;
+
+        if (mdf_emit_buffer_reset(impl) != 0) return -1;
+        if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, (size_t)ansi_chart_center_pad_after_prefix(impl, layout.visible_width, container_cols)) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, layout.scale_width + 3) != 0) return -1;
+        for (i = 0; i < layout.points; i++) {
+            source_i = ansi_chart_bucket_label_index(chart, i, layout.points);
+            if (ansi_chart_append_centered_tick_slot(impl, &chart->rows[source_i], layout.step, layout.bar_width) != 0) return -1;
+        }
+        return ansi_chart_commit_line(impl, sink);
+    }
+    return 0;
+}
+
+static int ansi_chart_append_tile_spaces(mdf_impl *impl, const char *style, size_t count)
+{
+    while (count > 0) {
+        if (ansi_chart_append_tile_fill(impl, style) != 0) return -1;
+        count--;
+    }
+    return 0;
+}
+
+static int ansi_chart_append_tile_text(mdf_impl *impl, const char *style, const char *text, size_t width)
+{
+    size_t len;
+    size_t left;
+    size_t right;
+
+    len = strlen(text);
+    if (len > width) {
+        return ansi_chart_append_tile_spaces(impl, style, width);
+    }
+    left = (width - len) / 2;
+    right = width - len - left;
+    if (ansi_chart_append_tile_spaces(impl, style, left) != 0) return -1;
+    if (ansi_chart_append_tile_segment(impl, style, text, len) != 0) return -1;
+    if (ansi_chart_append_tile_spaces(impl, style, right) != 0) return -1;
+    return 0;
+}
+
+static int ansi_chart_emit_tile_row(mdf_impl *impl,
+                                    const ansi_chart_data *chart,
+                                    size_t tile_width,
+                                    int flags,
+                                    int text_mode)
+{
+    size_t i;
+    size_t start;
+    double seen_scaled;
+    double scaled_total;
+
+    start = 0;
+    seen_scaled = 0.0;
+    scaled_total = ansi_chart_scaled_total(chart);
+    for (i = 0; i < chart->len; i++) {
+        size_t end;
+        size_t seg_width;
+        const char *style;
+        char text[96];
+        int n;
+
+        if (chart->max > 0.0) {
+            seen_scaled += chart->rows[i].value / chart->max;
+        }
+        if (scaled_total <= 0.0) {
+            end = start;
+        } else if (i + 1 == chart->len) {
+            end = tile_width;
+        } else {
+            end = (size_t)((seen_scaled / scaled_total) * (double)tile_width + 0.5);
+        }
+        if (end < start) {
+            end = start;
+        }
+        if (end == start && chart->rows[i].value > 0.0 && start < tile_width) {
+            end = start + 1;
+        }
+        seg_width = end - start;
+        style = ansi_chart_mark_style(impl, i, flags);
+        if (text_mode == 0 || seg_width == 0) {
+            if (ansi_chart_append_tile_spaces(impl, style, seg_width) != 0) return -1;
+        } else {
+            if (text_mode == 1) {
+                n = snprintf(text, sizeof(text), "%s", chart->rows[i].label);
+            } else {
+                n = snprintf(text, sizeof(text), "%.1f%%", ansi_chart_percent_value(chart, chart->rows[i].value));
+            }
+            if (n < 0 || (size_t)n >= sizeof(text) || (size_t)n > seg_width) {
+                if (ansi_chart_append_tile_spaces(impl, style, seg_width) != 0) return -1;
+            } else if (ansi_chart_append_tile_text(impl, style, text, seg_width) != 0) {
+                return -1;
+            }
+        }
+        start = end;
+    }
+    return 0;
+}
+
+static int ansi_chart_emit_tile_spacer(mdf_impl *impl, mdf_sink *sink)
+{
+    size_t container_cols;
+
+    if (mdf_emit_buffer_reset(impl) != 0) return -1;
+    if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+    return ansi_chart_commit_line(impl, sink);
+}
+
+static int ansi_chart_tile_legend_fit(const ansi_chart_data *chart, size_t limit, size_t *visible_width)
+{
+    size_t i;
+    size_t used;
+    size_t fit;
+    char value[64];
+    char suffix[32];
+    int n;
+
+    used = 0;
+    fit = 0;
+    for (i = 0; i < chart->len; i++) {
+        size_t item_width;
+        size_t gap;
+        size_t suffix_width;
+
+        n = ansi_chart_format_number(value, sizeof(value), chart->rows[i].value);
+        if (n < 0) return -1;
+        item_width = 1 + 1 + chart->rows[i].label_len + 1 + (size_t)n;
+        gap = used > 0 ? 2 : 0;
+        suffix_width = 0;
+        if (i + 1 < chart->len) {
+            n = snprintf(suffix, sizeof(suffix), " +%lu", (unsigned long)(chart->len - i - 1));
+            if (n < 0 || (size_t)n >= sizeof(suffix)) return -1;
+            suffix_width = (size_t)n;
+        }
+        if (used + gap + item_width + suffix_width > limit) {
+            break;
+        }
+        used += gap + item_width;
+        fit++;
+    }
+    if (fit < chart->len) {
+        n = snprintf(suffix, sizeof(suffix), " +%lu", (unsigned long)(chart->len - fit));
+        if (n < 0 || (size_t)n >= sizeof(suffix)) return -1;
+        if (used == 0) {
+            if ((size_t)n <= limit) {
+                used = (size_t)n;
+            }
+        } else if (used + (size_t)n <= limit) {
+            used += (size_t)n;
+        }
+    }
+    *visible_width = used;
+    return (int)fit;
+}
+
+static int ansi_chart_emit_tile_legend(mdf_impl *impl,
+                                       mdf_sink *sink,
+                                       const ansi_chart_data *chart,
+                                       size_t tile_width,
+                                       int flags)
+{
+    size_t i;
+    size_t legend_width;
+    size_t visible_width;
+    size_t container_cols;
+    int fit;
+    int pad;
+
+    legend_width = (size_t)ansi_chart_content_width(impl);
+    if (legend_width < 1) {
+        legend_width = tile_width;
+    }
+    if (legend_width < 1) {
+        legend_width = 1;
+    }
+    fit = ansi_chart_tile_legend_fit(chart, legend_width, &visible_width);
+    if (fit < 0) return -1;
+    if (mdf_emit_buffer_reset(impl) != 0) return -1;
+    if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+    pad = ansi_chart_center_pad_after_prefix(impl, visible_width, container_cols);
+    if (ansi_chart_append_spaces(impl, (size_t)pad) != 0) return -1;
+    for (i = 0; i < (size_t)fit; i++) {
+        char value[64];
+        int n;
+
+        n = ansi_chart_format_number(value, sizeof(value), chart->rows[i].value);
+        if (n < 0) return -1;
+        if (i > 0 && ansi_chart_append_spaces(impl, 2) != 0) return -1;
+        if (ansi_chart_append_styled(impl, ansi_chart_mark_style(impl, i, flags), "■", strlen("■")) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, 1) != 0) return -1;
+        if (ansi_chart_append_styled(impl, ansi_chart_mark_style(impl, i, flags), chart->rows[i].label, chart->rows[i].label_len) != 0) return -1;
+        if (ansi_chart_append_spaces(impl, 1) != 0) return -1;
+        if (ansi_chart_append_styled(impl, ansi_chart_mark_style(impl, i, flags), value, (size_t)n) != 0) return -1;
+    }
+    if ((size_t)fit < chart->len && ((size_t)fit > 0 || visible_width > 0)) {
+        char suffix[32];
+        int n;
+
+        n = snprintf(suffix, sizeof(suffix), " +%lu", (unsigned long)(chart->len - (size_t)fit));
+        if (n < 0 || (size_t)n >= sizeof(suffix)) return -1;
+        if (ansi_chart_append_styled(impl, mdf_theme_table_header(impl), suffix, (size_t)n) != 0) return -1;
+    }
+    return ansi_chart_commit_line(impl, sink);
+}
+
+static int ansi_chart_emit_tile(mdf_impl *impl, mdf_sink *sink, const ansi_chart_data *chart, int flags)
+{
+    size_t tile_width;
+    size_t visible_width;
+    int pad;
+    int row;
+
+    tile_width = (size_t)ansi_chart_content_width(impl);
+    if (tile_width > 72) {
+        tile_width = 72;
+    }
+    if (tile_width < 12) {
+        tile_width = (size_t)ansi_chart_content_width(impl);
+    }
+    if (tile_width < 1) {
+        tile_width = 1;
+    }
+    visible_width = tile_width;
+    for (row = 1; row <= 2; row++) {
+        size_t container_cols;
+
+        if (mdf_emit_buffer_reset(impl) != 0) return -1;
+        if (ansi_chart_append_line_prefix(impl, &container_cols) != 0) return -1;
+        pad = ansi_chart_center_pad_after_prefix(impl, visible_width, container_cols);
+        if (ansi_chart_append_spaces(impl, (size_t)pad) != 0) return -1;
+        if (ansi_chart_emit_tile_row(impl, chart, tile_width, flags, row) != 0) return -1;
+        if (ansi_chart_commit_line(impl, sink) != 0) return -1;
+    }
+    if (ansi_chart_emit_tile_spacer(impl, sink) != 0) return -1;
+    if (ansi_chart_emit_tile_legend(impl, sink, chart, tile_width, flags) != 0) return -1;
+    return 0;
+}
+
+int ansi_write_chart_token(mdf_impl *impl, mdf_sink *sink, const mdf_token *token)
+{
+    ansi_chart_data chart;
+    int kind;
+    int rc;
+
+    if (ansi_flush_pre_code_if_active(impl, sink) != 0) return -1;
+    if (ansi_inline_flush_literal(impl, sink) != 0) return -1;
+    if (ansi_flush_word(impl, sink) != 0) return -1;
+    if (ansi_flush_pending_breaks(impl, sink) != 0) return -1;
+    if (impl->format == MDF_FORMAT_ANSI &&
+        impl->ansi_col > ansi_current_rendered_prefix_width(impl)) {
+        impl->ansi_pending_space = 0;
+        impl->ansi_pending_space_no_split = 0;
+        impl->ansi_pending_space_plain = 0;
+        if (ansi_write_newline(impl, sink) != 0) return -1;
+    } else if (ansi_flush_pending_space(impl, sink) != 0) {
+        return -1;
+    }
+    if (ansi_chart_parse(impl, token->text, token->len, &chart) != 0) return -1;
+    ansi_chart_sort(&chart, token->level);
+    if (chart.len == 0) {
+        rc = ansi_chart_emit_empty(impl, sink);
+        ansi_chart_free(impl, &chart);
+        ansi_raise_pending_breaks(impl, 1);
+        return rc;
+    }
+    kind = token->level & MDF_CHART_KIND_MASK;
+    if (kind == MDF_CHART_KIND_VERTICAL_BAR) {
+        rc = ansi_chart_emit_vertical(impl, sink, &chart, token->level);
+    } else if (kind == MDF_CHART_KIND_TILE) {
+        rc = ansi_chart_emit_tile(impl, sink, &chart, token->level);
+    } else {
+        rc = ansi_chart_emit_horizontal(impl, sink, &chart, token->level);
+    }
+    ansi_chart_free(impl, &chart);
+    ansi_raise_pending_breaks(impl, 1);
+    return rc;
+}
+
 int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
 {
     mdf_impl *impl;
@@ -7548,6 +8809,8 @@ int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
     case MDF_TOKEN_THEMATIC_BREAK:
         if (ansi_flush_pre_code_if_active(impl, sink) != 0) return -1;
         return ansi_flush_word(impl, sink);
+    case MDF_TOKEN_CHART_BLOCK:
+        return ansi_write_chart_token(impl, sink, token);
     case MDF_TOKEN_DOCUMENT_END:
         if (ansi_flush_pre_code_if_active(impl, sink) != 0) return -1;
         if (ansi_inline_flush_literal(impl, sink) != 0) return -1;

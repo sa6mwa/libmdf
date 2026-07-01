@@ -1,0 +1,29 @@
+# Tile Charts
+
+Simple 100 percent tile chart.
+
+    ████████████████Build███████████████████████████Test█████████████Ship███
+    ████████████████53.3%██████████████████████████33.3%████████████13.3%███
+
+                        ■ Build 40  ■ Test 25  ■ Ship 10
+
+Sorted tile chart.
+
+    ███████Implementation█████████████Design███████Verification█████████████
+    ███████████38.9%███████████████████26.5%██████████15.9%█████10.6%██8.0%█
+
+■ Implementation 44  ■ Design 30  ■ Verification 18  ■ Research 12  ■ Release 9
+
+Ascending tile chart.
+
+    █████Trial D█████Trial C██████████Trial A███████████████Trial E█████████
+    7.4%██11.0%███████20.2%████████████27.6%█████████████████33.7%██████████
+
+      ■ Trial B 12  ■ Trial D 18  ■ Trial C 33  ■ Trial A 45  ■ Trial E 55
+
+Many small values where narrow segments become colored blocks.
+
+    S01█S02██S03██S04███S05████S06██████S07██████S08██████S09████████S10████
+    ███5.9%█7.1%██8.2%██9.4%██10.6%████11.8%████12.9%████14.1%██████15.3%███
+
+  ■ S01 4  ■ S02 5  ■ S03 6  ■ S04 7  ■ S05 8  ■ S06 9  ■ S07 10  ■ S08 11 +2

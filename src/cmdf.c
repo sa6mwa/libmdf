@@ -687,6 +687,7 @@ int main(int argc, char **argv)
     const char *trace_writes_path;
     int simulate_enabled;
     int format_explicit;
+    int html_content_width_flag;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
@@ -740,6 +741,7 @@ int main(int argc, char **argv)
     trace_writes_path = NULL;
     simulate_enabled = 0;
     format_explicit = 0;
+    html_content_width_flag = 0;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
     while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:", long_options, NULL)) != -1) {
@@ -804,6 +806,7 @@ int main(int argc, char **argv)
                 fprintf(stderr, "cmdf: invalid html content width: %s\n", optarg);
                 return 2;
             }
+            html_content_width_flag = 1;
             break;
         case 1002:
             if (parse_table_buffer(optarg, &opts.table_buffer_mode) != 0) {
@@ -868,6 +871,9 @@ int main(int argc, char **argv)
         return 2;
     }
     if (format == MDF_FORMAT_HTML) {
+        if (width_flag > 0 && !html_content_width_flag) {
+            opts.html_content_width_ch = (double)width_flag;
+        }
         cmdf_enable_embedded_fonts(&opts);
     }
     if (trace_writes_path != NULL && format != MDF_FORMAT_ANSI) {

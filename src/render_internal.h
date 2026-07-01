@@ -18,6 +18,7 @@ typedef struct html_segment {
     int italic;
     int underline;
     int fg;
+    int bg;
     char *link;
     size_t link_len;
     size_t link_cap;
@@ -40,6 +41,7 @@ typedef struct html_state {
     int italic;
     int underline;
     int fg;
+    int bg;
     int boring;
     char *link;
     size_t link_len;
@@ -52,6 +54,7 @@ typedef struct html_state {
     int stream_italic;
     int stream_underline;
     int stream_fg;
+    int stream_bg;
     char *stream_link;
     size_t stream_link_len;
     size_t stream_link_cap;
@@ -60,6 +63,10 @@ typedef struct html_state {
     size_t stream_utf8_need;
     int pending_newline;
     int direct_prefix_open;
+    int chart_mode;
+    int chart_kind;
+    int chart_vertical_axis_col_valid;
+    size_t chart_vertical_axis_col;
 } html_state;
 
 typedef struct ansi_pre_wrap_state {
@@ -147,6 +154,7 @@ int ansi_flush_pre_code_if_active(mdf_impl *impl, mdf_sink *sink);
 int ansi_prepare_for_token(mdf_impl *impl, mdf_sink *sink, const mdf_token *token);
 int ansi_start_list_item(mdf_impl *impl, mdf_sink *sink, const mdf_token *token);
 int ansi_write_task_token(mdf_impl *impl, mdf_sink *sink, const mdf_token *token, int checked);
+int ansi_write_chart_token(mdf_impl *impl, mdf_sink *sink, const mdf_token *token);
 int ansi_finish_list_item(mdf_impl *impl, mdf_sink *sink);
 int ansi_handle_pending_quote_block_start(mdf_impl *impl, mdf_sink *sink, const mdf_token *token);
 int ansi_begin_blockquote(mdf_impl *impl, mdf_sink *sink, int prior_quote_prefix_indent, int was_quote_open);
@@ -158,7 +166,7 @@ void ansi_reset_line_output_state(mdf_impl *impl);
 size_t html_line_prefix_len(const char *s, size_t len);
 int html_start(mdf_renderer *self, mdf_sink *sink);
 int html_write_style(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, int list_marker);
-int html_emit_segment_slice(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, size_t off, size_t len, const html_segment *base_style, int list_marker, int suppress_link);
+int html_emit_segment_slice(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, size_t off, size_t len, const html_segment *base_style, int list_marker, int suppress_link, int render_cells);
 int html_emit_line_range(mdf_impl *impl, html_state *state, mdf_sink *sink, size_t start, size_t end, const html_segment *base_style, int prefix_mode, int suppress_link);
 int html_buf_sink_write(void *userdata, const char *src, size_t len);
 int html_write_open_link_grouped(mdf_impl *impl, mdf_sink *sink, const char *link, size_t link_len);

@@ -42,6 +42,242 @@ static mdf_status flush_pending_list_item_end(mdf_parser_impl *impl, mdf_rendere
 static mdf_status flush_pending_list_blank_breaks(mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink);
 static mdf_status flush_pending_bare_quote_blank(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink, int keep_quote);
 
+static void parse_reset_line(parse_state *ps, mdf_parser_impl *impl)
+{
+    int pending_soft_space;
+
+    impl->prev_hard_break = ps->hard_break;
+    pending_soft_space = ps->pending_soft_space;
+    memset(ps, 0, sizeof(*ps));
+    ps->pending_soft_space = pending_soft_space;
+    ps->at_line_start = 1;
+    ps->thematic_possible = 1;
+}
+
+static int ascii_lower_char(int c)
+{
+    return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+}
+
+static int ascii_token_equal(const char *s, size_t len, const char *want)
+{
+    size_t i;
+
+    for (i = 0; i < len && want[i] != '\0'; i++) {
+        if (ascii_lower_char((unsigned char)s[i]) != want[i]) {
+            return 0;
+        }
+    }
+    return i == len && want[i] == '\0';
+}
+
+static int chart_option_key_equal(const char *src, size_t len, const char *want)
+{
+    size_t i;
+
+    for (i = 0; i < len && want[i] != '\0'; i++) {
+        int c;
+
+        c = ascii_lower_char((unsigned char)src[i]);
+        if (c == '_') {
+            c = '-';
+        }
+        if (c != want[i]) {
+            return 0;
+        }
+    }
+    return i == len && want[i] == '\0';
+}
+
+static void chart_trim_span(const char *src, size_t len, size_t *start, size_t *end)
+{
+    size_t a;
+    size_t b;
+
+    a = 0;
+    while (a < len && (src[a] == ' ' || src[a] == '\t')) {
+        a++;
+    }
+    b = len;
+    while (b > a && (src[b - 1] == ' ' || src[b - 1] == '\t')) {
+        b--;
+    }
+    *start = a;
+    *end = b;
+}
+
+static int chart_parse_bool_option(const char *src, size_t len, int *out)
+{
+    if (ascii_token_equal(src, len, "on") ||
+        ascii_token_equal(src, len, "yes") ||
+        ascii_token_equal(src, len, "true") ||
+        ascii_token_equal(src, len, "1")) {
+        *out = 1;
+        return 1;
+    }
+    if (ascii_token_equal(src, len, "off") ||
+        ascii_token_equal(src, len, "no") ||
+        ascii_token_equal(src, len, "false") ||
+        ascii_token_equal(src, len, "0")) {
+        *out = 0;
+        return 1;
+    }
+    return 0;
+}
+
+static int chart_parse_option(const char *src, size_t len, int *flags)
+{
+    size_t eq;
+    size_t key_start;
+    size_t key_end;
+    size_t val_start;
+    size_t val_end;
+    int enabled;
+
+    chart_trim_span(src, len, &key_start, &key_end);
+    if (key_start == key_end) {
+        return 1;
+    }
+    src += key_start;
+    len = key_end - key_start;
+    eq = 0;
+    while (eq < len && src[eq] != '=') {
+        eq++;
+    }
+    if (eq == len) {
+        if (chart_option_key_equal(src, len, "sort")) {
+            *flags &= ~MDF_CHART_FLAG_SORT_ASC;
+            *flags |= MDF_CHART_FLAG_SORT_DESC;
+            return 1;
+        }
+        if (chart_option_key_equal(src, len, "colored-bars") ||
+            chart_option_key_equal(src, len, "color-bars")) {
+            *flags &= ~MDF_CHART_FLAG_MONO_BARS;
+            return 1;
+        }
+        return 0;
+    }
+    chart_trim_span(src, eq, &key_start, &key_end);
+    chart_trim_span(src + eq + 1, len - eq - 1, &val_start, &val_end);
+    if (chart_option_key_equal(src + key_start, key_end - key_start, "sort")) {
+        const char *value;
+        size_t value_len;
+
+        value = src + eq + 1 + val_start;
+        value_len = val_end - val_start;
+        *flags &= ~(MDF_CHART_FLAG_SORT_ASC | MDF_CHART_FLAG_SORT_DESC);
+        if (ascii_token_equal(value, value_len, "desc") ||
+            ascii_token_equal(value, value_len, "descending")) {
+            *flags |= MDF_CHART_FLAG_SORT_DESC;
+            return 1;
+        }
+        if (ascii_token_equal(value, value_len, "asc") ||
+            ascii_token_equal(value, value_len, "ascending")) {
+            *flags |= MDF_CHART_FLAG_SORT_ASC;
+            return 1;
+        }
+        if (ascii_token_equal(value, value_len, "off") ||
+            ascii_token_equal(value, value_len, "none")) {
+            return 1;
+        }
+        return 0;
+    }
+    if (chart_option_key_equal(src + key_start, key_end - key_start, "colored-bars") ||
+        chart_option_key_equal(src + key_start, key_end - key_start, "color-bars")) {
+        if (!chart_parse_bool_option(src + eq + 1 + val_start, val_end - val_start, &enabled)) {
+            return 0;
+        }
+        if (enabled) {
+            *flags &= ~MDF_CHART_FLAG_MONO_BARS;
+        } else {
+            *flags |= MDF_CHART_FLAG_MONO_BARS;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int chart_info_kind(const char *src, size_t len)
+{
+    size_t start;
+    size_t end;
+    size_t token_start;
+    size_t token_end;
+    size_t i;
+    int kind;
+    int flags;
+
+    chart_trim_span(src, len, &start, &end);
+    src += start;
+    len = end - start;
+    token_end = 0;
+    while (token_end < len && src[token_end] != ',') {
+        token_end++;
+    }
+    chart_trim_span(src, token_end, &token_start, &end);
+    kind = 0;
+    flags = 0;
+    if (ascii_token_equal(src + token_start, end - token_start, "mdf-bar-chart") ||
+        ascii_token_equal(src + token_start, end - token_start, "mdf-horizontal-bar-chart")) {
+        kind = MDF_CHART_KIND_HORIZONTAL_BAR;
+    } else if (ascii_token_equal(src + token_start, end - token_start, "mdf-vertical-bar-chart")) {
+        kind = MDF_CHART_KIND_VERTICAL_BAR;
+    } else if (ascii_token_equal(src + token_start, end - token_start, "mdf-tile-chart")) {
+        kind = MDF_CHART_KIND_TILE;
+    }
+    if (kind == 0) {
+        return 0;
+    }
+    i = token_end;
+    while (i < len) {
+        size_t next;
+
+        if (src[i] == ',') {
+            i++;
+        }
+        next = i;
+        while (next < len && src[next] != ',') {
+            next++;
+        }
+        if (!chart_parse_option(src + i, next - i, &flags)) {
+            return 0;
+        }
+        i = next;
+    }
+    return kind | flags;
+}
+
+static int chart_append(mdf_parser_impl *impl, const char *src, size_t len)
+{
+    char *next;
+    size_t need;
+    size_t cap;
+
+    if (len == 0) {
+        return 0;
+    }
+    if (impl->chart_len + len + 1 < impl->chart_len) {
+        return -1;
+    }
+    need = impl->chart_len + len + 1;
+    if (need > impl->chart_cap) {
+        cap = impl->chart_cap == 0 ? 256 : impl->chart_cap;
+        while (cap < need) {
+            cap *= 2;
+        }
+        next = (char *)mdf_realloc_mem(&impl->allocator, impl->chart_buf, impl->chart_cap, cap);
+        if (next == NULL) {
+            return -1;
+        }
+        impl->chart_buf = next;
+        impl->chart_cap = cap;
+    }
+    memcpy(impl->chart_buf + impl->chart_len, src, len);
+    impl->chart_len += len;
+    impl->chart_buf[impl->chart_len] = '\0';
+    return 0;
+}
+
 static int fm_append(frontmatter_filter *fm, const char *src, size_t len)
 {
     char *next;
@@ -3672,6 +3908,135 @@ static size_t table_skip_quote_prefixes(const char *line, size_t len)
     return i;
 }
 
+static size_t chart_skip_container_prefixes(const char *line, size_t len)
+{
+    return table_skip_quote_prefixes(line, len);
+}
+
+static int chart_fence_content_start(mdf_parser_impl *impl, parse_state *ps, size_t *out_start)
+{
+    size_t i;
+    size_t spaces;
+    int quoted;
+
+    i = 0;
+    quoted = 0;
+    for (;;) {
+        spaces = 0;
+        while (i < ps->prefix_len && ps->prefix[i] == ' ') {
+            spaces++;
+            i++;
+        }
+        if (i < ps->prefix_len && ps->prefix[i] == '>') {
+            if (spaces >= 4) {
+                return -1;
+            }
+            quoted = 1;
+            i++;
+            if (i < ps->prefix_len && ps->prefix[i] == ' ') {
+                i++;
+            }
+            continue;
+        }
+        break;
+    }
+    if (quoted) {
+        if (spaces >= 4) {
+            return -1;
+        }
+    } else if (impl->list_visual_continuation_indent > 0 &&
+               spaces >= impl->list_visual_continuation_indent) {
+        if (spaces - impl->list_visual_continuation_indent >= 4) {
+            return -1;
+        }
+    } else if (spaces >= 4) {
+        return -1;
+    }
+    *out_start = i;
+    return i < ps->prefix_len ? 1 : 0;
+}
+
+static int chart_prefix_is_closing_fence_line(mdf_parser_impl *impl, parse_state *ps)
+{
+    size_t start;
+    size_t i;
+
+    if (chart_fence_content_start(impl, ps, &start) <= 0) {
+        return 0;
+    }
+    i = start;
+    while (i < ps->prefix_len && ps->prefix[i] == '`') {
+        i++;
+    }
+    if (i - start < 3) {
+        return 0;
+    }
+    for (; i < ps->prefix_len; i++) {
+        if (ps->prefix[i] != ' ' && ps->prefix[i] != '\t') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int chart_prefix_is_partial_fence(mdf_parser_impl *impl, parse_state *ps)
+{
+    size_t start;
+    size_t content_len;
+
+    switch (chart_fence_content_start(impl, ps, &start)) {
+    case 0:
+        return 1;
+    case 1:
+        break;
+    default:
+        return 0;
+    }
+    content_len = ps->prefix_len - start;
+    return ps->prefix[start] == '`' && content_len < 3;
+}
+
+static int chart_fence_start_matches(mdf_parser_impl *impl, parse_state *ps)
+{
+    size_t start;
+    size_t leading;
+    size_t content_len;
+
+    start = chart_skip_container_prefixes(ps->prefix, ps->prefix_len);
+    if (start >= ps->prefix_len) {
+        return 0;
+    }
+    leading = table_leading_space_prefix(ps->prefix, ps->prefix_len);
+    if (start == leading &&
+        leading >= 4 &&
+        impl->list_visual_continuation_indent == 0 &&
+        impl->prev_quote_depth == 0 &&
+        ps->pending_quote_depth == 0 &&
+        ps->quote_depth == 0) {
+        return 0;
+    }
+    content_len = ps->prefix_len - start;
+    if (content_len > 3) {
+        content_len = 3;
+    }
+    return memcmp(ps->prefix + start, "```", content_len) == 0 &&
+           ps->prefix_len - start >= 3;
+}
+
+static int chart_fence_start_is_partial(parse_state *ps)
+{
+    size_t start;
+    size_t content_len;
+
+    start = chart_skip_container_prefixes(ps->prefix, ps->prefix_len);
+    if (start >= ps->prefix_len) {
+        return 0;
+    }
+    content_len = ps->prefix_len - start;
+    return content_len < 3 &&
+           memcmp(ps->prefix + start, "```", content_len) == 0;
+}
+
 static size_t table_count_cells(const char *line, size_t len);
 
 static int table_has_pipe_byte(const char *line, size_t len)
@@ -4273,6 +4638,27 @@ static mdf_status flush_immediate_spaces(parse_state *ps, mdf_renderer *renderer
     return MDF_OK;
 }
 
+static mdf_status prepare_fenced_block_boundary(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink)
+{
+    mdf_status st;
+
+    if (impl->prev_quote_line_text && (ps->quote_depth > 0 || impl->prev_quote_depth > 0)) {
+        st = render_emit(renderer, sink, MDF_TOKEN_PARAGRAPH_END, NULL, 0, 0);
+        if (st != MDF_OK) {
+            return st;
+        }
+        impl->prev_quote_line_text = 0;
+    }
+    if (ps->pending_soft_space) {
+        st = render_emit(renderer, sink, MDF_TOKEN_PARAGRAPH_END, NULL, 0, 0);
+        if (st != MDF_OK) {
+            return st;
+        }
+        ps->pending_soft_space = 0;
+    }
+    return MDF_OK;
+}
+
 static int prefix_all_blank(parse_state *ps)
 {
     size_t i;
@@ -4492,11 +4878,88 @@ static mdf_status emit_quote_suffixes(parse_state *ps, mdf_parser_impl *impl, md
     return MDF_OK;
 }
 
+static mdf_status emit_chart_block(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink, int kind)
+{
+    mdf_status st;
+
+    st = render_emit(renderer, sink, MDF_TOKEN_CHART_BLOCK, impl->chart_buf, impl->chart_len, kind);
+    impl->chart_len = 0;
+    if (impl->chart_buf != NULL) {
+        impl->chart_buf[0] = '\0';
+    }
+    if (st != MDF_OK) {
+        return st;
+    }
+    while (impl->chart_quote_depth > 0) {
+        st = render_emit(renderer, sink, MDF_TOKEN_BLOCKQUOTE_END, NULL, 0, 0);
+        if (st != MDF_OK) {
+            return st;
+        }
+        impl->chart_quote_depth--;
+    }
+    if (impl->chart_quote_depth == 0) {
+        impl->prev_quote_depth = 0;
+        if (ps != NULL) {
+            ps->quote_depth = 0;
+            ps->pending_quote_depth = 0;
+        }
+    }
+    return MDF_OK;
+}
+
 static mdf_status end_line(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink)
 {
     int had_pending_list_item_end;
     mdf_status st;
 
+    if (ps->mode == 7) {
+        int kind;
+
+        kind = chart_info_kind(impl->fence_info, impl->fence_info_len);
+        impl->pending_fence = 0;
+        impl->fence_info_len = 0;
+        impl->fence_info[0] = '\0';
+        if (kind != 0) {
+            impl->chart_quote_depth = ps->quote_depth;
+            st = emit_chart_block(ps, impl, renderer, sink, kind);
+        } else {
+            impl->in_code_block = 1;
+            st = render_emit(renderer, sink, MDF_TOKEN_CODE_BLOCK_START, NULL, 0, 0);
+        }
+        goto reset_line;
+    }
+    if (impl->in_chart_block) {
+        if (chart_prefix_is_closing_fence_line(impl, ps)) {
+            int kind;
+
+            kind = impl->chart_kind;
+            impl->in_chart_block = 0;
+            impl->chart_kind = 0;
+            ps->prefix_len = 0;
+            ps->decided = 1;
+            ps->mode = 6;
+            st = emit_chart_block(ps, impl, renderer, sink, kind);
+            if (st != MDF_OK) {
+                return st;
+            }
+            goto reset_line;
+        }
+        if (ps->prefix_len > 0) {
+            size_t content_start;
+            size_t content_len;
+
+            content_start = chart_skip_container_prefixes(ps->prefix, ps->prefix_len);
+            content_len = content_start < ps->prefix_len ? ps->prefix_len - content_start : 0;
+            if (content_len > 0 && chart_append(impl, ps->prefix + content_start, content_len) != 0) {
+                return MDF_ERROR_NOMEM;
+            }
+        }
+        if (chart_append(impl, "\n", 1) != 0) {
+            return MDF_ERROR_NOMEM;
+        }
+        st = MDF_OK;
+        goto reset_line;
+    }
     if (!ps->decided && prefix_is_bare_quote(ps)) {
         ps->immediate_spaces_len = 0;
         st = flush_pending_list_item_end(impl, renderer, sink);
@@ -4647,17 +5110,8 @@ static mdf_status end_line(parse_state *ps, mdf_parser_impl *impl, mdf_renderer 
             st = emit_quote_suffixes(ps, impl, renderer, sink);
         }
     }
-    {
-        int pending_soft_space;
-
 reset_line:
-        impl->prev_hard_break = ps->hard_break;
-        pending_soft_space = ps->pending_soft_space;
-        memset(ps, 0, sizeof(*ps));
-        ps->pending_soft_space = pending_soft_space;
-    }
-    ps->at_line_start = 1;
-    ps->thematic_possible = 1;
+    parse_reset_line(ps, impl);
     return st;
 }
 
@@ -4809,6 +5263,26 @@ static mdf_status decide_prefix(parse_state *ps, mdf_parser_impl *impl, mdf_rend
         return feed_decided(ps, impl, renderer, sink, c);
     }
     ps->prefix[ps->prefix_len++] = c;
+    if (impl->in_chart_block) {
+        size_t content_start;
+        size_t content_len;
+
+        if (chart_prefix_is_closing_fence_line(impl, ps)) {
+            return MDF_OK;
+        }
+        if (chart_prefix_is_partial_fence(impl, ps)) {
+            return MDF_OK;
+        }
+        ps->decided = 1;
+        ps->mode = 8;
+        content_start = chart_skip_container_prefixes(ps->prefix, ps->prefix_len);
+        content_len = content_start < ps->prefix_len ? ps->prefix_len - content_start : 0;
+        if (content_len > 0 && chart_append(impl, ps->prefix + content_start, content_len) != 0) {
+            return MDF_ERROR_NOMEM;
+        }
+        ps->prefix_len = 0;
+        return MDF_OK;
+    }
     if (impl->in_code_block) {
         if (prefix_matches(ps, "```")) {
             impl->in_code_block = 0;
@@ -5115,6 +5589,22 @@ static mdf_status decide_prefix(parse_state *ps, mdf_parser_impl *impl, mdf_rend
         i + 1 == ps->prefix_len) {
         return MDF_OK;
     }
+    if (chart_fence_start_is_partial(ps)) {
+        return MDF_OK;
+    }
+    if (chart_fence_start_matches(impl, ps)) {
+        st = prepare_fenced_block_boundary(ps, impl, renderer, sink);
+        if (st != MDF_OK) return st;
+        impl->ordered_active = 0;
+        impl->list_blank_pending = 0;
+        ps->prefix_len = 0;
+        ps->decided = 1;
+        ps->mode = 7;
+        impl->pending_fence = 1;
+        impl->fence_info_len = 0;
+        impl->fence_info[0] = '\0';
+        return MDF_OK;
+    }
     if (!indented_list_marker && impl->list_continuation_indent > 0 && i >= impl->list_continuation_indent &&
         ps->prefix[i] != '>' &&
         !((ps->prefix[i] == '-' || ps->prefix[i] == '*' || ps->prefix[i] == '+') &&
@@ -5336,13 +5826,17 @@ static mdf_status decide_prefix(parse_state *ps, mdf_parser_impl *impl, mdf_rend
                         quote_level);
         }
     }
-    if (prefix_matches(ps, "```")) {
+    if (chart_fence_start_matches(impl, ps)) {
+        st = prepare_fenced_block_boundary(ps, impl, renderer, sink);
+        if (st != MDF_OK) return st;
         impl->ordered_active = 0;
-        impl->in_code_block = 1;
         ps->prefix_len = 0;
         ps->decided = 1;
-        ps->mode = 6;
-        return render_emit(renderer, sink, MDF_TOKEN_CODE_BLOCK_START, NULL, 0, 0);
+        ps->mode = 7;
+        impl->pending_fence = 1;
+        impl->fence_info_len = 0;
+        impl->fence_info[0] = '\0';
+        return MDF_OK;
     }
     if (ps->thematic_possible) {
         if (ps->thematic_char == 0 && (c == '-' || c == '*' || c == '_')) {
@@ -5413,6 +5907,48 @@ static mdf_status feed_decided(parse_state *ps, mdf_parser_impl *impl, mdf_rende
     mdf_status st;
 
     if (c == '\r') {
+        return MDF_OK;
+    }
+    if (ps->mode == 7) {
+        if (c == '\n') {
+            int kind;
+
+            kind = chart_info_kind(impl->fence_info, impl->fence_info_len);
+            impl->pending_fence = 0;
+            impl->fence_info_len = 0;
+            impl->fence_info[0] = '\0';
+            if (kind != 0) {
+                impl->in_chart_block = 1;
+                impl->chart_kind = kind;
+                impl->chart_quote_depth = ps->quote_depth;
+                impl->chart_len = 0;
+                if (impl->chart_buf != NULL) {
+                    impl->chart_buf[0] = '\0';
+                }
+                parse_reset_line(ps, impl);
+                return MDF_OK;
+            }
+            impl->in_code_block = 1;
+            parse_reset_line(ps, impl);
+            return render_emit(renderer, sink, MDF_TOKEN_CODE_BLOCK_START, NULL, 0, 0);
+        }
+        if (impl->fence_info_len + 1 < sizeof(impl->fence_info)) {
+            impl->fence_info[impl->fence_info_len++] = c;
+            impl->fence_info[impl->fence_info_len] = '\0';
+        }
+        return MDF_OK;
+    }
+    if (ps->mode == 8) {
+        if (c == '\n') {
+            if (chart_append(impl, "\n", 1) != 0) {
+                return MDF_ERROR_NOMEM;
+            }
+            parse_reset_line(ps, impl);
+            return MDF_OK;
+        }
+        if (chart_append(impl, &c, 1) != 0) {
+            return MDF_ERROR_NOMEM;
+        }
         return MDF_OK;
     }
     if (c == '\n') {
@@ -5645,6 +6181,14 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
     if (st != MDF_OK) return st;
     st = flush_pending_list_item_end(impl, renderer, sink);
     if (st != MDF_OK) return st;
+    if (impl->in_chart_block) {
+        int kind = impl->chart_kind;
+
+        impl->in_chart_block = 0;
+        impl->chart_kind = 0;
+        st = emit_chart_block(&ps, impl, renderer, sink, kind);
+        if (st != MDF_OK) return st;
+    }
     st = render_emit(renderer, sink, MDF_TOKEN_DOCUMENT_END, NULL, 0, 0);
     if (st != MDF_OK) return st;
     return renderer->finish(renderer, sink);
