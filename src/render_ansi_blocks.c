@@ -254,6 +254,7 @@ int ansi_handle_pending_quote_block_start(mdf_impl *impl, mdf_sink *sink, const 
 int ansi_begin_blockquote(mdf_impl *impl, mdf_sink *sink, int prior_quote_prefix_indent, int was_quote_open)
 {
     int i;
+    int prior_visible_indent;
 
     if (ansi_flush_pending_breaks(impl, sink) != 0) return -1;
     if (ansi_flush_pending_space(impl, sink) != 0) return -1;
@@ -261,7 +262,12 @@ int ansi_begin_blockquote(mdf_impl *impl, mdf_sink *sink, int prior_quote_prefix
     impl->quote_depth++;
     impl->quote_wrap_active = 1;
     if (impl->ansi_col == 0 && prior_quote_prefix_indent > 0) {
-        for (i = 0; i < prior_quote_prefix_indent; i++) {
+        prior_visible_indent = prior_quote_prefix_indent;
+        if (impl->opts.margin_left > 0 && prior_visible_indent >= impl->opts.margin_left) {
+            if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
+            prior_visible_indent -= impl->opts.margin_left;
+        }
+        for (i = 0; i < prior_visible_indent; i++) {
             if (mdf_emit_cstr(impl, sink, " ") != 0) return -1;
             impl->ansi_col++;
         }

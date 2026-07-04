@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-tokens parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help deps-debug deps-release deps-cross build build-debug build-release install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
@@ -16,7 +16,6 @@ help:
 	@printf '%s\n' '  make test-hardening         Run tests, all sanitizers, fuzz smoke, and full parity'
 	@printf '%s\n' '  make parity                 Run exhaustive ANSI, HTML, streaming, and Lua parity gates'
 	@printf '%s\n' '  make parity-quick           Run bounded ANSI, HTML, and streaming parity smoke'
-	@printf '%s\n' '  make parity-tokens          Run token parity'
 	@printf '%s\n' '  make lua-test               Run Lua facade and cmdf.lua parity smoke tests'
 	@printf '%s\n' '  make lua-env                Print Lua local development environment'
 	@printf '%s\n' '  make lua-rock               Build local Lua rock'
@@ -105,9 +104,6 @@ parity-html:
 
 parity-html-quick:
 	@LIBMDF_PARITY_PROFILE=quick scripts/parity.sh html
-
-parity-tokens:
-	@scripts/parity.sh tokens
 
 parity-stream: parity-ansi-stream
 

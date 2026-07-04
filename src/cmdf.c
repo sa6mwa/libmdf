@@ -265,6 +265,7 @@ static void usage(FILE *fp)
     fprintf(fp, "  -h, --help                 Show help\n");
     fprintf(fp, "  -V, --version              Show version\n");
     fprintf(fp, "      --html                 Render HTML\n");
+    fprintf(fp, "      --deck                 Render HTML slide deck\n");
     fprintf(fp, "  -b, --boring               Boring ANSI output\n");
     fprintf(fp, "  -o, --output PATH          Output file\n");
     fprintf(fp, "  -t, --theme NAME           Theme name\n");
@@ -275,6 +276,9 @@ static void usage(FILE *fp)
     fprintf(fp, "  -8, --osc8 MODE            OSC8 mode: auto|on|off\n");
     fprintf(fp, "      --list-themes          List available themes\n");
     fprintf(fp, "      --html-content-width N HTML content max width in ch\n");
+    fprintf(fp, "  -x, --transition MODE      Deck transition: fade|cross|hard\n");
+    fprintf(fp, "      --slide-numbers        Show deck slide numbers after the first slide\n");
+    fprintf(fp, "      --deck-center-front-text Center-align first-slide paragraph text\n");
     fprintf(fp, "      --table-buffer MODE    Table buffering mode: full|row\n");
     fprintf(fp, "      --table-wire MODE      Table wire mode: line|ascii|space\n");
     fprintf(fp, "      --simulate             Simulate input streaming with default chunk\n");
@@ -404,6 +408,23 @@ static int parse_table_wire(const char *s, mdf_table_wire_mode *out)
     }
     if (strcmp(s, "space") == 0) {
         *out = MDF_TABLE_WIRE_SPACE;
+        return 0;
+    }
+    return -1;
+}
+
+static int parse_deck_transition(const char *s, mdf_deck_transition *out)
+{
+    if (strcmp(s, "fade") == 0 || strcmp(s, "") == 0) {
+        *out = MDF_DECK_TRANSITION_FADE;
+        return 0;
+    }
+    if (strcmp(s, "cross") == 0) {
+        *out = MDF_DECK_TRANSITION_CROSS;
+        return 0;
+    }
+    if (strcmp(s, "hard") == 0) {
+        *out = MDF_DECK_TRANSITION_HARD;
         return 0;
     }
     return -1;
@@ -542,6 +563,105 @@ static int detect_html_title_line(const char *line_start, const char *line_end, 
     return 0;
 }
 
+static int detect_html_title_span(const char *src, size_t start, size_t end, char **title_out)
+{
+    while (start < end && *title_out == NULL) {
+        size_t line_start;
+        size_t line_end;
+        int decided;
+
+        line_start = start;
+        while (start < end && src[start] != '\n') {
+            start++;
+        }
+        line_end = start;
+        while (line_end > line_start && (src[line_end - 1] == '\n' || src[line_end - 1] == '\r')) {
+            line_end--;
+        }
+        decided = 0;
+        if (detect_html_title_line(src + line_start, src + line_end, title_out, &decided) != 0) {
+            return -1;
+        }
+        if (start < end) {
+            start++;
+        }
+    }
+    return 0;
+}
+
+static int title_front_matter_delimiter(const char *line, size_t len)
+{
+    while (len > 0 &&
+           (line[len - 1] == '\n' ||
+            line[len - 1] == '\r' ||
+            line[len - 1] == ' ' ||
+            line[len - 1] == '\t')) {
+        len--;
+    }
+    return len == 3 && line[0] == '-' && line[1] == '-' && line[2] == '-';
+}
+
+static int title_front_matter_metadata_line(const char *line, size_t len, int *has_key_out)
+{
+    size_t i;
+    int saw_key_char;
+
+    *has_key_out = 0;
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
+    i = 0;
+    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
+        i++;
+    }
+    if (i == len) {
+        return 1;
+    }
+    if (line[i] == '#') {
+        return 1;
+    }
+    saw_key_char = 0;
+    while (i < len) {
+        unsigned char ch;
+
+        ch = (unsigned char)line[i];
+        if (ch == ':') {
+            if (saw_key_char) {
+                *has_key_out = 1;
+            }
+            return saw_key_char;
+        }
+        if ((ch >= 'A' && ch <= 'Z') ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' ||
+            ch == '-') {
+            saw_key_char = 1;
+            i++;
+            continue;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int title_front_matter_continuation_line(const char *line, size_t len)
+{
+    size_t i;
+
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
+    if (len == 0 || (line[0] != ' ' && line[0] != '\t')) {
+        return 0;
+    }
+    i = 0;
+    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
+        i++;
+    }
+    return i < len && line[i] != '#';
+}
+
 static int read_title_prescan_byte(int fd, char *ch, char **prefix, size_t *prefix_len, size_t *prefix_cap)
 {
     ssize_t n;
@@ -560,6 +680,22 @@ static int read_title_prescan_byte(int fd, char *ch, char **prefix, size_t *pref
         return -1;
     }
     return 1;
+}
+
+static int read_title_prescan_line(int fd, char **prefix, size_t *prefix_len, size_t *prefix_cap)
+{
+    for (;;) {
+        char ch;
+        int rc;
+
+        rc = read_title_prescan_byte(fd, &ch, prefix, prefix_len, prefix_cap);
+        if (rc <= 0) {
+            return rc;
+        }
+        if (ch == '\n') {
+            return 1;
+        }
+    }
 }
 
 static int detect_html_title_from_file(FILE *fp, char **title_out, char **prefix_out, size_t *prefix_len_out)
@@ -659,6 +795,75 @@ static int detect_html_title_from_file(FILE *fp, char **title_out, char **prefix
                 *prefix_len_out = prefix_len;
                 return 0;
             }
+            if (line_start == 0 && !saw_tab && spaces == 0 && ch == '-') {
+                int fm;
+                int fm_has_key;
+
+                while (rc > 0 && ch != '\n') {
+                    rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
+                    if (rc < 0) {
+                        free(prefix);
+                        return -1;
+                    }
+                }
+                fm = title_front_matter_delimiter(prefix + line_start, prefix_len - line_start);
+                fm_has_key = 0;
+                while (fm) {
+                    size_t fm_line_start;
+                    size_t fm_line_len;
+                    int line_has_key;
+
+                    fm_line_start = prefix_len;
+                    rc = read_title_prescan_line(fd, &prefix, &prefix_len, &prefix_cap);
+                    if (rc < 0) {
+                        free(prefix);
+                        return -1;
+                    }
+                    if (rc == 0) {
+                        if (detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
+                            free(prefix);
+                            return -1;
+                        }
+                        *prefix_out = prefix;
+                        *prefix_len_out = prefix_len;
+                        return 0;
+                    }
+                    fm_line_len = prefix_len - fm_line_start;
+                    if (title_front_matter_delimiter(prefix + fm_line_start, fm_line_len)) {
+                        if (!fm_has_key &&
+                            detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
+                            free(prefix);
+                            return -1;
+                        }
+                        break;
+                    }
+                    line_has_key = 0;
+                    if (!title_front_matter_metadata_line(prefix + fm_line_start, fm_line_len, &line_has_key) &&
+                        !(fm_has_key &&
+                          title_front_matter_continuation_line(prefix + fm_line_start, fm_line_len))) {
+                        if (detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
+                            free(prefix);
+                            return -1;
+                        }
+                        *prefix_out = prefix;
+                        *prefix_len_out = prefix_len;
+                        return 0;
+                    }
+                    if (line_has_key) {
+                        fm_has_key = 1;
+                    }
+                }
+                if (fm && fm_has_key) {
+                    break;
+                } else if (fm) {
+                    if (*title_out != NULL) {
+                        *prefix_out = prefix;
+                        *prefix_len_out = prefix_len;
+                        return 0;
+                    }
+                    break;
+                }
+            }
             *prefix_out = prefix;
             *prefix_len_out = prefix_len;
             return 0;
@@ -683,15 +888,19 @@ int main(int argc, char **argv)
     int width_flag;
     int list_themes;
     const char *theme_name;
+    int theme_explicit;
     const char *title_override;
     const char *trace_writes_path;
     int simulate_enabled;
     int format_explicit;
+    int deck_requested;
+    int deck_option_seen;
     int html_content_width_flag;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {"html", no_argument, NULL, 'H'},
+        {"deck", no_argument, NULL, 1009},
         {"boring", no_argument, NULL, 'b'},
         {"output", required_argument, NULL, 'o'},
         {"theme", required_argument, NULL, 't'},
@@ -708,6 +917,9 @@ int main(int argc, char **argv)
         {"simulate-chunk", required_argument, NULL, 'S'},
         {"simulate-delay", required_argument, NULL, 1005},
         {"trace-writes", required_argument, NULL, 1006},
+        {"transition", required_argument, NULL, 'x'},
+        {"slide-numbers", no_argument, NULL, 1010},
+        {"deck-center-front-text", no_argument, NULL, 1011},
         {NULL, 0, NULL, 0}
     };
     FILE *in_fp;
@@ -736,15 +948,18 @@ int main(int argc, char **argv)
     simulate_delay_seconds = 0.0;
     width_flag = 0;
     list_themes = 0;
-    theme_name = "default";
+    theme_name = NULL;
+    theme_explicit = 0;
     title_override = NULL;
     trace_writes_path = NULL;
     simulate_enabled = 0;
     format_explicit = 0;
+    deck_requested = 0;
+    deck_option_seen = 0;
     html_content_width_flag = 0;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
-    while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:x:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(stdout);
@@ -756,6 +971,11 @@ int main(int argc, char **argv)
             format = MDF_FORMAT_HTML;
             format_explicit = 1;
             break;
+        case 1009:
+            format = MDF_FORMAT_HTML_DECK;
+            format_explicit = 1;
+            deck_requested = 1;
+            break;
         case 'b':
             opts.boring = 1;
             break;
@@ -764,6 +984,7 @@ int main(int argc, char **argv)
             break;
         case 't':
             theme_name = optarg;
+            theme_explicit = 1;
             break;
         case 'T':
             title_override = optarg;
@@ -796,6 +1017,13 @@ int main(int argc, char **argv)
                     return 2;
                 }
                 simulate_chunk = (size_t)parsed;
+            }
+            break;
+        case 'x':
+            deck_option_seen = 1;
+            if (parse_deck_transition(optarg, &opts.deck_transition) != 0) {
+                fprintf(stderr, "cmdf: invalid deck transition: %s (expected fade, cross, or hard)\n", optarg);
+                return 2;
             }
             break;
         case 1000:
@@ -847,6 +1075,14 @@ int main(int argc, char **argv)
                 return 2;
             }
             break;
+        case 1010:
+            deck_option_seen = 1;
+            opts.slide_numbers = 1;
+            break;
+        case 1011:
+            deck_option_seen = 1;
+            opts.deck_center_front_text = 1;
+            break;
         default:
             usage(stderr);
             return 2;
@@ -856,21 +1092,28 @@ int main(int argc, char **argv)
         print_themes();
         return 0;
     }
-    if (!mdf_theme_exists(theme_name)) {
+    if (theme_explicit && !mdf_theme_exists(theme_name)) {
         fprintf(stderr, "cmdf: unknown theme %s\n", theme_name);
         print_themes();
         return 2;
     }
     opts.theme_name = theme_name;
+    if (deck_requested) {
+        format = MDF_FORMAT_HTML_DECK;
+    }
     if (!format_explicit && has_html_extension(out_path)) {
         format = MDF_FORMAT_HTML;
         fprintf(stderr, "cmdf: warning: inferring --html from output path %s\n", out_path);
     }
-    if (format == MDF_FORMAT_HTML && opts.table_wire_mode == MDF_TABLE_WIRE_ASCII) {
-        fprintf(stderr, "cmdf: --table-wire ascii is not supported with --html; use line or space\n");
+    if (deck_option_seen && !deck_requested) {
+        fprintf(stderr, "cmdf: deck options require --deck\n");
         return 2;
     }
-    if (format == MDF_FORMAT_HTML) {
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && opts.table_wire_mode == MDF_TABLE_WIRE_ASCII) {
+        fprintf(stderr, "cmdf: --table-wire ascii is not supported with HTML output; use line or space\n");
+        return 2;
+    }
+    if (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) {
         if (width_flag > 0 && !html_content_width_flag) {
             opts.html_content_width_ch = (double)width_flag;
         }
@@ -913,7 +1156,7 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    if (format == MDF_FORMAT_HTML && title_override == NULL) {
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && title_override == NULL) {
         if (detect_html_title_from_file(in_fp, &detected_title, &prefix_buf, &prefix_len) != 0) {
             fprintf(stderr, "cmdf: detect HTML title: %s\n", errno == 0 ? "input read failed" : strerror(errno));
             if (out_fp != stdout) fclose(out_fp);
@@ -950,7 +1193,7 @@ int main(int argc, char **argv)
         if (in_fp != stdin) fclose(in_fp);
         return 1;
     }
-    if (format == MDF_FORMAT_HTML && (title_override != NULL || detected_title != NULL)) {
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && (title_override != NULL || detected_title != NULL)) {
         st = mdf_set_html_title(renderer, title_override != NULL ? title_override : detected_title);
         if (st != MDF_OK) {
             fprintf(stderr, "cmdf: set HTML title: %s\n", mdf_status_string(st));

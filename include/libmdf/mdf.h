@@ -25,13 +25,22 @@ typedef enum mdf_status {
  * Output renderer selection.
  *
  * MDF_FORMAT_ANSI emits terminal-oriented styled text. MDF_FORMAT_HTML emits a
- * complete HTML document. libmdf-specific chart fences are supported by both
- * renderers and use the active theme in both formats.
+ * complete HTML document. MDF_FORMAT_HTML_DECK emits a standalone browser slide
+ * deck using HTML slide bodies. libmdf-specific chart fences are supported by
+ * all renderers and use the active theme in every format.
  */
 typedef enum mdf_format {
     MDF_FORMAT_ANSI = 0,
-    MDF_FORMAT_HTML = 1
+    MDF_FORMAT_HTML = 1,
+    MDF_FORMAT_HTML_DECK = 2
 } mdf_format;
+
+/** HTML slide deck transition behavior. */
+typedef enum mdf_deck_transition {
+    MDF_DECK_TRANSITION_FADE = 0,
+    MDF_DECK_TRANSITION_CROSS = 1,
+    MDF_DECK_TRANSITION_HARD = 2
+} mdf_deck_transition;
 
 /** Streaming/buffering mode for Markdown table rendering. */
 typedef enum mdf_table_buffer_mode {
@@ -95,7 +104,7 @@ typedef struct mdf_html_font_face {
     size_t (*read)(void *userdata, size_t offset, unsigned char *dst, size_t cap, int *err);
 } mdf_html_font_face;
 
-/** Optional HTML font family used by MDF_FORMAT_HTML. */
+/** Optional HTML font family used by MDF_FORMAT_HTML and MDF_FORMAT_HTML_DECK. */
 typedef struct mdf_html_font {
     const char *family;
     mdf_html_font_face regular;
@@ -108,7 +117,9 @@ typedef struct mdf_html_font {
  * Call mdf_options_init before setting fields. Chart fences use these options
  * like the rest of the renderer: ANSI charts honor width, margins, boring,
  * osc8, theme_name, write_trace, allocator, memory, and emission_buffer. HTML
- * charts honor theme_name, boring, html_content_width_ch, and html_font.
+ * charts honor theme_name, boring, html_content_width_ch, and html_font. HTML
+ * deck mode also honors deck_transition, slide_numbers, and
+ * deck_center_front_text. Deck slide bodies are vertically centered by default.
  */
 typedef struct mdf_options {
     /** ANSI wrap width. Horizontal/vertical/tile charts fit to this width after margins. */
@@ -121,12 +132,21 @@ typedef struct mdf_options {
     int boring;
     /** Enable OSC8 hyperlinks for ANSI link output. */
     int osc8;
-    /** Built-in theme name. Charts use theme accents for labels, values, and marks. */
+    /**
+     * Built-in theme name. NULL selects the default theme and allows deck front
+     * matter theme defaults; any non-NULL name is an explicit override.
+     */
     const char *theme_name;
     /** HTML document width in ch. HTML charts are centered inside this content width. */
     double html_content_width_ch;
     /** Optional HTML font. cmdf supplies JetBrains Mono; the library does not. */
     mdf_html_font html_font;
+    /** HTML deck transition behavior. Default is MDF_DECK_TRANSITION_FADE. */
+    mdf_deck_transition deck_transition;
+    /** Show slide numbers on deck slides after the first slide. */
+    int slide_numbers;
+    /** Center-align paragraph text on the first deck slide. */
+    int deck_center_front_text;
     /** Table buffering mode; does not affect chart fence buffering. */
     mdf_table_buffer_mode table_buffer_mode;
     /** ANSI table border style; does not affect chart fence drawing. */
@@ -221,9 +241,9 @@ struct mdf {
 
 /** Initialize options to stable defaults. Must be called before mdf_create. */
 void mdf_options_init(mdf_options *opts);
-/** Create an ANSI or HTML renderer using the supplied options. */
+/** Create an ANSI, HTML, or HTML deck renderer using the supplied options. */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
-/** Set or clear the HTML document title before rendering starts. */
+/** Set or clear the HTML document/deck title before rendering starts. */
 mdf_status mdf_set_html_title(mdf *self, const char *title);
 /** Stable string for a status code. */
 const char *mdf_status_string(mdf_status status);

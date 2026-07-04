@@ -23,6 +23,13 @@ typedef struct cstr_source {
     size_t off;
 } cstr_source;
 
+typedef struct chunked_cstr_source {
+    const char *src;
+    size_t len;
+    size_t off;
+    size_t max_chunk;
+} chunked_cstr_source;
+
 typedef struct one_chunk_then_fail_source {
     const char *src;
     size_t len;
@@ -67,6 +74,14 @@ typedef struct armed_failing_sink {
     int armed;
     grow_sink capture;
 } armed_failing_sink;
+
+typedef struct source_offset_probe_sink {
+    grow_sink capture;
+    const chunked_cstr_source *source;
+    const char *needle;
+    size_t needle_source_off;
+    int saw_needle;
+} source_offset_probe_sink;
 
 static void *test_alloc(void *userdata, size_t size)
 {
@@ -197,6 +212,58 @@ static int expect(int cond, const char *msg)
     return 0;
 }
 
+static size_t count_substrings(const char *haystack, const char *needle)
+{
+    size_t count;
+    size_t needle_len;
+    const char *p;
+
+    if (haystack == NULL || needle == NULL || needle[0] == '\0') {
+        return 0;
+    }
+    count = 0;
+    needle_len = strlen(needle);
+    p = haystack;
+    while ((p = strstr(p, needle)) != NULL) {
+        count++;
+        p += needle_len;
+    }
+    return count;
+}
+
+static int expect_malformed_front_matter_theme_is_safe(const char *name, const char *src)
+{
+    mdf_options opts;
+    mdf *inst;
+    mdf_status st;
+    char *out;
+    int fails;
+
+    mdf_options_init(&opts);
+    inst = NULL;
+    out = NULL;
+    fails = 0;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, name);
+    if (st != MDF_OK || inst == NULL) {
+        return fails;
+    }
+    st = inst->render_cstr(inst, src, &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck malformed front matter theme render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 1 &&
+                    strstr(out, "Malformed Theme") != NULL &&
+                    strstr(out, "Visible body") != NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "color:rgb(255,175,215)") == NULL,
+                    "html deck malformed front matter theme is consumed without applying theme");
+    if (out != NULL) {
+        inst->string_free(inst, out);
+    }
+    inst->destroy(inst);
+    return fails;
+}
+
 static int grow_write(void *userdata, const char *src, size_t len)
 {
     grow_sink *sink;
@@ -246,6 +313,28 @@ static size_t cstr_read(void *userdata, char *dst, size_t cap, int *err)
     n = src->len - src->off;
     if (n > cap) {
         n = cap;
+    }
+    memcpy(dst, src->src + src->off, n);
+    src->off += n;
+    return n;
+}
+
+static size_t chunked_cstr_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    chunked_cstr_source *src;
+    size_t n;
+
+    (void)err;
+    src = (chunked_cstr_source *)userdata;
+    if (src->off >= src->len) {
+        return 0;
+    }
+    n = src->len - src->off;
+    if (n > cap) {
+        n = cap;
+    }
+    if (src->max_chunk > 0 && n > src->max_chunk) {
+        n = src->max_chunk;
     }
     memcpy(dst, src->src + src->off, n);
     src->off += n;
@@ -309,6 +398,20 @@ static int armed_fail_write(void *userdata, const char *src, size_t len)
         return -1;
     }
     return grow_write(&sink->capture, src, len);
+}
+
+static int source_offset_probe_write(void *userdata, const char *src, size_t len)
+{
+    source_offset_probe_sink *sink;
+    int rc;
+
+    sink = (source_offset_probe_sink *)userdata;
+    rc = grow_write(&sink->capture, src, len);
+    if (rc == 0 && !sink->saw_needle && sink->capture.buf != NULL && strstr(sink->capture.buf, sink->needle) != NULL) {
+        sink->saw_needle = 1;
+        sink->needle_source_off = sink->source->off;
+    }
+    return rc;
 }
 
 static int discard_write(void *userdata, const char *src, size_t len)
@@ -397,6 +500,7 @@ int main(void)
     grow_sink sink_data;
     mdf_sink sink;
     size_t before_allocs;
+    static const unsigned char deck_font_bytes[] = {1, 2, 3};
 
     fails = 0;
     inst = NULL;
@@ -490,9 +594,1015 @@ int main(void)
                     "html default-options handle emits shell");
     inst->string_free(inst, out);
     out = NULL;
+    st = inst->render_cstr(inst,
+                           "# One\n"
+                           "\n"
+                           "## Two\n"
+                           "\n"
+                           "### Three\n"
+                           "\n"
+                           "#### Four\n"
+                           "\n"
+                           "##### Five\n"
+                           "\n"
+                           "###### Six\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html document heading scale render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "font-size:32pt;font-weight:700;--mdf-heading-indent:2ch;\"># One</span>") != NULL &&
+                    strstr(out, "font-size:22pt;font-weight:700;--mdf-heading-indent:3ch;\">## Two</span>") != NULL &&
+                    strstr(out, "font-size:15pt;font-weight:700;--mdf-heading-indent:4ch;\">### Three</span>") != NULL &&
+                    strstr(out, "font-size:14pt;font-weight:700;--mdf-heading-indent:5ch;\">#### Four</span>") != NULL &&
+                    strstr(out, "font-size:13pt;font-weight:700;--mdf-heading-indent:6ch;\">##### Five</span>") != NULL &&
+                    strstr(out, "font-size:12.5pt;font-weight:700;--mdf-heading-indent:7ch;\">###### Six</span>") != NULL,
+                    "html document heading scale uses restored ATX heading sizes");
+    inst->string_free(inst, out);
+    out = NULL;
     st = inst->render_cstr(inst, long_markdown, &out);
     fails += expect(st == MDF_OK && out != NULL && strstr(out, "X") != NULL,
                     "html preserves byte that overflows undecided prefix buffer");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+    mdf_options_init(&opts);
+    opts.deck_transition = MDF_DECK_TRANSITION_CROSS;
+    opts.slide_numbers = 1;
+    opts.deck_center_front_text = 1;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck create succeeds");
+    st = inst->render_cstr(inst,
+                           "---   \n"
+                           "theme: \"tokyo-night\"\n"
+                           "--- \t\n"
+                           "# Front\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# Chart\n"
+                           "\n"
+                           "```mdf-bar-chart\n"
+                           "A,1\n"
+                           "B,2\n"
+                           "```\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck render_cstr succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->") != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\" data-transition=\"cross\"") != NULL &&
+                    strstr(out, ".mdf-document .mdf-heading") == NULL &&
+                    strstr(out, ".mdf-deck[data-transition=\"cross\"] .mdf-slide{transition:opacity 1600ms ease,visibility 0s linear 1600ms;}") != NULL &&
+                    strstr(out, ".mdf-deck[data-transition=\"cross\"] .mdf-slide[aria-hidden=\"false\"]{transition:opacity 1600ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(out, "<section class=\"mdf-slide mdf-slide-front mdf-center-front-text\" data-slide=\"1\" aria-hidden=\"false\">") != NULL &&
+                    strstr(out, "<section class=\"mdf-slide\" data-slide=\"2\" aria-hidden=\"true\">") != NULL,
+                    "html deck emits shell, front slide, and second slide");
+    fails += expect(out != NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "tokyo-night") == NULL &&
+                    strstr(out, "color:rgb(255,175,215)") != NULL,
+                    "html deck consumes front matter with spaced delimiters and applies theme default");
+    fails += expect(out != NULL &&
+                    strstr(out, "mdf-slide-content mdf-slide-content-centered") != NULL &&
+                    strstr(out, ".mdf-slide-content-centered:has(.mdf-chart-block){width:100%;}") != NULL &&
+                    strstr(out, "<div class=\"mdf-slide-header\"><span class=\"mdf-heading\"") != NULL &&
+                    strstr(out, "</div><div class=\"mdf-slide-body\"><div class=\"mdf-slide-body-inner\">") != NULL,
+                    "html deck centers non-front body content by default");
+    fails += expect(out != NULL &&
+                    strstr(out, "<div class=\"mdf-slide-number\" aria-hidden=\"true\"></div>") != NULL &&
+                    strstr(out, "padStart(w,'0')+'/'+String(slides.length).padStart(w,'0')") != NULL,
+                    "html deck emits browser-filled slide number placeholders");
+    fails += expect(out != NULL &&
+                    strstr(out, ".mdf-slide-number{font-weight:700;opacity:.72;font-size:clamp(.8rem,1.6vw,1.1rem);color:rgb(135,175,215);}") != NULL,
+                    "html deck slide numbers use the resolved theme heading color");
+    fails += expect(out != NULL &&
+                    strstr(out, "touchstart") != NULL &&
+                    strstr(out, "touchend") != NULL &&
+                    strstr(out, "Math.abs(dx)>=48") != NULL &&
+                    strstr(out, "Math.abs(dy)<48") != NULL &&
+                    strstr(out, "box.scrollHeight>box.clientHeight+4") != NULL &&
+                    strstr(out, "show(cur+1,true)") != NULL &&
+                    strstr(out, "show(cur-1,true)") != NULL,
+                    "html deck emits swipe navigation handlers");
+    fails += expect(out != NULL &&
+                    strstr(out, "mdf-fullscreen-button") != NULL &&
+                    strstr(out, "toggleFullscreen") != NULL &&
+                    strstr(out, "case'f'") != NULL &&
+                    strstr(out, "requestFullscreen") != NULL &&
+                    strstr(out, "mdf-fallback-fullscreen") != NULL,
+                    "html deck emits fullscreen control and fallback");
+    fails += expect(out != NULL &&
+                    strstr(out, ".mdf-deck.mdf-cursor-hidden,.mdf-deck.mdf-cursor-hidden *{cursor:none!important;}") != NULL &&
+                    strstr(out, "var cursorTimer=0;function showCursor()") != NULL &&
+                    strstr(out, "addEventListener('pointermove',showCursor,{passive:true})") != NULL,
+                    "html deck emits cursor inactivity hiding");
+    fails += expect(out != NULL &&
+                    strstr(out, "function syncSlides()") != NULL &&
+                    strstr(out, "data-mdf-tabindex") != NULL &&
+                    strstr(out, "el.setAttribute('tabindex','-1')") != NULL &&
+                    strstr(out, "t.closest('a[href],button,summary,input,select,textarea')") != NULL &&
+                    strstr(out, "deck.dataset.current=String(cur+1)") != NULL,
+                    "html deck synchronizes inactive slide focusability");
+    fails += expect(out != NULL &&
+                    strstr(out, "@media (max-height:520px)") != NULL &&
+                    strstr(out, ".mdf-slide-header .mdf-heading[style*=\"font-size:32pt\"],.mdf-slide-front .mdf-heading[style*=\"font-size:32pt\"]{font-size:min(7.4vmin,7vw)!important;}") != NULL &&
+                    strstr(out, ".mdf-slide-body .mdf-heading[style*=\"--mdf-heading-indent:6ch\"]{font-size:1.05em!important;}") != NULL &&
+                    strstr(out, "var dense=box.textContent.length>520;var scale=Math.min(vw,vh);var base=scale*(slide.classList.contains('mdf-slide-front') ? .072 : (dense ? .038 : .047));") != NULL &&
+                    strstr(out, "var vh=Math.max") != NULL &&
+                    strstr(out, "if(vh<520)") != NULL,
+                    "html deck emits viewport-adaptive autofit rules");
+    fails += expect(out != NULL &&
+                    strstr(out, "<div class=\"mdf-chart-block\"") != NULL &&
+                    strstr(out, "66.7%") != NULL,
+                    "html deck supports charts inside slides");
+    memset(&sink_data, 0, sizeof(sink_data));
+    sink.userdata = &sink_data;
+    sink.write = grow_write;
+    tok.type = MDF_TOKEN_TEXT;
+    tok.text = "manual";
+    tok.len = strlen(tok.text);
+    tok.level = 0;
+    st = inst->write_token(inst, &tok, &sink);
+    fails += expect(st == MDF_ERROR_INVALID && sink_data.len == 0,
+                    "html deck write_token rejects manual token streaming");
+    fails += expect(strcmp(inst->error(inst), "deck renderers do not support token streaming") == 0,
+                    "html deck write_token reports unsupported token streaming");
+    st = inst->finish(inst, &sink);
+    fails += expect(st == MDF_ERROR_INVALID && sink_data.len == 0,
+                    "html deck finish rejects manual token streaming");
+    grow_free(&sink_data);
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck lower heading create succeeds");
+    st = inst->render_cstr(inst,
+                           "# Front\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "## Second-Level Slide Header\n"
+                           "\n"
+                           "Second-level body.\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "### Third-Level Slide Header\n"
+                           "\n"
+                           "Third-level body.\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck lower heading render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<div class=\"mdf-slide-header\"><span class=\"mdf-heading\"") != NULL &&
+                    strstr(out, ">## Second-Level Slide Header</span></div><div class=\"mdf-slide-body\"") != NULL &&
+                    strstr(out, ">### Third-Level Slide Header</span></div><div class=\"mdf-slide-body\"") != NULL,
+                    "html deck promotes lower-level first headings to slide headers");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html normal link target create succeeds");
+    st = inst->render_cstr(inst, "[Plain Link](https://example.com)\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html normal link target render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<a href=\"https://example.com\"") != NULL &&
+                    strstr(out, "target=\"_blank\"") == NULL &&
+                    strstr(out, "rel=\"noopener noreferrer\"") == NULL,
+                    "html normal links do not force a new tab");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck link target create succeeds");
+    st = inst->render_cstr(inst, "# Links\n\n[Deck Link](https://example.com)\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck link target render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\"") != NULL,
+                    "html deck links open in a new tab with opener protection");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck raw html semantics create succeeds");
+    st = inst->render_cstr(inst,
+                           "# Raw HTML\n"
+                           "\n"
+                           "<p data-deck-fixture=\"raw-html\">Raw inline HTML</p>\n"
+                           "\n"
+                           "<details><summary>Disclosure content</summary>Body</details>\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck raw html semantics render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "&lt;p data-deck-fixture=&#34;raw-html&#34;&gt;Raw inline HTML&lt;/p&gt;") != NULL &&
+                    strstr(out, "&lt;details&gt;&lt;summary&gt;Disclosure content&lt;/summary&gt;Body&lt;/details&gt;") != NULL &&
+                    strstr(out, "<p data-deck-fixture=\"raw-html\">") == NULL &&
+                    strstr(out, "<details><summary>Disclosure content</summary>") == NULL,
+                    "html deck preserves escaped raw HTML renderer semantics");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck explicit title create succeeds");
+    st = mdf_set_html_title(inst, "Deck & <API>");
+    fails += expect(st == MDF_OK, "html deck explicit title setter succeeds");
+    st = inst->render_cstr(inst, "# Titled Deck\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck explicit title render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<title>Deck &amp; &lt;API&gt;</title>") != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\"") != NULL,
+                    "html deck explicit title is escaped in shell");
+    inst->string_free(inst, out);
+    out = NULL;
+    st = mdf_set_html_title(inst, NULL);
+    fails += expect(st == MDF_OK, "html deck title clear succeeds");
+    st = inst->render_cstr(inst, "# Cleared Deck Title\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck cleared title render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<title>mdf</title>") != NULL &&
+                    strstr(out, "<title>Deck &amp; &lt;API&gt;</title>") == NULL &&
+                    strstr(out, "<main class=\"mdf-deck\"") != NULL,
+                    "html deck cleared title returns to default shell title");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck boring create succeeds");
+    st = inst->render_cstr(inst,
+                           "# Boring Deck\n"
+                           "\n"
+                           "```mdf-bar-chart\n"
+                           "A,1\n"
+                           "B,2\n"
+                           "```\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck boring render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "html,body{margin:0;min-height:100%;background:transparent;}") != NULL &&
+                    strstr(out, "body{color:rgb(0,0,0);") != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\"") != NULL,
+                    "html deck boring mode applies base html colors");
+    fails += expect(out != NULL &&
+                    strstr(out, "<div class=\"mdf-chart-block\"") != NULL &&
+                    strstr(out, "background-color:rgb(205,0,205)") == NULL &&
+                    strstr(out, "background-color:rgb(59,156,255)") == NULL,
+                    "html deck boring mode suppresses themed chart colors");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.html_content_width_ch = 72.0;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck content width create succeeds");
+    st = inst->render_cstr(inst, "# Width Deck\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck content width render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "--mdf-content-max-width:72ch;") != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\"") != NULL,
+                    "html deck preserves html content width setting");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.html_font.family = "Deck Mono";
+    opts.html_font.regular.format = MDF_HTML_FONT_FORMAT_WOFF2;
+    opts.html_font.regular.data = deck_font_bytes;
+    opts.html_font.regular.data_len = sizeof(deck_font_bytes);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck embedded font create succeeds");
+    st = inst->render_cstr(inst, "# Font Deck\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck embedded font render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "@font-face{font-family:\"Deck Mono\";src:url(data:font/woff2;base64,AQID)") != NULL &&
+                    strstr(out, "font-family:\"Deck Mono\",monospace") != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\"") != NULL,
+                    "html deck preserves embedded html font settings");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck unknown front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "title: Metadata Title\n"
+                           "author: Deck Author\n"
+                           "date: 2026-07-02\n"
+                           "deck: reserved metadata\n"
+                           "future_option: ignored value\n"
+                           "---\n"
+                           "# Unknown Metadata\n"
+                           "\n"
+                           "Visible body\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck unknown front matter render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "Unknown Metadata") != NULL &&
+                    strstr(out, "Visible body") != NULL &&
+                    strstr(out, "deck:") == NULL &&
+                    strstr(out, "title:") == NULL &&
+                    strstr(out, "author:") == NULL &&
+                    strstr(out, "date:") == NULL &&
+                    strstr(out, "Metadata Title") == NULL &&
+                    strstr(out, "Deck Author") == NULL &&
+                    strstr(out, "2026-07-02") == NULL &&
+                    strstr(out, "future_option:") == NULL &&
+                    strstr(out, "reserved metadata") == NULL &&
+                    strstr(out, "ignored value") == NULL,
+                    "html deck ignores reserved unknown front matter keys");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck YAML list front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "title: Metadata Title\n"
+                           "tags:\n"
+                           "  - alpha\n"
+                           "  - beta\n"
+                           "---\n"
+                           "# YAML Metadata\n"
+                           "\n"
+                           "Visible body\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck YAML list front matter render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 1 &&
+                    strstr(out, "YAML Metadata") != NULL &&
+                    strstr(out, "Visible body") != NULL &&
+                    strstr(out, "title:") == NULL &&
+                    strstr(out, "tags:") == NULL &&
+                    strstr(out, "alpha") == NULL &&
+                    strstr(out, "beta") == NULL &&
+                    strstr(out, "Metadata Title") == NULL,
+                    "html deck consumes YAML list continuation front matter");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.slide_numbers = 1;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck CRLF front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\r\n"
+                           "theme: \"tokyo-night\"\r\n"
+                           "---\r\n"
+                           "# Front\r\n"
+                           "\r\n"
+                           "---\r\n"
+                           "\r\n"
+                           "# Body\r\n"
+                           "\r\n"
+                           "Content\r\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck CRLF front matter render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "color:rgb(255,175,215)") != NULL &&
+                    strstr(out, ".mdf-slide-number{font-weight:700;opacity:.72;font-size:clamp(.8rem,1.6vw,1.1rem);color:rgb(135,175,215);}") != NULL,
+                    "html deck CRLF front matter applies theme");
+    fails += expect(out != NULL &&
+                    strstr(out, "mdf-slide-content mdf-slide-content-centered") != NULL &&
+                    strstr(out, "<div class=\"mdf-slide-body\">") != NULL,
+                    "html deck CRLF front matter keeps centered body default");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck commented front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "theme: \"tokyo-night\"\n"
+                           "# unindented comment\n"
+                           "---\n"
+                           "# Commented Metadata\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# Body\n"
+                           "\n"
+                           "Content\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck commented front matter render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "unindented comment") == NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "color:rgb(255,175,215)") != NULL &&
+                    strstr(out, "mdf-slide-content mdf-slide-content-centered") != NULL,
+                    "html deck consumes commented front matter and applies options");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck invalid front matter theme create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "theme: \"not-a-theme\"\n"
+                           "---\n"
+                           "# Invalid Theme Metadata\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# Body\n"
+                           "\n"
+                           "Content\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck invalid front matter theme render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "not-a-theme") == NULL &&
+                    strstr(out, "Invalid Theme Metadata") != NULL &&
+                    strstr(out, "color:rgb(255,175,215)") == NULL &&
+                    strstr(out, ".mdf-slide-number{font-weight:700;opacity:.72;font-size:clamp(.8rem,1.6vw,1.1rem);color:rgb(135,175,215);}") == NULL,
+                    "html deck consumes invalid front matter theme and keeps default theme");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    fails += expect_malformed_front_matter_theme_is_safe(
+        "html deck single double-quote front matter theme create succeeds",
+        "---\n"
+        "theme: \"\n"
+        "---\n"
+        "# Malformed Theme\n"
+        "\n"
+        "Visible body\n");
+    fails += expect_malformed_front_matter_theme_is_safe(
+        "html deck single single-quote front matter theme create succeeds",
+        "---\n"
+        "theme: '\n"
+        "---\n"
+        "# Malformed Theme\n"
+        "\n"
+        "Visible body\n");
+    fails += expect_malformed_front_matter_theme_is_safe(
+        "html deck empty double-quoted front matter theme create succeeds",
+        "---\n"
+        "theme: \"\"\n"
+        "---\n"
+        "# Malformed Theme\n"
+        "\n"
+        "Visible body\n");
+    fails += expect_malformed_front_matter_theme_is_safe(
+        "html deck unterminated quoted front matter theme create succeeds",
+        "---\n"
+        "theme: \"tokyo-night\n"
+        "---\n"
+        "# Malformed Theme\n"
+        "\n"
+        "Visible body\n");
+
+    mdf_options_init(&opts);
+    opts.theme_name = "default";
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck explicit default theme create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "theme: \"tokyo-night\"\n"
+                           "---\n"
+                           "# Explicit Default\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck explicit default theme render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "theme:") == NULL &&
+                    strstr(out, "color:rgb(255,175,215)") == NULL,
+                    "html deck explicit theme option overrides front matter theme");
+    fails += expect(out != NULL &&
+                    strstr(out, "color:rgb(135,175,215)") == NULL,
+                    "html deck explicit theme option overrides slide-number theme color");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck default create succeeds");
+    st = inst->render_cstr(inst, "# One\n\n---\n\n# Two\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck default render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\" data-transition=\"fade\"") != NULL &&
+                    strstr(out, ".mdf-deck[data-transition=\"fade\"] .mdf-slide{transition:opacity 520ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(out, ".mdf-deck[data-transition=\"fade\"] .mdf-slide[aria-hidden=\"false\"]{transition:opacity 520ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(out, "matchMedia('(prefers-reduced-motion: reduce)')") != NULL &&
+                    strstr(out, "deck.dataset.transition==='fade'&&!reduceMotion&&old!==cur") != NULL &&
+                    strstr(out, "setTimeout(function(){apply();void deck.offsetWidth;deck.classList.remove('mdf-blackout');},520)") != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "<div class=\"mdf-slide-number\" aria-hidden=\"true\"></div>") == NULL,
+                    "html deck defaults to symmetric slower fade and omits slide numbers");
+    fails += expect(out != NULL && count_substrings(out, "<section class=\"mdf-slide mdf-slide-front\"") == 1,
+                    "html deck emits front-slide class only once");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.deck_transition = MDF_DECK_TRANSITION_HARD;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck hard transition create succeeds");
+    st = inst->render_cstr(inst, "# Hard\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<main class=\"mdf-deck\" data-transition=\"hard\"") != NULL &&
+                    strstr(out, ".mdf-deck[data-transition=\"hard\"] .mdf-slide{transition:none;}") != NULL,
+                    "html deck hard transition is reflected in output");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.deck_transition = (mdf_deck_transition)99;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_ERROR_INVALID && inst == NULL,
+                    "html deck rejects invalid transition enum");
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck separator create succeeds");
+    st = inst->render_cstr(inst,
+                           "# A\n"
+                           "\n"
+                           "***\n"
+                           "\n"
+                           "# B\n"
+                           "\n"
+                           "___\n"
+                           "\n"
+                           "# C\n"
+                           "\n"
+                           "   ---\n"
+                           "\n"
+                           "# D\n"
+                           "\n"
+                           "```mdf-bar-chart\n"
+                           "A,1\n"
+                           "---\n"
+                           "B,2\n"
+                           "```\n"
+                           "\n"
+                           "````text\n"
+                           "```\n"
+                           "---\n"
+                           "inside long fence\n"
+                           "````\n"
+                           "\n"
+                           "    ```\n"
+                           "    indented code is not a deck fence\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# E\n"
+                           "\n"
+                           "> ---\n"
+                           "\n"
+                           "- list item\n"
+                           "\n"
+                           "  ---\n"
+                           "\n"
+                           "still C\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck separator render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 5 &&
+                    strstr(out, "still C") != NULL &&
+                    strstr(out, "# D") != NULL &&
+                    strstr(out, "# E") != NULL &&
+                    strstr(out, "inside long fence") != NULL &&
+                    strstr(out, "indented code is not a deck fence") != NULL &&
+                    strstr(out, "\">---</span>") != NULL &&
+                    strstr(out, "<div class=\"mdf-chart-block\"") != NULL,
+                    "html deck splits thematic separators including indentation but not fenced quoted list indented-code or chart-fence content");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck lazy blockquote separator create succeeds");
+    st = inst->render_cstr(inst,
+                           "> Quote\n"
+                           "---\n"
+                           "After\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# Next\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck lazy blockquote separator render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "Quote") != NULL &&
+                    strstr(out, "After") != NULL &&
+                    strstr(out, "Next") != NULL,
+                    "html deck keeps lazy blockquote thematic-looking line on current slide");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck closed blockquote separator create succeeds");
+    st = inst->render_cstr(inst,
+                           "> Quote\n"
+                           "\n"
+                           "---\n"
+                           "\n"
+                           "# Next\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck closed blockquote separator render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "Quote") != NULL &&
+                    strstr(out, "Next") != NULL,
+                    "html deck resumes slide splitting after blockquote blank line");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck comment-only front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "# deck comment\n"
+                           "---\n"
+                           "# First\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck comment-only front matter render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 1 &&
+                    strstr(out, "deck comment") != NULL &&
+                    strstr(out, "# First") != NULL &&
+                    strstr(out, "<section class=\"mdf-slide mdf-slide-front\"") != NULL,
+                    "html deck preserves closed comment-only front matter as slide content");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck unclosed front matter ambiguity create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "theme: default\n"
+                           "# First\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck unclosed front matter ambiguity render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "data-slide=\"2\"") != NULL &&
+                    strstr(out, "theme: default") != NULL &&
+                    strstr(out, "# First") != NULL,
+                    "html deck treats unclosed metadata-looking leading separator as a slide break");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck rejected front matter create succeeds");
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "theme: default\n"
+                           "Body\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck rejected keyed front matter render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "data-slide=\"2\"") != NULL &&
+                    strstr(out, "theme: default") != NULL &&
+                    strstr(out, "Body") != NULL,
+                    "html deck preserves rejected keyed front matter body after leading separator");
+    inst->string_free(inst, out);
+    out = NULL;
+
+    st = inst->render_cstr(inst,
+                           "---\n"
+                           "Not metadata\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html deck rejected front matter render succeeds");
+    fails += expect(out != NULL &&
+                    count_substrings(out, "<section class=\"mdf-slide") == 2 &&
+                    strstr(out, "data-slide=\"2\"") != NULL &&
+                    strstr(out, "Not metadata") != NULL,
+                    "html deck treats rejected leading separator as a slide break");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck source failure create succeeds");
+    src.userdata = NULL;
+    src.read = fail_read;
+    sink.userdata = NULL;
+    sink.write = discard_write;
+    st = inst->render(inst, &src, &sink);
+    fails += expect(st == MDF_ERROR_IO, "html deck render surfaces source read failure");
+    fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
+                    "html deck source failure exposes error text");
+    st = inst->render_cstr(inst, "# After Source Failure\n", &out);
+    fails += expect(st == MDF_OK && out != NULL && strstr(out, "After Source Failure") != NULL,
+                    "html deck handle recovers after source read failure");
+    fails += expect(strcmp(inst->error(inst), "") == 0,
+                    "html deck success clears source failure text");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck sink failure create succeeds");
+    memset(&src_data, 0, sizeof(src_data));
+    src_data.src = "# Sink Failure\n";
+    src_data.len = strlen(src_data.src);
+    src.userdata = &src_data;
+    src.read = cstr_read;
+    sink.userdata = NULL;
+    sink.write = fail_write;
+    st = inst->render(inst, &src, &sink);
+    fails += expect(st == MDF_ERROR_IO, "html deck render surfaces sink write failure");
+    fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
+                    "html deck sink failure exposes error text");
+    st = inst->render_cstr(inst, "# After Sink Failure\n", &out);
+    fails += expect(st == MDF_OK && out != NULL && strstr(out, "After Sink Failure") != NULL,
+                    "html deck handle recovers after sink write failure");
+    fails += expect(strcmp(inst->error(inst), "") == 0,
+                    "html deck success clears sink failure text");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    memset(&allocs, 0, sizeof(allocs));
+    mdf_options_init(&opts);
+    opts.allocator.userdata = &allocs;
+    opts.allocator.alloc = test_alloc;
+    opts.allocator.realloc = test_realloc;
+    opts.allocator.free = test_free;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck delayed source failure create succeeds");
+    memset(&read_fail_after_alloc, 0, sizeof(read_fail_after_alloc));
+    read_fail_after_alloc.src = "---\ntheme: delayed failure\n";
+    read_fail_after_alloc.len = strlen(read_fail_after_alloc.src);
+    src.userdata = &read_fail_after_alloc;
+    src.read = one_chunk_then_fail_read;
+    sink.userdata = NULL;
+    sink.write = discard_write;
+    st = inst->render(inst, &src, &sink);
+    fails += expect(st == MDF_ERROR_IO, "html deck render surfaces delayed source read failure");
+    fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
+                    "html deck delayed source read failure exposes error text");
+    st = inst->render_cstr(inst, "# After Source Failure\n", &out);
+    fails += expect(st == MDF_OK && out != NULL && strstr(out, "After Source Failure") != NULL,
+                    "html deck handle recovers after source read failure");
+    fails += expect(strcmp(inst->error(inst), "") == 0,
+                    "html deck success clears source read failure text");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+    fails += expect(allocs.allocs == allocs.frees,
+                    "html deck delayed source read failure releases renderer-owned buffers");
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck streaming create succeeds");
+    if (inst != NULL) {
+        static const char deck_stream_markdown[] = "# First Slide\n\n---\n\n# Second Slide\n";
+        chunked_cstr_source stream_src;
+        source_offset_probe_sink stream_sink;
+        mdf_source source;
+        mdf_sink sink;
+        const char *second;
+
+        memset(&stream_src, 0, sizeof(stream_src));
+        stream_src.src = deck_stream_markdown;
+        stream_src.len = strlen(deck_stream_markdown);
+        stream_src.max_chunk = 1;
+        memset(&stream_sink, 0, sizeof(stream_sink));
+        stream_sink.source = &stream_src;
+        stream_sink.needle = "First Slide";
+        source.userdata = &stream_src;
+        source.read = chunked_cstr_read;
+        sink.userdata = &stream_sink;
+        sink.write = source_offset_probe_write;
+        second = strstr(deck_stream_markdown, "# Second Slide");
+        st = inst->render(inst, &source, &sink);
+        fails += expect(st == MDF_OK, "html deck streaming render succeeds");
+        fails += expect(stream_sink.saw_needle, "html deck streaming emits first slide");
+        fails += expect(second != NULL &&
+                        stream_sink.needle_source_off <= (size_t)(second - deck_stream_markdown),
+                        "html deck streaming emits first slide before reading second slide");
+        fails += expect(stream_sink.capture.buf != NULL &&
+                        strstr(stream_sink.capture.buf, "Second Slide") != NULL,
+                        "html deck streaming eventually emits second slide");
+        grow_free(&stream_sink.capture);
+        inst->destroy(inst);
+        inst = NULL;
+    }
+
+    mdf_options_init(&opts);
+    fail_allocs.alloc_calls = 0;
+    fail_allocs.realloc_calls = 0;
+    fail_allocs.fail_after = 32;
+    opts.allocator.userdata = &fail_allocs;
+    opts.allocator.alloc = failing_alloc;
+    opts.allocator.realloc = failing_realloc;
+    opts.allocator.free = failing_free;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL,
+                    "html deck create succeeds before slide renderer allocation exhaustion");
+    if (inst != NULL) {
+        fail_allocs.alloc_calls = 0;
+        fail_allocs.realloc_calls = 0;
+        fail_allocs.fail_after = 1;
+        st = inst->render_cstr(inst, "# Allocation Failure\n", &out);
+        fails += expect(st == MDF_ERROR_NOMEM && out == NULL,
+                        "html deck slide renderer creation surfaces allocator exhaustion as oom");
+        fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                        "html deck slide renderer creation exposes allocator exhaustion text");
+        inst->destroy(inst);
+        inst = NULL;
+    }
+
+    {
+        size_t fail_after;
+        int saw_front_theme_oom;
+
+        saw_front_theme_oom = 0;
+        for (fail_after = 1; fail_after < 80; fail_after++) {
+            mdf_options_init(&opts);
+            opts.allocator.userdata = &fail_allocs;
+            opts.allocator.alloc = failing_alloc;
+            opts.allocator.realloc = failing_realloc;
+            opts.allocator.free = failing_free;
+            fail_allocs.alloc_calls = 0;
+            fail_allocs.realloc_calls = 0;
+            fail_allocs.fail_after = 4096;
+            st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL,
+                            "html deck repeated front matter theme allocation-failure create succeeds");
+            if (inst == NULL) {
+                continue;
+            }
+            fail_allocs.alloc_calls = 0;
+            fail_allocs.realloc_calls = 0;
+            fail_allocs.fail_after = fail_after;
+            st = inst->render_cstr(inst,
+                                   "---\n"
+                                   "theme: default\n"
+                                   "theme: tokyo-night\n"
+                                   "---\n"
+                                   "# Front\n",
+                                   &out);
+            fails += expect(st == MDF_OK || st == MDF_ERROR_NOMEM || st == MDF_ERROR_IO,
+                            "html deck repeated front matter theme allocation failure is bounded");
+            if (st != MDF_OK) {
+                saw_front_theme_oom = 1;
+                fails += expect(out == NULL,
+                                "html deck repeated front matter theme allocation failure leaves no output string");
+            } else if (out != NULL) {
+                inst->string_free(inst, out);
+                out = NULL;
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        fails += expect(saw_front_theme_oom,
+                        "html deck repeated front matter theme allocation failure was exercised");
+    }
+
+    mdf_options_init(&opts);
+    opts.slide_numbers = 1;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck slide-number streaming create succeeds");
+    if (inst != NULL) {
+        static const char deck_stream_markdown[] = "# First Numbered Slide\n\n---\n\n# Second Numbered Slide\n";
+        chunked_cstr_source stream_src;
+        source_offset_probe_sink stream_sink;
+        mdf_source source;
+        mdf_sink sink;
+        const char *second;
+
+        memset(&stream_src, 0, sizeof(stream_src));
+        stream_src.src = deck_stream_markdown;
+        stream_src.len = strlen(deck_stream_markdown);
+        stream_src.max_chunk = 1;
+        memset(&stream_sink, 0, sizeof(stream_sink));
+        stream_sink.source = &stream_src;
+        stream_sink.needle = "First Numbered Slide";
+        source.userdata = &stream_src;
+        source.read = chunked_cstr_read;
+        sink.userdata = &stream_sink;
+        sink.write = source_offset_probe_write;
+        second = strstr(deck_stream_markdown, "# Second Numbered Slide");
+        st = inst->render(inst, &source, &sink);
+        fails += expect(st == MDF_OK, "html deck slide-number streaming render succeeds");
+        fails += expect(stream_sink.saw_needle, "html deck slide-number streaming emits first slide");
+        fails += expect(second != NULL &&
+                        stream_sink.needle_source_off <= (size_t)(second - deck_stream_markdown),
+                        "html deck slide-number streaming emits first slide before reading second slide");
+        fails += expect(stream_sink.capture.buf != NULL &&
+                        strstr(stream_sink.capture.buf, "<div class=\"mdf-slide-number\" aria-hidden=\"true\"></div>") != NULL &&
+                        strstr(stream_sink.capture.buf, "Second Numbered Slide") != NULL,
+                        "html deck slide-number streaming uses placeholders and eventually emits second slide");
+        grow_free(&stream_sink.capture);
+        inst->destroy(inst);
+        inst = NULL;
+    }
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html deck ambiguous leading separator streaming create succeeds");
+    if (inst != NULL) {
+        static const char deck_stream_markdown[] = "---\n# First Slide\n";
+        chunked_cstr_source stream_src;
+        source_offset_probe_sink stream_sink;
+        mdf_source source;
+        mdf_sink sink;
+
+        memset(&stream_src, 0, sizeof(stream_src));
+        stream_src.src = deck_stream_markdown;
+        stream_src.len = strlen(deck_stream_markdown);
+        stream_src.max_chunk = 1;
+        memset(&stream_sink, 0, sizeof(stream_sink));
+        stream_sink.source = &stream_src;
+        stream_sink.needle = "First Slide";
+        source.userdata = &stream_src;
+        source.read = chunked_cstr_read;
+        sink.userdata = &stream_sink;
+        sink.write = source_offset_probe_write;
+        st = inst->render(inst, &source, &sink);
+        fails += expect(st == MDF_OK, "html deck ambiguous leading separator streaming render succeeds");
+        fails += expect(stream_sink.saw_needle, "html deck ambiguous leading separator preserves first slide");
+        fails += expect(stream_sink.capture.buf != NULL &&
+                        count_substrings(stream_sink.capture.buf, "<section class=\"mdf-slide") == 2,
+                        "html deck ambiguous leading separator streams as a slide break");
+        grow_free(&stream_sink.capture);
+        inst->destroy(inst);
+        inst = NULL;
+    }
+
+    mdf_options_init(&opts);
+    opts.deck_transition = MDF_DECK_TRANSITION_HARD;
+    opts.slide_numbers = 1;
+    opts.deck_center_front_text = 1;
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "ordinary html ignores deck-only options");
+    st = inst->render_cstr(inst, "# Not Deck\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "mdf-deck") == NULL &&
+                    strstr(out, "mdf-slide-number") == NULL &&
+                    strstr(out, "mdf-slide-content") == NULL &&
+                    strstr(out, "data-transition=\"hard\"") == NULL &&
+                    strstr(out, "mdf-blackout") == NULL &&
+                    strstr(out, "<main class=\"mdf-document\">") != NULL,
+                    "ordinary html remains non-deck output with all deck options set");
     inst->string_free(inst, out);
     out = NULL;
     inst->destroy(inst);
@@ -1041,6 +2151,52 @@ int main(void)
                 owned_inst->destroy(owned_inst);
                 fails += expect(owned_probe.owned_frees == 1,
                                 "parent renderer frees caller-owned emission buffer on destroy");
+            }
+            free(owned_emit);
+        }
+    }
+
+    {
+        owned_buffer_probe owned_probe;
+        char *owned_emit;
+
+        memset(&owned_probe, 0, sizeof(owned_probe));
+        owned_emit = (char *)malloc(256);
+        fails += expect(owned_emit != NULL, "allocate owned emission buffer for deck child renderer test");
+        if (owned_emit != NULL) {
+            mdf_options owned_opts;
+            mdf *owned_inst;
+
+            mdf_options_init(&owned_opts);
+            owned_opts.allocator.userdata = &owned_probe;
+            owned_opts.allocator.alloc = owned_probe_alloc;
+            owned_opts.allocator.realloc = owned_probe_realloc;
+            owned_opts.allocator.free = owned_probe_free;
+            owned_opts.emission_buffer.data = owned_emit;
+            owned_opts.emission_buffer.cap = 256;
+            owned_opts.emission_buffer.take_ownership = 1;
+            owned_probe.owned = owned_emit;
+            owned_inst = NULL;
+            st = mdf_create(MDF_FORMAT_HTML_DECK, &owned_opts, &owned_inst);
+            fails += expect(st == MDF_OK && owned_inst != NULL,
+                            "deck renderer accepts caller-owned emission buffer");
+            if (owned_inst != NULL) {
+                st = owned_inst->render_cstr(owned_inst,
+                                             "# A\n"
+                                             "\n"
+                                             "---\n"
+                                             "\n"
+                                             "# B\n",
+                                             &out);
+                fails += expect(st == MDF_OK && out != NULL && strstr(out, "# B") != NULL,
+                                "deck render succeeds with caller-owned emission buffer");
+                fails += expect(owned_probe.owned_frees == 0,
+                                "deck child renderers do not free caller-owned parent emission buffer");
+                owned_inst->string_free(owned_inst, out);
+                out = NULL;
+                owned_inst->destroy(owned_inst);
+                fails += expect(owned_probe.owned_frees == 1,
+                                "deck parent renderer frees caller-owned emission buffer on destroy");
             }
             free(owned_emit);
         }

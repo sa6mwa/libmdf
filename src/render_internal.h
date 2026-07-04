@@ -183,6 +183,7 @@ void html_parse_style_prefix(html_state *state, const char *style);
 int html_parse_ansi_inline(mdf_impl *impl, html_state *state, const char *src, size_t len);
 int html_emit_inline_state(mdf_impl *impl, html_state *state, mdf_sink *sink, int header);
 const char *html_theme_quote_rgb(mdf_impl *impl, char *buf, size_t buf_len);
+const char *html_theme_heading_rgb(mdf_impl *impl, int level, char *buf, size_t buf_len);
 
 size_t utf8_decode_codepoint(const char *s, size_t len, unsigned long *cp);
 size_t utf8_display_width(unsigned long cp);

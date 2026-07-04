@@ -30,8 +30,11 @@ Recommended usage:
   for pie charts in text output.
 
 Supported options are `sort`, `sort=desc`, `sort=descending`, `sort=asc`,
-`sort=ascending`, and `colored-bars=on|off|yes|no`. `colored_bars` is accepted
-as an underscore spelling. Colored bars are enabled by default.
+`sort=ascending`, `colored-bars=on|off|yes|no`, and
+`disable-percentage=on|off|yes|no`. Underscore spellings are accepted, and
+`disable-percent` is accepted as a shorter alias. Colored bars are enabled by
+default. Percentages are enabled by default for horizontal bar charts and remain
+part of tile charts.
 
 ANSI charts fit to the configured terminal/content width after margins. HTML
 charts use the HTML document content width and are centered as chart boxes

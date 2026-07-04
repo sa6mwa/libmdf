@@ -198,6 +198,10 @@ mdf_status mdf_renderer_finish_internal(mdf_renderer *self, mdf_sink *sink)
     if (impl == NULL) {
         return MDF_ERROR_INVALID;
     }
+    if (impl->format == MDF_FORMAT_HTML_DECK) {
+        mdf_set_error(self, "deck renderers do not support token streaming");
+        return MDF_ERROR_INVALID;
+    }
     if (impl->format == MDF_FORMAT_HTML) {
         st = html_renderer_finish(self, impl, sink);
     } else {

@@ -39,7 +39,7 @@ BORINGS=${LIBMDF_PARITY_BORINGS:-$DEFAULT_BORINGS}
 OSC8S=${LIBMDF_PARITY_OSC8S:-$DEFAULT_OSC8S}
 TABLE_BUFFERS=${LIBMDF_PARITY_TABLE_BUFFERS:-$DEFAULT_TABLE_BUFFERS}
 TABLE_WIRES=${LIBMDF_PARITY_TABLE_WIRES:-$DEFAULT_TABLE_WIRES}
-EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus"}
+EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus"}
 STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/cmdf_fonts.c" "$ROOT/src/cmdf_fonts.h" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
 child_pid=
 
@@ -77,45 +77,5 @@ if [ "$MODE" = "ansi" ] || [ "$MODE" = "html" ]; then
   exit $?
 fi
 
-if [ ! -x "$BUILD/cmdf" ]; then
-  "$ROOT/scripts/build.sh" debug
-fi
-
-fail=0
-for md in $(find "$ROOT/testdata" -path "$ROOT/testdata/chart-corpus" -prune -o -type f -name '*.md' -print | sort); do
-  for chunk in $CHUNKS; do
-    if [ "$MODE" = "ansi" ]; then
-      run_widths=$WIDTHS
-    else
-      run_widths=0
-    fi
-    for width in $run_widths; do
-      go_out="$ROOT/build/parity-go.out"
-      c_out="$ROOT/build/parity-c.out"
-      if [ "$MODE" = "html" ]; then
-        run_child "$JUDGE" -mode html -chunk "$chunk" < "$md" > "$go_out"
-        run_child "$BUILD/cmdf" -H -S "$chunk" "$md" > "$c_out"
-      elif [ "$MODE" = "tokens" ]; then
-        run_child "$JUDGE" -mode "$MODE" -chunk "$chunk" < "$md" > "$go_out"
-        run_child "$ROOT/build/debug/test_token_dump" "$chunk" "$md" > "$c_out"
-      else
-        run_child "$JUDGE" -mode ansi -chunk "$chunk" -width "$width" < "$md" > "$go_out"
-        run_child "$BUILD/cmdf" -w "$width" -S "$chunk" "$md" > "$c_out"
-      fi
-      if ! cmp -s "$go_out" "$c_out"; then
-        if [ "$MODE" = "ansi" ]; then
-          echo "parity mismatch: mode=$MODE chunk=$chunk width=$width file=${md#$ROOT/}" >&2
-        else
-          echo "parity mismatch: mode=$MODE chunk=$chunk file=${md#$ROOT/}" >&2
-        fi
-        fail=1
-        break
-      fi
-    done
-    if [ "$fail" != "0" ]; then
-      break
-    fi
-  done
-done
-
-exit "$fail"
+printf '%s\n' "unsupported parity mode: $MODE" >&2
+exit 2

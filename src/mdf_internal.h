@@ -46,6 +46,7 @@ typedef struct mdf_impl {
     mdf_format format;
     mdf_options opts;
     const mdf_theme_style *theme;
+    int theme_name_explicit;
     mdf_allocator user_allocator;
     mdf_memory memory;
     mdf_allocator allocator;
@@ -64,6 +65,7 @@ typedef struct mdf_impl {
     int html_open;
     int html_body_emitted;
     int html_footer_needs_newline;
+    int html_links_blank;
     char *html_title;
     size_t html_title_cap;
     void *html_state;
@@ -109,6 +111,11 @@ typedef struct mdf_impl {
     const char *ansi_active_inline_style;
     const char *ansi_pending_inline_style;
     char ansi_owned_inline_style[160];
+    int ansi_osc8_active;
+    int ansi_osc8_pending_reopen;
+    const char *ansi_osc8_prefix;
+    const char *ansi_osc8_url;
+    size_t ansi_osc8_url_len;
     int ansi_line_has_space;
     char ansi_prev_char;
     int ansi_punct_quote_pending;
@@ -226,6 +233,7 @@ typedef struct mdf_parser_impl {
 #define MDF_CHART_FLAG_SORT_ASC 0x100
 #define MDF_CHART_FLAG_SORT_DESC 0x200
 #define MDF_CHART_FLAG_MONO_BARS 0x400
+#define MDF_CHART_FLAG_DISABLE_PERCENTAGE 0x800
 #define MDF_CHART_KIND_MASK 0x00ff
 
 typedef struct mdf_table_filter mdf_table_filter;

@@ -84,6 +84,10 @@ verify_install_tree() {
   test -f "$install/$cmakedir/libmdfConfig.cmake"
   test -f "$install/$cmakedir/libmdfTargets.cmake"
   test -f "$install/$pcdir/libmdf.pc"
+  libdir=$(dirname "$install/$pcdir")
+  if test -f "$libdir/libmdf.so"; then
+    test -f "$libdir/libmdf.so.1"
+  fi
 
   write_consumer_sources "$consumer/src"
   cmake -S "$consumer/src" -B "$consumer/build" -G Ninja \

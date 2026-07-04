@@ -155,6 +155,11 @@ static int chart_parse_option(const char *src, size_t len, int *flags)
             *flags &= ~MDF_CHART_FLAG_MONO_BARS;
             return 1;
         }
+        if (chart_option_key_equal(src, len, "disable-percentage") ||
+            chart_option_key_equal(src, len, "disable-percent")) {
+            *flags |= MDF_CHART_FLAG_DISABLE_PERCENTAGE;
+            return 1;
+        }
         return 0;
     }
     chart_trim_span(src, eq, &key_start, &key_end);
@@ -191,6 +196,18 @@ static int chart_parse_option(const char *src, size_t len, int *flags)
             *flags &= ~MDF_CHART_FLAG_MONO_BARS;
         } else {
             *flags |= MDF_CHART_FLAG_MONO_BARS;
+        }
+        return 1;
+    }
+    if (chart_option_key_equal(src + key_start, key_end - key_start, "disable-percentage") ||
+        chart_option_key_equal(src + key_start, key_end - key_start, "disable-percent")) {
+        if (!chart_parse_bool_option(src + eq + 1 + val_start, val_end - val_start, &enabled)) {
+            return 0;
+        }
+        if (enabled) {
+            *flags |= MDF_CHART_FLAG_DISABLE_PERCENTAGE;
+        } else {
+            *flags &= ~MDF_CHART_FLAG_DISABLE_PERCENTAGE;
         }
         return 1;
     }
@@ -1682,6 +1699,8 @@ static int table_render_cell_markdown_to_ansi(mdf_impl *impl,
 
     opts = impl->opts;
     opts.width = MDF_TABLE_CELL_RENDER_WIDTH;
+    opts.margin_left = 0;
+    opts.margin_right = 0;
     opts.osc8 = osc8;
     memset(&opts.emission_buffer, 0, sizeof(opts.emission_buffer));
     opts.write_trace.userdata = NULL;

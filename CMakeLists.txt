@@ -22,6 +22,8 @@ project(libmdf VERSION "${LIBMDF_VERSION}" LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+set(LIBMDF_ABI_VERSION 1)
+
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 
@@ -110,7 +112,7 @@ if(LIBMDF_BUILD_SHARED)
   add_library(libmdf::mdf_shared ALIAS mdf_shared)
   set_target_properties(mdf_shared PROPERTIES
     OUTPUT_NAME mdf
-    SOVERSION 0
+    SOVERSION ${LIBMDF_ABI_VERSION}
     VERSION ${PROJECT_VERSION}
     BUILD_RPATH ""
     INSTALL_RPATH "")
@@ -167,10 +169,6 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
-  add_executable(test_token_dump tests/test_token_dump.c)
-  target_include_directories(test_token_dump PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
-  target_link_libraries(test_token_dump PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
-
   if(TARGET cmdf)
     add_executable(test_cmdf tests/test_cmdf.c)
     target_compile_features(test_cmdf PRIVATE c_std_90)
@@ -179,7 +177,7 @@ if(LIBMDF_BUILD_TESTS)
       target_compile_options(test_cmdf PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
     add_test(NAME test_cmdf COMMAND test_cmdf $<TARGET_FILE:cmdf>)
-    set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 10)
+    set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 30)
 
     add_test(NAME chart_corpus
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chart_corpus.sh

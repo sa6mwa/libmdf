@@ -209,6 +209,36 @@ static int expect_trace_matches_writes(const capture *cap, const char *msg)
     return 0;
 }
 
+static int expect_write_sequence(const capture *cap, const char *const *expected, size_t expected_count, const char *msg)
+{
+    size_t i;
+
+    if (cap->write_count != expected_count) {
+        fprintf(stderr, "FAIL: %s: write_count=%lu expected=%lu\n",
+                msg,
+                (unsigned long)cap->write_count,
+                (unsigned long)expected_count);
+        return 1;
+    }
+    for (i = 0; i < expected_count; i++) {
+        size_t expected_len;
+
+        expected_len = strlen(expected[i]);
+        if (cap->writes[i].len != expected_len ||
+            memcmp(cap->writes[i].data, expected[i], expected_len) != 0) {
+            fprintf(stderr,
+                    "FAIL: %s: write %lu expected [%s] got [%.*s]\n",
+                    msg,
+                    (unsigned long)i,
+                    expected[i],
+                    (int)cap->writes[i].len,
+                    cap->writes[i].data);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int expect_output_equals(const capture *cap, const char *expected, const char *msg)
 {
     if (cap->out == NULL || strcmp(cap->out, expected) != 0) {
@@ -412,6 +442,24 @@ static int expect_contains(const char *haystack, const char *needle, const char 
 
 static int test_stream_trace_contract(void)
 {
+    static const char plain_markdown[] = "Alpha Beta\n";
+    static const char *const plain_writes[] = {
+        "Alpha",
+        " ",
+        "Beta",
+        "\n",
+    };
+    static const char heading_markdown[] = "# Alpha Beta\n";
+    static const char *const heading_writes[] = {
+        "\033[1;32m#",
+        " ",
+        "\033[0m",
+        "\033[1;32mAlpha",
+        " ",
+        "Beta",
+        "\033[0m",
+        "\n",
+    };
     static const char markdown[] =
         "# The Outcome-Based Agile Framework\n"
         "\n"
@@ -425,6 +473,48 @@ static int test_stream_trace_contract(void)
     int fails;
 
     fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, plain_markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "plain one-byte stream render succeeds");
+    fails += expect_trace_matches_writes(&cap, "plain one-byte stream writes match traces");
+    fails += expect_write_sequence(&cap,
+                                   plain_writes,
+                                   sizeof(plain_writes) / sizeof(plain_writes[0]),
+                                   "plain one-byte stream emits each decided word boundary");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, plain_markdown, sizeof(plain_markdown), &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "plain full-chunk stream render succeeds");
+    fails += expect_trace_matches_writes(&cap, "plain full-chunk stream writes match traces");
+    fails += expect_write_sequence(&cap,
+                                   plain_writes,
+                                   sizeof(plain_writes) / sizeof(plain_writes[0]),
+                                   "plain full-chunk stream emits each decided word boundary");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    st = render_capture(MDF_FORMAT_ANSI, &opts, heading_markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled heading one-byte stream render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled heading one-byte stream writes match traces");
+    fails += expect_write_sequence(&cap,
+                                   heading_writes,
+                                   sizeof(heading_writes) / sizeof(heading_writes[0]),
+                                   "styled heading one-byte stream emits exact decisions");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    st = render_capture(MDF_FORMAT_ANSI, &opts, heading_markdown, sizeof(heading_markdown), &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "styled heading full-chunk stream render succeeds");
+    fails += expect_trace_matches_writes(&cap, "styled heading full-chunk stream writes match traces");
+    fails += expect_write_sequence(&cap,
+                                   heading_writes,
+                                   sizeof(heading_writes) / sizeof(heading_writes[0]),
+                                   "styled heading full-chunk stream emits exact decisions");
+    capture_free(&cap);
+
     mdf_options_init(&opts);
     opts.width = 34;
     opts.osc8 = 1;

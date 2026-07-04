@@ -80,6 +80,48 @@ static int make_input_file(char *path, size_t path_cap)
     return 0;
 }
 
+static int make_deck_input_file(char *path, size_t path_cap)
+{
+    int fd;
+    const char *src;
+
+    src = "---\n"
+          "theme: \"tokyo-night\"\n"
+          "---\n"
+          "# Front\n"
+          "\n"
+          "---\n"
+          "\n"
+          "# Second\n"
+          "\n"
+          "Body.\n"
+          "\n"
+          "---\n"
+          "\n"
+          "# Chart\n"
+          "\n"
+          "```mdf-bar-chart\n"
+          "A,1\n"
+          "B,2\n"
+          "```\n";
+    strcpy(path, "/tmp/libmdf-cmdf-deck-XXXXXX");
+    fd = mkstemp(path);
+    if (fd < 0) {
+        return -1;
+    }
+    if (write_all(fd, src, strlen(src)) != 0) {
+        close(fd);
+        unlink(path);
+        return -1;
+    }
+    if (close(fd) != 0) {
+        unlink(path);
+        return -1;
+    }
+    (void)path_cap;
+    return 0;
+}
+
 static int grow_buf(char **buf, size_t *len, size_t *cap, const char *src, size_t n)
 {
     char *next;
@@ -800,22 +842,61 @@ static int expect(int cond, const char *msg)
     return 0;
 }
 
+static int count_substrings(const char *haystack, const char *needle)
+{
+    int count;
+    size_t needle_len;
+
+    if (haystack == NULL || needle == NULL || needle[0] == '\0') {
+        return 0;
+    }
+    count = 0;
+    needle_len = strlen(needle);
+    while ((haystack = strstr(haystack, needle)) != NULL) {
+        count++;
+        haystack += needle_len;
+    }
+    return count;
+}
+
 int main(int argc, char **argv)
 {
     char input_path[64];
+    char deck_input_path[64];
     char output_path[96];
     char output_path_2[96];
     char *ascii_html_args[8];
+    char *help_args[3];
     char *chunk_args[8];
     char *implicit_args[7];
     char *infer_html_args[6];
     char *html_title_args[8];
+    char *deck_title_args[8];
+    char *deck_frontmatter_title_args[4];
+    char *html_frontmatter_title_args[4];
     char *html_title_stdin_args[5];
     char *html_autotitle_stdin_args[3];
+    char *deck_title_stdin_args[5];
     char *html_paragraph_title_args[5];
     char *html_trace_args[8];
     char *html_stream_args[8];
+    char *deck_trace_args[8];
+    char *deck_args[8];
+    char *html_deck_order_args[8];
+    char *deck_html_order_args[8];
+    char *deck_theme_default_args[9];
+    char *deck_malformed_theme_args[4];
+    char *deck_output_args[10];
+    char *deck_fade_args[8];
+    char *deck_center_front_text_args[8];
+    char *deck_content_width_args[8];
+    char *deck_width_args[8];
+    char *deck_boring_args[8];
+    char *bad_transition_args[6];
+    char *transition_without_deck_args[5];
+    char *slide_numbers_without_deck_args[7];
     char *theme_args[8];
+    char *ascii_deck_args[8];
     char *margin_args[10];
     char *bad_delay_args[6];
     char *first_chunk;
@@ -834,8 +915,32 @@ int main(int argc, char **argv)
         fprintf(stderr, "make input: %s\n", strerror(errno));
         return 1;
     }
+    if (make_deck_input_file(deck_input_path, sizeof(deck_input_path)) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "make deck input: %s\n", strerror(errno));
+        return 1;
+    }
 
     fails = 0;
+
+    help_args[0] = argv[1];
+    help_args[1] = "--help";
+    help_args[2] = NULL;
+    if (run_cmdf(help_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        fprintf(stderr, "run cmdf help: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf help exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "--deck") != NULL &&
+                    strstr(result.buf, "--transition MODE") != NULL &&
+                    strstr(result.buf, "--slide-numbers") != NULL &&
+                    strstr(result.buf, "--deck-center-front-text") != NULL,
+                    "cmdf help lists deck flags");
+    free(result.buf);
 
     chunk_args[0] = argv[1];
     chunk_args[1] = "-b";
@@ -847,6 +952,7 @@ int main(int argc, char **argv)
     chunk_args[7] = NULL;
     if (run_cmdf(chunk_args, &result) != 0) {
         unlink(input_path);
+        unlink(deck_input_path);
         fprintf(stderr, "run cmdf chunked: %s\n", strerror(errno));
         return 1;
     }
@@ -1010,6 +1116,39 @@ int main(int argc, char **argv)
     free(first_chunk);
     free(result.buf);
 
+    deck_title_stdin_args[0] = argv[1];
+    deck_title_stdin_args[1] = "--deck";
+    deck_title_stdin_args[2] = "-T";
+    deck_title_stdin_args[3] = "Deck Pipe Title";
+    deck_title_stdin_args[4] = NULL;
+    first_chunk = NULL;
+    first_ms = -1;
+    if (run_cmdf_stdin_first_chunk(deck_title_stdin_args,
+                                   "# First streamed slide\n\n---\n",
+                                   "\n# Second streamed slide\n",
+                                   &result,
+                                   &first_chunk,
+                                   &first_ms) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf deck stdin title stream probe: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck stdin title override exits successfully");
+    fails += expect(first_chunk != NULL && strstr(first_chunk, "<title>Deck Pipe Title</title>") != NULL,
+                    "cmdf deck stdin title override emits first slide before completed input");
+    fails += expect(first_chunk != NULL && strstr(first_chunk, "<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->") != NULL,
+                    "cmdf deck emits libmdf provenance comment");
+    fails += expect(first_ms >= 0 && first_ms < 1500L,
+                    "cmdf deck stdin title override streams after first slide boundary");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\" data-transition=\"fade\"") != NULL &&
+                    strstr(result.buf, "First streamed slide") != NULL &&
+                    strstr(result.buf, "Second streamed slide") != NULL,
+                    "cmdf deck stdin title override renders streamed deck content");
+    free(first_chunk);
+    free(result.buf);
+
     snprintf(output_path, sizeof(output_path), "/tmp/libmdf-cmdf-%ld.html", (long)getpid());
     snprintf(output_path_2, sizeof(output_path_2), "/tmp/libmdf-cmdf-%ld-2.html", (long)getpid());
     unlink(output_path);
@@ -1045,6 +1184,615 @@ int main(int argc, char **argv)
     fails += expect(strstr(html_text, "<title>Demo</title>") != NULL,
                     "cmdf inferred html title uses first heading without marker");
     free(html_text);
+
+    deck_args[0] = argv[1];
+    deck_args[1] = "--deck";
+    deck_args[2] = "--slide-numbers";
+    deck_args[3] = "-x";
+    deck_args[4] = "cross";
+    deck_args[5] = deck_input_path;
+    deck_args[6] = NULL;
+    if (run_cmdf(deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck run exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\" data-transition=\"cross\"") != NULL &&
+                    strstr(result.buf, ".mdf-deck[data-transition=\"cross\"] .mdf-slide{transition:opacity 1600ms ease,visibility 0s linear 1600ms;}") != NULL &&
+                    strstr(result.buf, ".mdf-deck[data-transition=\"cross\"] .mdf-slide[aria-hidden=\"false\"]{transition:opacity 1600ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(result.buf, "<title>Front</title>") != NULL &&
+                    strstr(result.buf, "<section class=\"mdf-slide mdf-slide-front\" data-slide=\"1\" aria-hidden=\"false\">") != NULL &&
+                    strstr(result.buf, "<section class=\"mdf-slide\" data-slide=\"2\" aria-hidden=\"true\">") != NULL &&
+                    strstr(result.buf, "<div class=\"mdf-slide-number\" aria-hidden=\"true\"></div>") != NULL,
+                    "cmdf deck emits deck shell, slides, and slide-number placeholders");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "touchstart") != NULL &&
+                    strstr(result.buf, "touchend") != NULL &&
+                    strstr(result.buf, "Math.abs(dx)>=48") != NULL &&
+                    strstr(result.buf, "Math.abs(dy)<48") != NULL &&
+                    strstr(result.buf, "box.scrollHeight>box.clientHeight+4") != NULL,
+                    "cmdf deck emits mobile swipe navigation");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "mdf-fullscreen-button") != NULL &&
+                    strstr(result.buf, "toggleFullscreen") != NULL &&
+                    strstr(result.buf, "case'f'") != NULL &&
+                    strstr(result.buf, "requestFullscreen") != NULL &&
+                    strstr(result.buf, "mdf-fallback-fullscreen") != NULL,
+                    "cmdf deck emits fullscreen control");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "function syncSlides()") != NULL &&
+                    strstr(result.buf, "data-mdf-tabindex") != NULL &&
+                    strstr(result.buf, "el.setAttribute('tabindex','-1')") != NULL &&
+                    strstr(result.buf, "t.closest('a[href],button,summary,input,select,textarea')") != NULL &&
+                    strstr(result.buf, "deck.dataset.current=String(cur+1)") != NULL,
+                    "cmdf deck emits inactive slide focus management");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "@media (max-height:520px)") != NULL &&
+                    strstr(result.buf, "var vh=Math.max") != NULL &&
+                    strstr(result.buf, "if(vh<520)") != NULL,
+                    "cmdf deck emits short-viewport autofit rules");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "mdf-slide-content mdf-slide-content-centered") != NULL &&
+                    strstr(result.buf, "<div class=\"mdf-slide-header\"><span class=\"mdf-heading\"") != NULL &&
+                    strstr(result.buf, "</div><div class=\"mdf-slide-body\"><div class=\"mdf-slide-body-inner\">") != NULL,
+                    "cmdf deck centers non-front slide body content by default");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "theme:") == NULL &&
+                    strstr(result.buf, "tokyo-night") == NULL &&
+                    strstr(result.buf, "color:rgb(255,175,215)") != NULL &&
+                    strstr(result.buf, "<div class=\"mdf-chart-block\"") != NULL,
+                    "cmdf deck consumes front matter theme and renders chart slide");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, ".mdf-slide-number{font-weight:700;opacity:.72;font-size:clamp(.8rem,1.6vw,1.1rem);color:rgb(135,175,215);}") != NULL,
+                    "cmdf deck slide numbers use resolved theme heading color");
+    free(result.buf);
+
+    deck_boring_args[0] = argv[1];
+    deck_boring_args[1] = "--deck";
+    deck_boring_args[2] = "--boring";
+    deck_boring_args[3] = deck_input_path;
+    deck_boring_args[4] = NULL;
+    if (run_cmdf(deck_boring_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck boring: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --deck --boring exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\"") != NULL &&
+                    strstr(result.buf, "html,body{margin:0;min-height:100%;background:transparent;}") != NULL &&
+                    strstr(result.buf, "body{color:rgb(0,0,0);") != NULL,
+                    "cmdf --boring applies base html colors in deck mode");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<div class=\"mdf-chart-block\"") != NULL &&
+                    strstr(result.buf, "background-color:rgb(205,0,205)") == NULL &&
+                    strstr(result.buf, "background-color:rgb(59,156,255)") == NULL,
+                    "cmdf --boring suppresses themed chart colors in deck mode");
+    free(result.buf);
+
+    deck_theme_default_args[0] = argv[1];
+    deck_theme_default_args[1] = "--deck";
+    deck_theme_default_args[2] = "--theme";
+    deck_theme_default_args[3] = "default";
+    deck_theme_default_args[4] = deck_input_path;
+    deck_theme_default_args[5] = NULL;
+    if (run_cmdf(deck_theme_default_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck explicit default theme: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck explicit default theme exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "theme:") == NULL &&
+                    strstr(result.buf, "color:rgb(255,175,215)") == NULL,
+                    "cmdf --theme default overrides front matter theme");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "color:rgb(135,175,215)") == NULL,
+                    "cmdf --theme default overrides slide-number theme color");
+    free(result.buf);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "---\n"
+              "theme: \"\n"
+              "---\n"
+              "# Malformed Theme\n"
+              "\n"
+              "Visible body\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+    }
+    deck_malformed_theme_args[0] = argv[1];
+    deck_malformed_theme_args[1] = "--deck";
+    deck_malformed_theme_args[2] = input_path;
+    deck_malformed_theme_args[3] = NULL;
+    if (run_cmdf(deck_malformed_theme_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck malformed theme: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck malformed front matter theme exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "Malformed Theme") != NULL &&
+                    strstr(result.buf, "Visible body") != NULL &&
+                    strstr(result.buf, "theme:") == NULL,
+                    "cmdf deck malformed front matter theme is consumed");
+    free(result.buf);
+
+    html_deck_order_args[0] = argv[1];
+    html_deck_order_args[1] = "--html";
+    html_deck_order_args[2] = "--deck";
+    html_deck_order_args[3] = deck_input_path;
+    html_deck_order_args[4] = NULL;
+    if (run_cmdf(html_deck_order_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf html then deck: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --html --deck exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\"") != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-document\">") == NULL,
+                    "cmdf --html --deck renders deck mode");
+    free(result.buf);
+
+    deck_html_order_args[0] = argv[1];
+    deck_html_order_args[1] = "--deck";
+    deck_html_order_args[2] = "--html";
+    deck_html_order_args[3] = deck_input_path;
+    deck_html_order_args[4] = NULL;
+    if (run_cmdf(deck_html_order_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck then html: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --deck --html exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\"") != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-document\">") == NULL,
+                    "cmdf --deck --html keeps deck mode");
+    free(result.buf);
+
+    deck_fade_args[0] = argv[1];
+    deck_fade_args[1] = "--deck";
+    deck_fade_args[2] = "--transition";
+    deck_fade_args[3] = "fade";
+    deck_fade_args[4] = deck_input_path;
+    deck_fade_args[5] = NULL;
+    if (run_cmdf(deck_fade_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck fade transition: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --transition fade exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\" data-transition=\"fade\"") != NULL &&
+                    strstr(result.buf, ".mdf-deck[data-transition=\"fade\"] .mdf-slide{transition:opacity 520ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(result.buf, ".mdf-deck[data-transition=\"fade\"] .mdf-slide[aria-hidden=\"false\"]{transition:opacity 520ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(result.buf, "matchMedia('(prefers-reduced-motion: reduce)')") != NULL &&
+                    strstr(result.buf, "deck.dataset.transition==='fade'&&!reduceMotion&&old!==cur") != NULL &&
+                    strstr(result.buf, "setTimeout(function(){apply();void deck.offsetWidth;deck.classList.remove('mdf-blackout');},520)") != NULL,
+                    "cmdf --transition fade is reflected in deck output");
+    free(result.buf);
+
+    deck_center_front_text_args[0] = argv[1];
+    deck_center_front_text_args[1] = "--deck";
+    deck_center_front_text_args[2] = "--deck-center-front-text";
+    deck_center_front_text_args[3] = deck_input_path;
+    deck_center_front_text_args[4] = NULL;
+    if (run_cmdf(deck_center_front_text_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck center front text: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --deck-center-front-text exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<section class=\"mdf-slide mdf-slide-front mdf-center-front-text\" data-slide=\"1\" aria-hidden=\"false\">") != NULL &&
+                    count_substrings(result.buf, "<section class=\"mdf-slide mdf-slide-front mdf-center-front-text\"") == 1 &&
+                    strstr(result.buf, "<section class=\"mdf-slide mdf-center-front-text\"") == NULL,
+                    "cmdf --deck-center-front-text only marks the front slide");
+    free(result.buf);
+
+    deck_content_width_args[0] = argv[1];
+    deck_content_width_args[1] = "--deck";
+    deck_content_width_args[2] = "--html-content-width";
+    deck_content_width_args[3] = "72";
+    deck_content_width_args[4] = deck_input_path;
+    deck_content_width_args[5] = NULL;
+    if (run_cmdf(deck_content_width_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck content width: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --deck --html-content-width exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\"") != NULL &&
+                    strstr(result.buf, "--mdf-content-max-width:72ch;") != NULL,
+                    "cmdf --html-content-width applies in deck mode");
+    free(result.buf);
+
+    deck_width_args[0] = argv[1];
+    deck_width_args[1] = "--deck";
+    deck_width_args[2] = "-w";
+    deck_width_args[3] = "68";
+    deck_width_args[4] = deck_input_path;
+    deck_width_args[5] = NULL;
+    if (run_cmdf(deck_width_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck width: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf --deck -w exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<main class=\"mdf-deck\"") != NULL &&
+                    strstr(result.buf, "--mdf-content-max-width:68ch;") != NULL,
+                    "cmdf -w maps to html content width in deck mode");
+    free(result.buf);
+
+    bad_transition_args[0] = argv[1];
+    bad_transition_args[1] = "--deck";
+    bad_transition_args[2] = "-x";
+    bad_transition_args[3] = "wipe";
+    bad_transition_args[4] = deck_input_path;
+    bad_transition_args[5] = NULL;
+    if (run_cmdf_stderr(bad_transition_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf bad deck transition: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2,
+                    "cmdf invalid deck transition exits with usage error");
+    fails += expect(result.buf != NULL && strstr(result.buf, "invalid deck transition") != NULL,
+                    "cmdf invalid deck transition explains allowed values");
+    free(result.buf);
+
+    transition_without_deck_args[0] = argv[1];
+    transition_without_deck_args[1] = "--transition";
+    transition_without_deck_args[2] = "fade";
+    transition_without_deck_args[3] = input_path;
+    transition_without_deck_args[4] = NULL;
+    if (run_cmdf_stderr(transition_without_deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf transition without deck rejection: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2,
+                    "cmdf rejects --transition without --deck");
+    fails += expect(result.buf != NULL && strstr(result.buf, "deck options require --deck") != NULL,
+                    "cmdf --transition without --deck explains deck requirement");
+    free(result.buf);
+
+    slide_numbers_without_deck_args[0] = argv[1];
+    slide_numbers_without_deck_args[1] = "--slide-numbers";
+    slide_numbers_without_deck_args[2] = "-o";
+    slide_numbers_without_deck_args[3] = output_path_2;
+    slide_numbers_without_deck_args[4] = input_path;
+    slide_numbers_without_deck_args[5] = NULL;
+    unlink(output_path_2);
+    if (run_cmdf_stderr(slide_numbers_without_deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf slide numbers without deck rejection: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2,
+                    "cmdf rejects --slide-numbers without --deck even when .html is inferred");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "inferring --html") != NULL &&
+                    strstr(result.buf, "deck options require --deck") != NULL,
+                    "cmdf --slide-numbers without --deck explains inferred html and deck requirement");
+    free(result.buf);
+    unlink(output_path_2);
+
+    deck_output_args[0] = argv[1];
+    deck_output_args[1] = "--deck";
+    deck_output_args[2] = "--transition";
+    deck_output_args[3] = "hard";
+    deck_output_args[4] = "-o";
+    deck_output_args[5] = output_path_2;
+    deck_output_args[6] = deck_input_path;
+    deck_output_args[7] = NULL;
+    unlink(output_path_2);
+    if (run_cmdf(deck_output_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck output: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck output run exits successfully");
+    free(result.buf);
+    html_text = NULL;
+    if (read_file_text(output_path_2, &html_text) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "read deck output: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(strstr(html_text, "<main class=\"mdf-deck\" data-transition=\"hard\"") != NULL,
+                    "cmdf --deck -o writes deck html even with .html path");
+    free(html_text);
+
+    deck_title_args[0] = argv[1];
+    deck_title_args[1] = "--deck";
+    deck_title_args[2] = "-T";
+    deck_title_args[3] = "Deck & <Title>";
+    deck_title_args[4] = "-o";
+    deck_title_args[5] = output_path_2;
+    deck_title_args[6] = deck_input_path;
+    deck_title_args[7] = NULL;
+    if (run_cmdf(deck_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck title override: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck title override exits successfully");
+    free(result.buf);
+    html_text = NULL;
+    if (read_file_text(output_path_2, &html_text) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "read deck title override output: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(strstr(html_text, "<title>Deck &amp; &lt;Title&gt;</title>") != NULL,
+                    "cmdf deck title override is escaped");
+    free(html_text);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "---   \n"
+              "title: Metadata Title\n"
+              "theme: \"tokyo-night\"\n"
+              "tags:\n"
+              "  - alpha\n"
+              "  - beta\n"
+              "# title pre-scan comment\n"
+              "--- \t\n"
+              "# Deck Heading Title\n"
+              "\n"
+              "---\n"
+              "\n"
+              "# Second\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+    }
+    deck_frontmatter_title_args[0] = argv[1];
+    deck_frontmatter_title_args[1] = "--deck";
+    deck_frontmatter_title_args[2] = input_path;
+    deck_frontmatter_title_args[3] = NULL;
+    if (run_cmdf(deck_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Deck Heading Title</title>") != NULL &&
+                    strstr(result.buf, "Metadata Title") == NULL &&
+                    strstr(result.buf, "title pre-scan comment") == NULL &&
+                    strstr(result.buf, "theme:") == NULL &&
+                    strstr(result.buf, "tags:") == NULL &&
+                    strstr(result.buf, "alpha") == NULL &&
+                    strstr(result.buf, "beta") == NULL,
+                    "cmdf deck title detection skips spaced front matter delimiters and unindented comments");
+    free(result.buf);
+
+    html_frontmatter_title_args[0] = argv[1];
+    html_frontmatter_title_args[1] = "--html";
+    html_frontmatter_title_args[2] = input_path;
+    html_frontmatter_title_args[3] = NULL;
+    if (run_cmdf(html_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf html front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Deck Heading Title</title>") != NULL &&
+                    strstr(result.buf, "Metadata Title") == NULL &&
+                    strstr(result.buf, "title pre-scan comment") == NULL &&
+                    strstr(result.buf, "theme:") == NULL &&
+                    strstr(result.buf, "tags:") == NULL &&
+                    strstr(result.buf, "alpha") == NULL &&
+                    strstr(result.buf, "beta") == NULL,
+                    "cmdf html title detection skips spaced front matter delimiters and unindented comments");
+    free(result.buf);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "---\n"
+              "# Intro\n"
+              "---\n"
+              "# Later\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+    }
+    if (run_cmdf(deck_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck rejected front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck rejected front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Intro</title>") != NULL &&
+                    strstr(result.buf, "<title>Later</title>") == NULL,
+                    "cmdf deck title detection scans no-key front matter-looking block");
+    free(result.buf);
+
+    if (run_cmdf(html_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf html rejected front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html rejected front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Intro</title>") != NULL &&
+                    strstr(result.buf, "<title>Later</title>") == NULL,
+                    "cmdf html title detection scans no-key front matter-looking block");
+    free(result.buf);
+
+    {
+        int fd;
+        const char *src;
+
+        src = "---\n"
+              "theme: default\n"
+              "# Intro\n";
+        fd = open(input_path, O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+        if (write_all(fd, src, strlen(src)) != 0 || close(fd) != 0) {
+            close(fd);
+            unlink(input_path);
+            unlink(deck_input_path);
+            return 1;
+        }
+    }
+    if (run_cmdf(deck_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf deck unclosed front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf deck unclosed front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Intro</title>") != NULL,
+                    "cmdf deck title detection scans unclosed keyed front matter body");
+    free(result.buf);
+
+    if (run_cmdf(html_frontmatter_title_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(output_path);
+        unlink(output_path_2);
+        fprintf(stderr, "run cmdf html unclosed front matter title: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html unclosed front matter title exits successfully");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "<title>Intro</title>") != NULL,
+                    "cmdf html title detection scans unclosed keyed front matter body");
+    free(result.buf);
 
     html_title_args[0] = argv[1];
     html_title_args[1] = "--html";
@@ -1171,6 +1919,26 @@ int main(int argc, char **argv)
     free(result.buf);
     unlink("/tmp/libmdf-cmdf-html-trace.out");
 
+    deck_trace_args[0] = argv[1];
+    deck_trace_args[1] = "--deck";
+    deck_trace_args[2] = "--trace-writes";
+    deck_trace_args[3] = "/tmp/libmdf-cmdf-deck-trace.out";
+    deck_trace_args[4] = deck_input_path;
+    deck_trace_args[5] = NULL;
+    if (run_cmdf_stderr(deck_trace_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        fprintf(stderr, "run cmdf deck trace rejection: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) != 0,
+                    "cmdf rejects --trace-writes for deck output");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "--trace-writes is only supported for ANSI output") != NULL,
+                    "cmdf deck trace rejection explains ANSI-only trace support");
+    free(result.buf);
+    unlink("/tmp/libmdf-cmdf-deck-trace.out");
+
     ascii_html_args[0] = argv[1];
     ascii_html_args[1] = "-H";
     ascii_html_args[2] = "--table-wire";
@@ -1184,6 +1952,25 @@ int main(int argc, char **argv)
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) != 0,
                     "cmdf rejects --table-wire ascii with html output");
+    free(result.buf);
+
+    ascii_deck_args[0] = argv[1];
+    ascii_deck_args[1] = "--deck";
+    ascii_deck_args[2] = "--table-wire";
+    ascii_deck_args[3] = "ascii";
+    ascii_deck_args[4] = deck_input_path;
+    ascii_deck_args[5] = NULL;
+    if (run_cmdf_stderr(ascii_deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        fprintf(stderr, "run cmdf deck ascii-wire rejection: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) != 0,
+                    "cmdf rejects --table-wire ascii with deck output");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "--table-wire ascii is not supported with HTML output") != NULL,
+                    "cmdf deck ascii-wire rejection explains HTML wire modes");
     free(result.buf);
 
     theme_args[0] = argv[1];
@@ -1281,5 +2068,6 @@ int main(int argc, char **argv)
     }
 
     unlink(input_path);
+    unlink(deck_input_path);
     return fails == 0 ? 0 : 1;
 }

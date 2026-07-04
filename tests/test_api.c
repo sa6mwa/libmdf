@@ -751,6 +751,116 @@ static int html_chart_label_matches_bar_style(const char *out, const char *label
            memcmp(label_color, bar_bg, label_color_len) == 0;
 }
 
+static char *html_visible_text(const char *src)
+{
+    char *out;
+    size_t i;
+    size_t j;
+    int in_tag;
+    int in_style;
+
+    out = (char *)malloc(strlen(src) + 1);
+    if (out == NULL) {
+        return NULL;
+    }
+    i = 0;
+    j = 0;
+    in_tag = 0;
+    in_style = 0;
+    while (src[i] != '\0') {
+        if (in_style) {
+            if (strncmp(src + i, "</style>", 8) == 0) {
+                i += 8;
+                in_style = 0;
+            } else {
+                i++;
+            }
+            continue;
+        }
+        if (!in_tag && strncmp(src + i, "<style", 6) == 0) {
+            in_tag = 1;
+            in_style = 1;
+            while (src[i] != '\0' && src[i] != '>') {
+                i++;
+            }
+            if (src[i] == '>') {
+                i++;
+            }
+            in_tag = 0;
+            continue;
+        }
+        if (src[i] == '<') {
+            in_tag = 1;
+            i++;
+            continue;
+        }
+        if (in_tag) {
+            if (src[i] == '>') {
+                in_tag = 0;
+            }
+            i++;
+            continue;
+        }
+        out[j++] = src[i++];
+    }
+    out[j] = '\0';
+    return out;
+}
+
+static int html_vertical_chart_axis_columns_aligned(const char *out)
+{
+    char *visible;
+    const char *line;
+    size_t expected_col;
+    int have_expected;
+    int ok;
+
+    visible = html_visible_text(out);
+    if (visible == NULL) {
+        return 0;
+    }
+    line = visible;
+    expected_col = 0;
+    have_expected = 0;
+    ok = 1;
+    while (*line != '\0') {
+        const char *end;
+        const char *axis;
+        const char *a;
+        const char *b;
+        const char *c;
+        size_t col;
+
+        end = strchr(line, '\n');
+        if (end == NULL) {
+            end = line + strlen(line);
+        }
+        a = strstr(line, "\342\224\244");
+        b = strstr(line, "\342\224\202");
+        c = strstr(line, "\342\224\224");
+        axis = NULL;
+        if (a != NULL && a < end) axis = a;
+        if (b != NULL && b < end && (axis == NULL || b < axis)) axis = b;
+        if (c != NULL && c < end && (axis == NULL || c < axis)) axis = c;
+        if (axis != NULL) {
+            col = (size_t)(axis - line);
+            if (!have_expected) {
+                expected_col = col;
+                have_expected = 1;
+            } else if (col != expected_col) {
+                ok = 0;
+                break;
+            }
+        }
+        if (*end == '\0') {
+            break;
+        }
+        line = end + 1;
+    }
+    free(visible);
+    return ok && have_expected;
+}
+
 static size_t max_visible_line_cols(const char *s)
 {
     size_t max_cols;
@@ -1206,9 +1316,6 @@ static int raw_ansi_lines_start_with_margin_outside_styles(const char *out, int 
                     return 0;
                 }
             }
-            if (left_margin > 0 && len > (size_t)left_margin && line[left_margin] == ' ') {
-                return 0;
-            }
         }
         if (*end == '\0') {
             break;
@@ -1411,6 +1518,11 @@ static int run_ansi_link_wrap_regression_case(const char *name, const char *mark
                 name, width, left_margin, right_margin);
         ok = 0;
     }
+    if (osc8 && !raw_osc8_closed_at_linebreaks(out)) {
+        fprintf(stderr, "FAIL: %s OSC8 crosses linebreak width=%d left=%d right=%d\n",
+                name, width, left_margin, right_margin);
+        ok = 0;
+    }
     if (osc8 && strstr(out, "\033]8;;https://agilemanifesto.org/\033\\\n") != NULL) {
         fprintf(stderr, "FAIL: %s stranded osc8 opener width=%d left=%d right=%d\n",
                 name, width, left_margin, right_margin);
@@ -1476,6 +1588,9 @@ static int run_ansi_link_wrap_regression_cases(void)
     static const char *punctuated =
         "prefix **outcomes**, **not requirements**; [Agile Manifesto](https://agilemanifesto.org/) "
         "keeps punctuation, styles, and links around wraps.\n";
+    static const char *long_link =
+        "[A longer link label that wraps across lines in narrow viewports](https://agilemanifesto.org/) "
+        "keeps the continuation margin outside the link.\n";
     static const int widths[] = {20, 25, 30, 35, 40, 50, 60, 65, 70, 75, 80, 85, 90};
     static const int margins[][2] = {
         {0, 0},
@@ -1525,6 +1640,11 @@ static int run_ansi_link_wrap_regression_cases(void)
                 if (!run_ansi_link_wrap_regression_case("punctuated", punctuated, widths[w],
                         margins[m][0], margins[m][1], osc8s[o],
                         "outcomes", "not requirements", "Agile Manifesto")) {
+                    return 0;
+                }
+                if (!run_ansi_link_wrap_regression_case("long-link", long_link, widths[w],
+                        margins[m][0], margins[m][1], osc8s[o],
+                        "A longer link label", "narrow viewports", "continuation margin")) {
                     return 0;
                 }
             }
@@ -1658,6 +1778,65 @@ static int run_ansi_margin_table_regression_cases(void)
         }
     }
     return 1;
+}
+
+static int run_ansi_table_cell_margin_regression_case(void)
+{
+    static const char *markdown =
+        "| Capability | Desktop | Mobile | Notes |\n"
+        "| --- | --- | --- | --- |\n"
+        "| Keyboard navigation | yes | yes | external keyboards should work |\n"
+        "| Touch navigation | yes | yes | horizontal and vertical swipes are supported |\n";
+    mdf_options opts;
+    mdf *renderer;
+    mdf_status st;
+    char *out;
+    char *visible;
+    int ok;
+    size_t len;
+
+    mdf_options_init(&opts);
+    opts.width = 100;
+    opts.margin_left = 10;
+    opts.margin_right = 10;
+    opts.theme_name = "everforest";
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    if (st != MDF_OK || renderer == NULL) {
+        return 0;
+    }
+    out = NULL;
+    st = renderer->render_cstr(renderer, markdown, &out);
+    if (st != MDF_OK || out == NULL) {
+        renderer->destroy(renderer);
+        return 0;
+    }
+    len = strlen(out);
+    visible = (char *)malloc(len + 1);
+    if (visible == NULL) {
+        renderer->string_free(renderer, out);
+        renderer->destroy(renderer);
+        return 0;
+    }
+    memcpy(visible, out, len + 1);
+    strip_ansi_inplace(visible);
+    ok = 1;
+    if (strstr(visible, "│           Keyboard") != NULL ||
+        strstr(visible, "│           Touch") != NULL ||
+        strstr(visible, "│           external") != NULL) {
+        fprintf(stderr, "FAIL: table cell renderer leaked left margin into cell text\n");
+        ok = 0;
+    }
+    if (strstr(visible, "│ Keyboard") == NULL ||
+        strstr(visible, "│ Touch") == NULL ||
+        strstr(visible, "│ external") == NULL) {
+        fprintf(stderr, "FAIL: table cell text is not left-aligned after margin stripping\n");
+        ok = 0;
+    }
+    free(visible);
+    renderer->string_free(renderer, out);
+    renderer->destroy(renderer);
+    return ok;
 }
 
 static int run_ansi_table_osc8_regression_case(void)
@@ -1812,6 +1991,36 @@ int main(void)
     }
     renderer->destroy(renderer);
     renderer = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "deck renderer create before parser token-stream rejection");
+    if (renderer != NULL) {
+        chunk_source src;
+
+        src.src = "# Deck token stream\n";
+        src.len = strlen(src.src);
+        src.off = 0;
+        src.chunk = 1;
+        framed_source.userdata = &src;
+        framed_source.read = chunk_read;
+        memset(&sink_data, 0, sizeof(sink_data));
+        sink.userdata = &sink_data;
+        sink.write = mem_write;
+        st = parser->parse(parser, &framed_source, renderer, &sink);
+        fails += expect(st == MDF_ERROR_INVALID && sink_data.len == 0,
+                        "parser-driven token streaming rejects deck renderers");
+        fails += expect(strcmp(renderer->error(renderer), "deck renderers do not support token streaming") == 0,
+                        "deck renderer records unsupported token streaming error");
+        renderer->destroy(renderer);
+        renderer = NULL;
+    }
+
+    mdf_options_init(&opts);
+    opts.allocator.userdata = &allocs;
+    opts.allocator.alloc = test_alloc;
+    opts.allocator.realloc = test_realloc;
+    opts.allocator.free = test_free;
     opts.boring = 0;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
     fails += expect(st == MDF_OK && renderer != NULL, "streaming invariant renderer create");
@@ -2295,6 +2504,28 @@ int main(void)
     fails += expect(st == MDF_OK && out != NULL, "mono chart option render");
     fails += expect(strstr(out, "\342\226\210") != NULL && strstr(out, "57.1%") != NULL,
                     "mono chart option keeps bar output and percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,disable_percentage\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "disable percentage chart option render");
+    fails += expect(strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "A ") != NULL &&
+                    strstr(out, "10") != NULL &&
+                    strstr(out, "%") == NULL,
+                    "disable_percentage hides horizontal chart percentages but keeps values");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,disable_percent\nA,10\nB,20\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "disable percent alias chart option render");
+    fails += expect(strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, "%") == NULL,
+                    "disable_percent alias hides horizontal chart percentages");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,disable_percentage=false\nA,10\nB,20\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "disable percentage false chart option render");
+    fails += expect(strstr(out, "66.7%") != NULL,
+                    "disable_percentage=false preserves horizontal chart percentages");
     renderer->string_free(renderer, out);
     out = NULL;
     {
@@ -2788,6 +3019,7 @@ int main(void)
     st = renderer->render_cstr(renderer, "# Title\n\nBody.\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "html shell render");
     fails += expect(out != NULL && strstr(out, "<!doctype html>") != NULL &&
+                    strstr(out, "<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->") != NULL &&
                     strstr(out, "<html lang=\"en\">") != NULL &&
                     strstr(out, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">") != NULL &&
                     strstr(out, "data:font/woff2") == NULL &&
@@ -2795,7 +3027,7 @@ int main(void)
                     strstr(out, "font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,\"Liberation Mono\",\"Courier New\",monospace") != NULL &&
                     strstr(out, "--mdf-content-max-width:96ch;") != NULL &&
                     strstr(out, "<main class=\"mdf-document\">") != NULL &&
-                    strstr(out, "<span class=\"mdf-heading\" style=\"color:rgb(0,205,0);font-weight:700;font-size:22.799999999999997pt;font-weight:700;--mdf-heading-indent:2ch;\"># Title</span>") != NULL &&
+                    strstr(out, "<span class=\"mdf-heading\" style=\"color:rgb(0,205,0);font-weight:700;font-size:32pt;font-weight:700;--mdf-heading-indent:2ch;\"># Title</span>") != NULL &&
                     strstr(out, "<span style=\"color:rgb(220,220,220);\">Body.</span>") != NULL &&
                     strstr(out, "</main>\n</body>\n</html>\n") != NULL,
                     "library html shell does not embed or hardcode the cmdf font");
@@ -2870,7 +3102,7 @@ int main(void)
     fails += expect(st == MDF_OK && renderer != NULL, "html shell renderer recreate after user font");
     st = renderer->render_cstr(renderer, "### Example: *lockd*\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "html heading emphasis render");
-    fails += expect(strstr(out, "<span class=\"mdf-heading\" style=\"color:rgb(205,0,205);font-weight:700;font-size:15.600000000000001pt;font-weight:700;--mdf-heading-indent:4ch;\">### Example: lockd</span>") != NULL,
+    fails += expect(strstr(out, "<span class=\"mdf-heading\" style=\"color:rgb(205,0,205);font-weight:700;font-size:15pt;font-weight:700;--mdf-heading-indent:4ch;\">### Example: lockd</span>") != NULL,
                     "html headings flatten inline emphasis styling like parityjudge");
     renderer->string_free(renderer, out);
     out = NULL;
@@ -2933,8 +3165,17 @@ int main(void)
                                "Mixing inline text: A&nbsp;B and C&#160;D and E&#xA0;F.\n",
                                &out);
     fails += expect(st == MDF_OK && out != NULL, "html nbsp render");
-    fails += expect(strstr(out, "<span style=\"color:rgb(220,220,220);\">350&amp;nbsp;000 should not wrap. 120&amp;#160;000 should not wrap. 42&amp;#xA0;000 should not wrap. Mixing inline text: A B and C D and E F.</span>") != NULL,
-                    "html prose matches parityjudge nbsp handling");
+    fails += expect(strstr(out, "350&amp;nbsp;000 should not wrap.") != NULL &&
+                    strstr(out, "120&amp;#160;000 should not wrap.") != NULL &&
+                    strstr(out, "42&amp;#xA0;000 should not wrap.") != NULL &&
+                    strstr(out, "A B and C D and E F") != NULL,
+                    "html prose escapes no-break number entities and decodes inline entities like parityjudge");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "AT&T and AT&amp;T\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html raw ampersand render");
+    fails += expect(strstr(out, "AT&amp;T and AT&amp;T") != NULL,
+                    "html escapes raw ampersands after inline entity decoding");
     renderer->string_free(renderer, out);
     out = NULL;
     st = renderer->render_cstr(renderer, "| A | B |\n| --- | --- |\n| 1 | 2 |\n", &out);
@@ -2970,6 +3211,31 @@ int main(void)
                     "html horizontal chart trims ANSI centering prefix");
     renderer->string_free(renderer, out);
     out = NULL;
+    st = renderer->render_cstr(renderer, "```mdf-bar-chart,disable_percentage\nA,10\nB,20\nC,5\n```\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "html disable percentage chart option render");
+    fails += expect(strstr(out, "<div class=\"mdf-chart-block\"") != NULL &&
+                    strstr(out, "\342\226\210") != NULL &&
+                    strstr(out, ">10</span>") != NULL &&
+                    strstr(out, "28.6%") == NULL &&
+                    strstr(out, "57.1%") == NULL &&
+                    strstr(out, "14.3%") == NULL,
+                    "html disable_percentage hides horizontal chart percentages but keeps values");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer,
+                               "```mdf-vertical-bar-chart\n"
+                               "Quarter,value\n"
+                               "Q1,12\n"
+                               "Q2,19\n"
+                               "Q3,14\n"
+                               "Q4,27\n"
+                               "```\n",
+                               &out);
+    fails += expect(st == MDF_OK && out != NULL, "html vertical chart axis regression render");
+    fails += expect(out != NULL && html_vertical_chart_axis_columns_aligned(out),
+                    "html vertical chart keeps wide numeric tick rows aligned");
+    renderer->string_free(renderer, out);
+    out = NULL;
     st = renderer->render_cstr(renderer,
                                "> ```mdf-vertical-bar-chart\n"
                                "> Quote Build,4\n"
@@ -2984,11 +3250,8 @@ int main(void)
                                "> ```\n",
                                &out);
     fails += expect(st == MDF_OK && out != NULL, "html quoted chart geometry render");
-    fails += expect(strstr(out, "<span style=\"color:rgb(220,220,220);\">   7</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
-                    strstr(out, ">│</span> </span>") != NULL &&
-                    strstr(out, "<span style=\"color:rgb(220,220,220);\">3.50</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
-                    strstr(out, ">┤</span> </span>") != NULL,
-                    "html quoted vertical chart centers compact y-axis glyph cells after quote prefix");
+    fails += expect(html_vertical_chart_axis_columns_aligned(out),
+                    "html quoted vertical chart keeps y-axis rows aligned after quote prefix");
     fails += expect(strstr(out, "display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\"><span style=\"color:rgb(0,205,0);background-color:rgb(0,205,0);display:inline-block;height:1lh;line-height:1lh;vertical-align:top;font-weight:700;\">") != NULL &&
                     strstr(out, "display:block;white-space:pre;overflow-wrap:normal;text-align:center;\"><span class=\"mdf-prefix\"></span><span class=\"mdf-content\" style=\"display:inline-block;white-space:pre;overflow-wrap:normal;text-align:left;\"><span style=\"color:rgb(220,220,220);\"> </span><span style=\"color:rgb(0,205,0);background-color:rgb(0,205,0);") == NULL,
                     "html quoted tile chart trims unstyled leading tile padding");
@@ -3004,9 +3267,8 @@ int main(void)
                                "  ```\n",
                                &out);
     fails += expect(st == MDF_OK && out != NULL, "html list vertical chart geometry render");
-    fails += expect(strstr(out, "<span style=\"color:rgb(220,220,220);\">    7</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL &&
-                    strstr(out, "<span style=\"color:rgb(220,220,220);\"> 3.50</span><span style=\"color:rgb(127,127,127);\"> <span style=\"display:inline-block;width:1ch;") != NULL,
-                    "html list vertical chart centers compact y-axis glyph cells");
+    fails += expect(html_vertical_chart_axis_columns_aligned(out),
+                    "html list vertical chart keeps y-axis rows aligned");
     renderer->string_free(renderer, out);
     out = NULL;
     {
@@ -3221,6 +3483,33 @@ int main(void)
                     "wrapped inline code keeps code style across list continuation");
     renderer->string_free(renderer, out);
     out = NULL;
+    opts.width = 75;
+    opts.margin_left = 20;
+    opts.margin_right = 20;
+    opts.theme_name = "everforest";
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "styled wide-margin inline code punctuation renderer create");
+    st = renderer->render_cstr(renderer,
+                               "Escaped punctuation should remain readable as literal text: "
+                               "`*not emphasis*`, `[not a link]`, and `# not a heading`.\n",
+                               &out);
+    fails += expect(st == MDF_OK && out != NULL, "styled wide-margin inline code punctuation render");
+    fails += expect(strstr(out, "\n                    .") == NULL &&
+                    strstr(out, "\n                    \033[38;5;109m# not a heading") != NULL &&
+                    strstr(out, "# not a heading\033[0m.") != NULL,
+                    "wide-margin inline code keeps trailing punctuation attached inside margin");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    opts.width = 20;
+    opts.margin_left = 0;
+    opts.margin_right = 0;
+    opts.theme_name = "default";
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "styled narrow ansi recreate after wide-margin inline code");
     st = renderer->render_cstr(renderer, "* `golangci-lint run ./...`\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "styled narrow inline code bullet-only render");
     fails += expect(strstr(out, "\033[36m-\033[0m \n  \033[35mgolangci-lint run .\033[0m\n  \033[35m/...\033[0m") != NULL,
@@ -3417,7 +3706,38 @@ int main(void)
     fails += expect(strstr(out, "\n    >\n") == NULL, "list blockquote eof does not synthesize blank marker");
     renderer->string_free(renderer, out);
     out = NULL;
+    opts.margin_left = 2;
+    opts.boring = 1;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "margin list blockquote wrap renderer create");
+    st = renderer->render_cstr(renderer,
+        "  * **Purpose (IOT)** - The strategic or operational rationale behind\n"
+        "    the intent; typically phrased as *\"in order to...\"*\n"
+        "\n"
+        "\t> **Example:**  \n"
+        "\t> *Intent: \"Prevent the fire from reaching the gas station\n"
+        "\t> (end-state), without risking firefighter safety (constraint), in\n"
+        "\t> order to maintain critical infrastructure and avoid civilian\n"
+        "\t> casualties (purpose).\"*\n"
+        "\n"
+        "\t> *Tip: Use the full intent statement as the title of the Outcome\n"
+        "\t> Card. This helps keep constraints visible and prevents them from\n"
+        "\t> silently transforming into assumptions or rigid requirements.*\n",
+        &out);
+    fails += expect(st == MDF_OK && out != NULL, "margin nested list blockquote render");
+    fails += expect(strstr(out, "\n      > Example:\n      > Intent:") != NULL &&
+                    strstr(out, "\n        > Intent:") == NULL,
+                    "margin nested list blockquote source lines keep quote marker column");
+    fails += expect(strstr(out, "\n        >\n      > Tip:") != NULL &&
+                    strstr(out, "\n        > Tip:") == NULL,
+                    "margin nested list resumed blockquote keeps quote marker column");
+    renderer->string_free(renderer, out);
+    out = NULL;
     opts.width = 0;
+    opts.margin_left = 0;
+    opts.boring = 1;
     renderer->destroy(renderer);
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
@@ -3698,6 +4018,7 @@ int main(void)
     fails += expect(run_margin_corpus_cases(), "ansi margin corpus line shape invariants");
     fails += expect(run_ansi_link_wrap_regression_cases(), "ansi link wrap matrix preserves visible text and margins");
     fails += expect(run_ansi_margin_table_regression_cases(), "ansi table margin matrix preserves visible text and ANSI boundaries");
+    fails += expect(run_ansi_table_cell_margin_regression_case(), "ansi table cells do not inherit parent margins");
     fails += expect(run_ansi_table_osc8_regression_case(), "ansi table osc8 closes wrapped cell links per line");
 
     parser->destroy(parser);
