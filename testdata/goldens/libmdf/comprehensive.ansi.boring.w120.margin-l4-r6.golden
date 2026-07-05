@@ -1,0 +1,272 @@
+    # libmdf Deck Mode
+
+    # Centered Front Page With More Content
+
+    ## Subtitle Block
+
+    This slide verifies that the first slide can include more than a single heading while still centering the
+    content block.
+
+    # Stable Heading Scale
+
+    ## Second-Level Heading
+
+    ### Third-Level Heading
+
+    #### Fourth-Level Heading
+
+    ##### Fifth-Level Heading
+
+    ###### Sixth-Level Heading
+
+    ATX headings should remain stable from slide to slide while body content participates in autofit.
+
+    # Header And Body Heading Paths
+
+    # Body First-Level Heading
+
+    ## Body Second-Level Heading
+
+    ### Body Third-Level Heading
+
+    #### Body Fourth-Level Heading
+
+    ##### Body Fifth-Level Heading
+
+    This paragraph verifies that headings in the slide body use the body-heading scale instead of the promoted
+    slide-header scale. The smallest body heading on this slide should still read as a heading and must not become
+    smaller than this paragraph text.
+
+    # Sparse Body Autofit
+
+    One short paragraph should become comfortably large without looking like a marketing splash page.
+
+    # Dense Body Autofit
+
+    This slide intentionally contains enough body content to force a smaller body font. The renderer should
+    preserve readable spacing, keep headings predictable, and avoid clipping content in a typical fullscreen
+    browser viewport.
+
+    Autofit should treat this as normal slide content rather than a failure mode. If a slide is too dense even at
+    the minimum font size, the fallback should be visually obvious and still allow the presenter to reach all
+    content.
+
+    The goal is to test the everyday case where a technical presenter adds a little too much detail but still
+    expects the deck to adapt gracefully on desktop and laptop screens.
+
+    # Inline Markdown
+
+    Plain text can include emphasis, strong text, combined emphasis, inline code, links (https://example.com/deck)
+    , and autolinks like https://example.com/autolink.
+
+    # Lists
+
+    - Unordered item with a short label.
+    - Unordered item with inline emphasis, strong text, and inline code.
+    - Unordered item with nested structure:
+      - Nested unordered item.
+      - Nested item with a link (https://example.com/nested).
+
+    1. Ordered item one.
+    2. Ordered item two with a longer sentence that should wrap cleanly.
+    3. Ordered item three.
+
+    # Task Lists
+
+    - [ ] Unchecked task item.
+    - [x] Checked task item.
+    - [ ] Task item with enough text to wrap across more than one visual line when the browser viewport is narrow.
+
+    Task list rendering is a future Markdown extension in some contexts, so this slide also documents the desired
+    visual target if task markers are supported.
+
+    # Block Quotes
+
+    > A short quote should read as a distinct block.
+
+    > A longer quote should wrap cleanly and preserve the quote treatment across lines. It should not collide with
+    > the slide number indicator.
+    >
+    > - Quoted list item.
+    > - Another quoted list item with strong text.
+
+    # Code
+
+    int main(void)
+    {
+        const char *boundary = "---";
+        return boundary[0] == '-' ? 0 : 1;
+    }
+
+    The fenced --- string above must not split the deck.
+
+    # Preformatted Text
+
+    make test
+    cmdf --deck --slide-numbers -x fade -o deck.html testdata/deck-corpus/comprehensive.md
+    open deck.html
+
+    Indented code should remain readable and should not participate in Markdown slide boundary parsing.
+
+    # Tables
+
+    ┌─────────────────────┬─────────┬────────┬──────────────────────────────────────────────┐
+    │ Capability          │ Desktop │ Mobile │ Notes                                        │
+    ├─────────────────────┼─────────┼────────┼──────────────────────────────────────────────┤
+    │ Keyboard navigation │   yes   │  yes   │ external keyboards should work               │
+    │ Touch navigation    │   yes   │  yes   │ horizontal and vertical swipes are supported │
+    │ Autofit             │   yes   │  yes   │ body content adapts per slide                │
+    │ Charts              │   yes   │  yes   │ chart boxes stay inspectable                 │
+    └─────────────────────┴─────────┴────────┴──────────────────────────────────────────────┘
+
+    # Wide Table Pressure
+
+    ┌────────┬───────┬──────────────────────┬────────────────────────────────────────────────────────────────────┐
+    │ Column │ Short │ Medium length header │ Long content pressure                                              │
+    ├────────┼───────┼──────────────────────┼────────────────────────────────────────────────────────────────────┤
+    │ alpha  │     1 │ small                │ long text that should wrap inside the table cell without forcing   │
+    │        │       │                      │ the whole slide out of the viewport                                │
+    │ beta   │    22 │ medium               │ another deliberately long table value with inline code and strong  │
+    │        │       │                      │ text                                                               │
+    │ gamma  │   333 │ large                │ a link with a descriptive label (https://example.com/table/link)   │
+    └────────┴───────┴──────────────────────┴────────────────────────────────────────────────────────────────────┘
+
+    # Horizontal Chart
+
+                          Implementation │ ████████████████████████████████████████ 42 42.0%
+                          Verification   │ ██████████████████████████████           31 31.0%
+                          Design         │ █████████████████                        18 18.0%
+                          Release        │ █████████                                9 9.0%
+
+    # Vertical Chart
+
+                          27 ┤                                                      ██████     
+                             │                                                      ██████     
+                             │                                                      ██████     
+                             │                                                      ██████     
+                             │                                                      ██████     
+                             │                      ██████                          ██████     
+                             │                      ██████                          ██████     
+                             │                      ██████                          ██████     
+                       13.50 ┤                      ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                             │      ██████          ██████          ██████          ██████     
+                           0 └─────────────────────────────────────────────────────────────────
+                                      1               2               3               4        
+
+    # Tile Chart
+
+                       ████████Renderer███████████████Tests████████████Parser██████████CLI█████
+                       █████████34.0%█████████████████27.0%█████████████21.0%█████████18.0%████
+    
+                                   ■ Renderer 34  ■ Tests 27  ■ Parser 21  ■ CLI 18
+
+    # Chart In Quote
+
+    >                     Explicit │ ███████████████████████████████████            40 40.0%
+    >                     Magic    │ ██████                                         7 7.0%
+    >                     Evidence │ ██████████████████████████████████████████████ 53 53.0%
+
+    Quoted charts should inherit the surrounding container treatment without breaking chart layout.
+
+    # Mixed Technical Slide
+
+    ## Release Checklist
+
+    1. API options initialized by mdf_options_init.
+    2. CLI validates --transition before rendering.
+    3. MDF_FORMAT_HTML output remains unchanged.
+    4. MDF_FORMAT_HTML_DECK emits deck shell, CSS, and JavaScript.
+
+    > The deck renderer may materialize one slide at a time, but ordinary HTML mode should not inherit deck-only
+    > behavior.
+
+    # Thematic Break Edge Cases
+
+    The next fenced block contains a line that looks like a slide separator:
+
+    Paragraph before a thematic break.
+    ---
+    Paragraph after a thematic break inside an example.
+
+    The deck must keep this entire fenced block on one slide.
+
+    # Quoted Thematic Break
+
+    > This quote contains a thematic-looking line:
+    >
+    > ---
+    >
+    > It is quoted content and should remain on the current slide.
+
+    The actual slide separator is the unquoted thematic break after this slide.
+
+    # List Thematic Break
+
+    - List item before an indented thematic-looking line.
+
+      ---
+
+    - List item after the indented line.
+
+    The indented line belongs to the list context and should not split slides unless the Markdown parser
+    classifies it as a block-level thematic break outside the container.
+
+    # Raw HTML
+
+    <p data-deck-fixture="raw-html">Raw inline HTML is escaped and rendered as text according to existing HTML
+    renderer rules.</p>
+
+    <details> <summary>Disclosure content</summary> This is intentionally shown as escaped text rather than a live
+    disclosure. </details>
+
+    # Links And Interaction
+
+    Primary documentation link (https://example.com/docs)
+
+    A longer link label that wraps across lines in narrow viewports (https://example.com/docs/deck/mode/long/link)
+
+    Link activation should not accidentally advance the deck. Focus should remain usable on the current slide
+    only.
+
+    # Image Syntax
+
+    !Tiny transparent pixel (data:image/gif;base64,R0lGODlhAQABAAAAACw=)
+
+    This exercises Markdown image output without requiring network access. The image is intentionally tiny so it
+    does not dominate the slide.
+
+    # Long Word Pressure
+
+    The renderer should avoid layout explosions from a long token:
+
+    supercalifragilisticexpialidocious-supercalifragilisticexpialidocious-supercalifragilisticexpialidocious
+
+    Normal prose after the long token should remain visible.
+
+    # Escapes And Entity Text
+
+    Escaped punctuation should remain readable as literal text: *not emphasis*, [not a link], and # not a heading.
+
+    Entity-looking text should also remain readable: AT&amp;T, &lt;tag&gt;, and 10&nbsp;000.
+
+    ## Second-Level Slide Header
+
+    This slide starts with a ## ATX heading instead of #. The deck renderer should still treat it as the slide
+    header and keep the body content below it.
+
+    ### Third-Level Slide Header
+
+    This slide starts with a ### ATX heading. It verifies that lower-level first headings can act as slide headers
+    without inheriting body centering behavior.
+
+    # Final Slide
+
+    ## End State
+
+    This slide verifies End, G, URL hash restoration, and slide number rendering near the end of the deck.

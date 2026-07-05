@@ -145,6 +145,24 @@ func normalizeReferenceHTML(out []byte) []byte {
 	return out
 }
 
+func normalizeHTMLTitleForCompare(out []byte) []byte {
+	start := bytes.Index(out, []byte("<title>"))
+	if start < 0 {
+		return out
+	}
+	start += len("<title>")
+	endRel := bytes.Index(out[start:], []byte("</title>"))
+	if endRel < 0 {
+		return out
+	}
+	end := start + endRel
+	next := make([]byte, 0, len(out)-(end-start)+len("__libmdf_title__"))
+	next = append(next, out[:start]...)
+	next = append(next, "__libmdf_title__"...)
+	next = append(next, out[end:]...)
+	return next
+}
+
 func render(mode string, data []byte, chunk int, width int, opts parityOptions, tracePath string) ([]byte, error) {
 	var out bytes.Buffer
 	var writer io.Writer
@@ -483,6 +501,10 @@ func compareLibmdfOne(mode string, data []byte, chunk int, width int, opts parit
 	cOut, cTrace, err := renderLibmdf(mode, data, chunk, width, opts, trace)
 	if err != nil {
 		return err
+	}
+	if mode == "html" {
+		goOut = normalizeHTMLTitleForCompare(goOut)
+		cOut = normalizeHTMLTitleForCompare(cOut)
 	}
 	if !bytes.Equal(goOut, cOut) {
 		return fmt.Errorf("output mismatch\n%s", firstDiffContext(goOut, cOut))

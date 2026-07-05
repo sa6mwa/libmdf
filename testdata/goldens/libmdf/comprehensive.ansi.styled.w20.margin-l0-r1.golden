@@ -1,0 +1,701 @@
+[1;32m# [0m[1;32mlibmdf Deck Mode[0m
+
+[1;32m# [0m[1;32mCentered Front[0m
+  [1;32mPage With More[0m
+  [1;32mContent[0m
+
+[1;34m## [0m[1;34mSubtitle Block[0m
+
+This slide verifies
+that the first
+slide can include
+more than a single
+heading while still
+centering the
+content block.
+
+[1;32m# [0m[1;32mStable Heading[0m
+  [1;32mScale[0m
+
+[1;34m## [0m[1;34mSecond-Level[0m
+   [1;34mHeading[0m
+
+[1;35m### [0m[1;35mThird-Level[0m
+    [1;35mHeading[0m
+
+[33m#### [0m[33mFourth-Level[0m
+     [33mHeading[0m
+
+[36m##### [0m[36mFifth-Level[0m
+      [36mHeading[0m
+
+[37m###### [0m[37mSixth-Level[0m
+       [37mHeading[0m
+
+ATX headings should
+remain stable from
+slide to slide
+while body content
+participates in
+autofit.
+
+[1;32m# [0m[1;32mHeader And Body[0m
+  [1;32mHeading Paths[0m
+
+[1;32m# [0m[1;32mBody First-Level[0m
+  [1;32mHeading[0m
+
+[1;34m## [0m[1;34mBody[0m
+   [1;34mSecond-Level[0m
+   [1;34mHeading[0m
+
+[1;35m### [0m[1;35mBody[0m
+    [1;35mThird-Level[0m
+    [1;35mHeading[0m
+
+[33m#### [0m[33mBody[0m
+     [33mFourth-Level[0m
+     [33mHeading[0m
+
+[36m##### [0m[36mBody[0m
+      [36mFifth-Level[0m
+      [36mHeading[0m
+
+This paragraph
+verifies that
+headings in the
+slide body use the
+body-heading scale
+instead of the
+promoted
+slide-header scale.
+The smallest body
+heading on this
+slide should still
+read as a heading
+and must not become
+smaller than this
+paragraph text.
+
+[1;32m# [0m[1;32mSparse Body[0m
+  [1;32mAutofit[0m
+
+One short paragraph
+should become
+comfortably large
+without looking
+like a marketing
+splash page.
+
+[1;32m# [0m[1;32mDense Body[0m
+  [1;32mAutofit[0m
+
+This slide
+intentionally
+contains enough
+body content to
+force a smaller
+body font. The
+renderer should
+preserve readable
+spacing, keep
+headings
+predictable, and
+avoid clipping
+content in a
+typical fullscreen
+browser viewport.
+
+Autofit should
+treat this as
+normal slide
+content rather than
+a failure mode. If
+a slide is too
+dense even at the
+minimum font size,
+the fallback should
+be visually obvious
+and still allow the
+presenter to reach
+all content.
+
+The goal is to test
+the everyday case
+where a technical
+presenter adds a
+little too much
+detail but still
+expects the deck to
+adapt gracefully on
+desktop and laptop
+screens.
+
+[1;32m# [0m[1;32mInline Markdown[0m
+
+Plain text can
+include [3m[34memphasis[0m,
+[1m[1;37mstrong text[0m,
+[1m[3m[1;35mcombined emphasis[0m,
+[35minline code[0m, [4m[1;34mlinks[0m
+(https://example.co
+m/deck), and
+autolinks like
+https:
+//example.com/
+autolink.
+
+[1;32m# [0m[1;32mLists[0m
+
+[36m-[0m Unordered item
+  with a short
+  label.
+[36m-[0m Unordered item
+  with [3m[34minline[0m
+  [3m[34memphasis[0m, [1m[1;37mstrong[0m
+  [1m[1;37mtext[0m, and
+  [35minline code[0m.
+[36m-[0m Unordered item
+  with nested
+  structure:
+  [36m-[0m Nested
+    unordered item.
+  [36m-[0m Nested item
+    with [4m[1;34ma link[0m
+    
+    (https://exampl
+    e.com/nested).
+
+[36m1.[0m Ordered item
+   one.
+[36m2.[0m Ordered item two
+   with a longer
+   sentence that
+   should wrap
+   cleanly.
+[36m3.[0m Ordered item
+   three.
+
+[1;32m# [0m[1;32mTask Lists[0m
+
+[36m-[0m [ ] Unchecked
+      task item.
+[36m-[0m [x] Checked task
+      item.
+[36m-[0m [ ] Task item
+      with enough
+      text to wrap
+      across more
+      than one
+      visual line
+      when the
+      browser
+      viewport is
+      narrow.
+
+Task list rendering
+is a future
+Markdown extension
+in some contexts,
+so this slide also
+documents the
+desired visual
+target if task
+markers are
+supported.
+
+[1;32m# [0m[1;32mBlock Quotes[0m
+
+[90m>[0m A short quote
+[90m>[0m should read as a
+[90m>[0m distinct block.
+
+[90m>[0m A longer quote
+[90m>[0m should wrap
+[90m>[0m cleanly and
+[90m>[0m preserve the
+[90m>[0m quote treatment
+[90m>[0m across lines. It
+[90m>[0m should not
+[90m>[0m collide with the
+[90m>[0m slide number
+[90m>[0m indicator.
+[90m>[0m
+[90m>[0m [36m-[0m Quoted list
+[90m>[0m   item.
+[90m>[0m [36m-[0m Another quoted
+[90m>[0m   list item with
+[90m>[0m   [1m[1;37mstrong text[0m.
+
+[1;32m# [0m[1;32mCode[0m
+
+[32mint main(void)[0m
+[32m{[0m
+[32m    const char *bo…[0m
+[32m--";[0m
+[32m    return boundar…[0m
+[32m0] == '-' ? 0 : 1;[0m
+[32m}[0m
+
+The fenced [35m---[0m
+string above must
+not split the deck.
+
+[1;32m# [0m[1;32mPreformatted Text[0m
+
+[32mmake test[0m
+[32mcmdf --deck --[0m
+[32mslide-numbers -[0m
+[32mx fade -o deck.[0m
+[32mhtml testdata/deck-[0m
+[32mcorpus/[0m
+[32mcomprehensive.md[0m
+[32mopen deck.html[0m
+
+Indented code
+should remain
+readable and should
+not participate in
+Markdown slide
+boundary parsing.
+
+[1;32m# [0m[1;32mTables[0m
+
+[90m┌───┬───┬───┬─────┐[0m
+[90m│ [0m[1m[36mC[0m[90m │ [0m[1m[36mD[0m[90m │ [0m[1m[36mM[0m[90m │ [0m[1m[36mNot[0m[90m │[0m
+[90m│ [0m[1m[36ma[0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36mo[0m[90m │ [0m[1m[36mes [0m[90m │[0m
+[90m│ [0m[1m[36mp[0m[90m │ [0m[1m[36ms[0m[90m │ [0m[1m[36mb[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36ma[0m[90m │ [0m[1m[36mk[0m[90m │ [0m[1m[36mi[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36mb[0m[90m │ [0m[1m[36mt[0m[90m │ [0m[1m[36ml[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36mi[0m[90m │ [0m[1m[36mo[0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36ml[0m[90m │ [0m[1m[36mp[0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36mi[0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36mt[0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36my[0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m├───┼───┼───┼─────┤[0m
+[90m│ [0mK[90m │ [0my[90m │ [0my[90m │ [0mext[90m │[0m
+[90m│ [0me[90m │ [0me[90m │ [0me[90m │ [0mern[90m │[0m
+[90m│ [0my[90m │ [0ms[90m │ [0ms[90m │ [0mal [90m │[0m
+[90m│ [0mb[90m │ [0m [90m │ [0m [90m │ [0mkey[90m │[0m
+[90m│ [0mo[90m │ [0m [90m │ [0m [90m │ [0mboa[90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0m [90m │ [0mrds[90m │[0m
+[90m│ [0mr[90m │ [0m [90m │ [0m [90m │ [0msho[90m │[0m
+[90m│ [0md[90m │ [0m [90m │ [0m [90m │ [0muld[90m │[0m
+[90m│ [0mn[90m │ [0m [90m │ [0m [90m │ [0mwor[90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0m [90m │ [0mk  [90m │[0m
+[90m│ [0mv[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mi[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mg[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mt[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mi[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mo[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mn[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mT[90m │ [0my[90m │ [0my[90m │ [0mhor[90m │[0m
+[90m│ [0mo[90m │ [0me[90m │ [0me[90m │ [0mizo[90m │[0m
+[90m│ [0mu[90m │ [0ms[90m │ [0ms[90m │ [0mnta[90m │[0m
+[90m│ [0mc[90m │ [0m [90m │ [0m [90m │ [0ml  [90m │[0m
+[90m│ [0mh[90m │ [0m [90m │ [0m [90m │ [0mand[90m │[0m
+[90m│ [0mn[90m │ [0m [90m │ [0m [90m │ [0mver[90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0m [90m │ [0mtic[90m │[0m
+[90m│ [0mv[90m │ [0m [90m │ [0m [90m │ [0mal [90m │[0m
+[90m│ [0mi[90m │ [0m [90m │ [0m [90m │ [0mswi[90m │[0m
+[90m│ [0mg[90m │ [0m [90m │ [0m [90m │ [0mpes[90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0m [90m │ [0mare[90m │[0m
+[90m│ [0mt[90m │ [0m [90m │ [0m [90m │ [0msup[90m │[0m
+[90m│ [0mi[90m │ [0m [90m │ [0m [90m │ [0mpor[90m │[0m
+[90m│ [0mo[90m │ [0m [90m │ [0m [90m │ [0mted[90m │[0m
+[90m│ [0mn[90m │ [0m [90m │ [0m [90m │ [0m   [90m │[0m
+[90m│ [0mA[90m │ [0my[90m │ [0my[90m │ [0mbod[90m │[0m
+[90m│ [0mu[90m │ [0me[90m │ [0me[90m │ [0my  [90m │[0m
+[90m│ [0mt[90m │ [0ms[90m │ [0ms[90m │ [0mcon[90m │[0m
+[90m│ [0mo[90m │ [0m [90m │ [0m [90m │ [0mten[90m │[0m
+[90m│ [0mf[90m │ [0m [90m │ [0m [90m │ [0mt  [90m │[0m
+[90m│ [0mi[90m │ [0m [90m │ [0m [90m │ [0mada[90m │[0m
+[90m│ [0mt[90m │ [0m [90m │ [0m [90m │ [0mpts[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mper[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0msli[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mde [90m │[0m
+[90m│ [0mC[90m │ [0my[90m │ [0my[90m │ [0mcha[90m │[0m
+[90m│ [0mh[90m │ [0me[90m │ [0me[90m │ [0mrt [90m │[0m
+[90m│ [0ma[90m │ [0ms[90m │ [0ms[90m │ [0mbox[90m │[0m
+[90m│ [0mr[90m │ [0m [90m │ [0m [90m │ [0mes [90m │[0m
+[90m│ [0mt[90m │ [0m [90m │ [0m [90m │ [0msta[90m │[0m
+[90m│ [0ms[90m │ [0m [90m │ [0m [90m │ [0my  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mins[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mpec[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mtab[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mle [90m │[0m
+[90m└───┴───┴───┴─────┘[0m
+
+[1;32m# [0m[1;32mWide Table[0m
+  [1;32mPressure[0m
+
+[90m┌───┬───┬───┬─────┐[0m
+[90m│ [0m[1m[36mC[0m[90m │ [0m[1m[36mS[0m[90m │ [0m[1m[36mM[0m[90m │ [0m[1m[36mLon[0m[90m │[0m
+[90m│ [0m[1m[36mo[0m[90m │ [0m[1m[36mh[0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36mg  [0m[90m │[0m
+[90m│ [0m[1m[36ml[0m[90m │ [0m[1m[36mo[0m[90m │ [0m[1m[36md[0m[90m │ [0m[1m[36mcon[0m[90m │[0m
+[90m│ [0m[1m[36mu[0m[90m │ [0m[1m[36mr[0m[90m │ [0m[1m[36mi[0m[90m │ [0m[1m[36mten[0m[90m │[0m
+[90m│ [0m[1m[36mm[0m[90m │ [0m[1m[36mt[0m[90m │ [0m[1m[36mu[0m[90m │ [0m[1m[36mt  [0m[90m │[0m
+[90m│ [0m[1m[36mn[0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mm[0m[90m │ [0m[1m[36mpre[0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36ml[0m[90m │ [0m[1m[36mssu[0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36mre [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mn[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mg[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mt[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mh[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mh[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36ma[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36md[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36me[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m│ [0m[1m[36m [0m[90m │ [0m[1m[36m [0m[90m │ [0m[1m[36mr[0m[90m │ [0m[1m[36m   [0m[90m │[0m
+[90m├───┼───┼───┼─────┤[0m
+[90m│ [0ma[90m │ [0m1[90m │ [0ms[90m │ [0mlon[90m │[0m
+[90m│ [0ml[90m │ [0m [90m │ [0mm[90m │ [0mg  [90m │[0m
+[90m│ [0mp[90m │ [0m [90m │ [0ma[90m │ [0mtex[90m │[0m
+[90m│ [0mh[90m │ [0m [90m │ [0ml[90m │ [0mt  [90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0ml[90m │ [0mtha[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mt  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0msho[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0muld[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mwra[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mp  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mins[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mide[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mthe[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mtab[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mle [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mcel[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0ml  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mwit[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mhou[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mt  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mfor[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mcin[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mg  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mthe[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mwho[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mle [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0msli[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mde [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mout[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mof [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mthe[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mvie[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mwpo[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mrt [90m │[0m
+[90m│ [0mb[90m │ [0m2[90m │ [0mm[90m │ [0mano[90m │[0m
+[90m│ [0me[90m │ [0m2[90m │ [0me[90m │ [0mthe[90m │[0m
+[90m│ [0mt[90m │ [0m [90m │ [0md[90m │ [0mr  [90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0mi[90m │ [0mdel[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0mu[90m │ [0mibe[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0mm[90m │ [0mrat[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mely[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mlon[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mg  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mtab[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mle [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mval[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mue [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mwit[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mh  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[35minl[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[35mine[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[35mcod[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[35me[0m  [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0mand[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[1m[1;37mstr[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[1m[1;37mong[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[1m[1;37mtex[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[1m[1;37mt[0m  [90m │[0m
+[90m│ [0mg[90m │ [0m3[90m │ [0ml[90m │ [0m[4m[1;34ma[0m  [90m │[0m
+[90m│ [0ma[90m │ [0m3[90m │ [0ma[90m │ [0m[4m[1;34mlin[0m[90m │[0m
+[90m│ [0mm[90m │ [0m3[90m │ [0mr[90m │ [0m[4m[1;34mk[0m  [90m │[0m
+[90m│ [0mm[90m │ [0m [90m │ [0mg[90m │ [0m[4m[1;34mwit[0m[90m │[0m
+[90m│ [0ma[90m │ [0m [90m │ [0me[90m │ [0m[4m[1;34mh a[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mdes[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mcri[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mpti[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mve[0m [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mlab[0m[90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m[4m[1;34mel[0m [90m │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ [0m([90mht │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ tps │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ :// │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ exa │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ mpl │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ e.c │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ om/ │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ tab │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ le/ │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ lin │[0m
+[90m│ [0m [90m │ [0m [90m │ [0m [90m │ k[0m) [90m │[0m
+[90m└───┴───┴───┴─────┘[0m
+
+[1;32m# [0m[1;32mHorizontal Chart[0m
+
+  [1;32mI[0m[90m │ [0m[1;32m█[0m [1;32m42[0m[1;32m 42.0%[0m
+  [1;34mV[0m[90m │ [0m[1;34m█[0m [1;34m31[0m[1;34m 31.0%[0m
+  [1;35mD[0m[90m │ [0m[1;35m█[0m [1;35m18[0m[1;35m 18.0%[0m
+  [33mR[0m[90m │ [0m[33m█[0m [33m9[0m[33m 9.0%[0m
+
+[1;32m# [0m[1;32mVertical Chart[0m
+
+   27[90m ┤ [0m         [33m█[0m[33m█[0m 
+     [90m │ [0m         [33m█[0m[33m█[0m 
+     [90m │ [0m   [1;34m█[0m[1;34m█[0m    [33m█[0m[33m█[0m 
+13.50[90m ┤ [0m[1;32m█[0m[1;32m█[0m [1;34m█[0m[1;34m█[0m [1;35m█[0m[1;35m█[0m [33m█[0m[33m█[0m 
+     [90m │ [0m[1;32m█[0m[1;32m█[0m [1;34m█[0m[1;34m█[0m [1;35m█[0m[1;35m█[0m [33m█[0m[33m█[0m 
+     [90m │ [0m[1;32m█[0m[1;32m█[0m [1;34m█[0m[1;34m█[0m [1;35m█[0m[1;35m█[0m [33m█[0m[33m█[0m 
+    0[90m [0m[90m└[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m
+        1  2  3  4  
+
+[1;32m# [0m[1;32mTile Chart[0m
+
+[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[30;44mTests[0m[1;34m[44m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[30;43mCLI[0m
+[30;42m34.0%[0m[1;32m[42m█[0m[30;44m27.0%[0m[1;34m[44m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m
+
+ [1;32m■[0m [1;32mRenderer[0m [1;32m34[0m[1m[36m +3[0m
+
+[1;32m# [0m[1;32mChart In Quote[0m
+
+[90m>[0m [1;35mE[0m[90m │ [0m[1;35m█[0m [1;35m40[0m[1;35m 40.0%[0m
+[90m>[0m [1;35mM[0m[90m │ [0m[1;35m█[0m [1;35m7[0m[1;35m 7.0%[0m
+[90m>[0m [1;35mE[0m[90m │ [0m[1;35m█[0m [1;35m53[0m[1;35m 53.0%[0m
+
+Quoted charts
+should inherit the
+surrounding
+container treatment
+without breaking
+chart layout.
+
+[1;32m# [0m[1;32mMixed Technical[0m
+  [1;32mSlide[0m
+
+[1;34m## [0m[1;34mRelease[0m
+   [1;34mChecklist[0m
+
+[36m1.[0m API options
+   initialized by
+   
+   [35mmdf_options_init[0m.
+[36m2.[0m CLI validates
+   [35m--transition[0m
+   before
+   rendering.
+[36m3.[0m [35mMDF_FORMAT_HTML[0m
+   output remains
+   unchanged.
+[36m4.[0m 
+   [35mMDF_FORMAT_HTML…[0m
+   emits deck
+   shell, CSS, and
+   JavaScript.
+
+[90m>[0m The deck renderer
+[90m>[0m may materialize
+[90m>[0m one slide at a
+[90m>[0m time, but
+[90m>[0m ordinary HTML
+[90m>[0m mode should not
+[90m>[0m inherit deck-only
+[90m>[0m behavior.
+
+[1;32m# [0m[1;32mThematic Break[0m
+  [1;32mEdge Cases[0m
+
+The next fenced
+block contains a
+line that looks
+like a slide
+separator:
+
+[32mParagraph before a…[0m
+[32m---[0m
+[32mParagraph after a …[0m
+
+The deck must keep
+this entire fenced
+block on one slide.
+
+[1;32m# [0m[1;32mQuoted Thematic[0m
+  [1;32mBreak[0m
+
+[90m>[0m This quote
+[90m>[0m contains a
+[90m>[0m thematic-looking
+[90m>[0m line:
+[90m>[0m
+[90m>[0m ---
+[90m>[0m
+[90m>[0m It is quoted
+[90m>[0m content and
+[90m>[0m should remain on
+[90m>[0m the current
+[90m>[0m slide.
+
+The actual slide
+separator is the
+unquoted thematic
+break after this
+slide.
+
+[1;32m# [0m[1;32mList Thematic[0m
+  [1;32mBreak[0m
+
+[36m-[0m List item before
+  an indented
+  thematic-looking
+  line.
+
+  ---
+
+[36m-[0m List item after
+  the indented
+  line.
+
+The indented line
+belongs to the list
+context and should
+not split slides
+unless the Markdown
+parser classifies
+it as a block-level
+thematic break
+outside the
+container.
+
+[1;32m# [0m[1;32mRaw HTML[0m
+
+<p
+data-deck-fixture=
+"raw-html">Raw
+inline HTML is
+escaped and
+rendered as text
+according to
+existing HTML
+renderer rules.</p>
+
+<details>
+<summary>Disclosure
+content</summary>
+This is
+intentionally shown
+as escaped text
+rather than a live
+disclosure.
+</details>
+
+[1;32m# [0m[1;32mLinks And[0m
+  [1;32mInteraction[0m
+
+[4m[1;34mPrimary[0m
+[4m[1;34mdocumentation link[0m
+(https://example.co
+m/docs)
+
+[4m[1;34mA longer link label[0m
+[4m[1;34mthat wraps across[0m
+[4m[1;34mlines in narrow[0m
+[4m[1;34mviewports[0m
+(https://example.co
+m/docs/deck/mode/lo
+ng/link)
+
+Link activation
+should not
+accidentally
+advance the deck.
+Focus should remain
+usable on the
+current slide only.
+
+[1;32m# [0m[1;32mImage Syntax[0m
+
+![4m[1;34mTiny transparent[0m
+[4m[1;34mpixel[0m
+(data:image/gif;bas
+e64,R0lGODlhAQABAAA
+AACw=)
+
+This exercises
+Markdown image
+output without
+requiring network
+access. The image
+is intentionally
+tiny so it does not
+dominate the slide.
+
+[1;32m# [0m[1;32mLong Word[0m
+  [1;32mPressure[0m
+
+The renderer should
+avoid layout
+explosions from a
+long token:
+
+[35msupercalifragilist…[0m
+
+Normal prose after
+the long token
+should remain
+visible.
+
+[1;32m# [0m[1;32mEscapes And[0m
+  [1;32mEntity Text[0m
+
+Escaped punctuation
+should remain
+readable as literal
+text:
+[35m*not emphasis*[0m,
+[35m[not a link][0m, and
+[35m# not a heading[0m.
+
+Entity-looking text
+should also remain
+readable: [35mAT&amp;T[0m,
+[35m&lt;tag&gt;[0m, and
+[35m10&nbsp;000[0m.
+
+[1;34m## [0m[1;34mSecond-Level[0m
+   [1;34mSlide Header[0m
+
+This slide starts
+with a [35m##[0m ATX
+heading instead of
+[35m#[0m. The deck
+renderer should
+still treat it as
+the slide header
+and keep the body
+content below it.
+
+[1;35m### [0m[1;35mThird-Level[0m
+    [1;35mSlide Header[0m
+
+This slide starts
+with a [35m###[0m ATX
+heading. It
+verifies that
+lower-level first
+headings can act as
+slide headers
+without inheriting
+body centering
+behavior.
+
+[1;32m# [0m[1;32mFinal Slide[0m
+
+[1;34m## [0m[1;34mEnd State[0m
+
+This slide verifies
+[35mEnd[0m, [35mG[0m, URL hash
+restoration, and
+slide number
+rendering near the
+end of the deck.

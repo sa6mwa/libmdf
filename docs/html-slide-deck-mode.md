@@ -88,8 +88,8 @@ controls behind CLI-only behavior.
 `MDF_FORMAT_HTML` behavior must remain unchanged.
 
 `mdf_set_html_title` applies to deck mode the same way it applies to HTML mode.
-The document title uses the explicit title if provided. Otherwise, `cmdf` reuses
-its initial ATX heading title detection when rendering a deck.
+The document title uses the explicit title if provided. Otherwise, libmdf uses
+its initial ATX heading title detection when rendering HTML or a deck.
 
 Programmatic `opts.theme_name` wins over front matter `theme:`. Front matter
 `theme:` only fills the theme when the caller leaves `theme_name` unset.

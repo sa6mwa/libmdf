@@ -1,0 +1,85 @@
+                    [1;32m# [0m[1;32mMixed Layout Golden Fixture[0m
+
+                    This fixture is intentionally compact
+                    but broad. It exercises headings,
+                    paragraph wrapping, inline [3m[34memphasis[0m,
+                    [1m[1;37mstrong text[0m, [35minline code[0m, links,
+                    autolinks like https:
+                    //example.com/mixed, tables, charts,
+                    quotes, lists, code, and deck slide
+                    boundaries.
+
+                    [1;32m# [0m[1;32mInline And Containers[0m
+
+                    [90m>[0m Quoted prose should preserve quote
+                    [90m>[0m styling while wrapping under
+                    [90m>[0m configured widths and margins.
+                    [90m>[0m
+                    [90m>[0m [36m-[0m Quoted list item with [1m[1;37mstrong text[0m.
+                    [90m>[0m [36m-[0m Quoted list item with [4m[1;34ma link[0m
+                    [90m>[0m   ([90mhttps://example.com/quoted-list[0m).
+
+                    [36m-[0m Top-level list item with enough text
+                      to wrap in narrow ANSI output.
+                    [36m-[0m Nested material:
+                      [36m-[0m Nested item with [35minline code[0m.
+                      [36m-[0m Nested item with [3m[34memphasis[0m and [1m[1;37mstrong[0m
+                        [1m[1;37mtext[0m.
+
+                    [36m1.[0m Ordered item alpha.
+                    [36m2.[0m Ordered item beta with a descriptive
+                       link to [4m[1;34mthe project[0m
+                       ([90mhttps://pkt.systems/c/libmdf[0m).
+
+                    [1;32m# [0m[1;32mTable And Code[0m
+
+                    [90m┌────────┬────────┬────────────────────┐[0m
+                    [90m│ [0m[1m[36mArea  [0m[90m │ [0m[1m[36mStatus[0m[90m │ [0m[1m[36mNotes             [0m[90m │[0m
+                    [90m├────────┼────────┼────────────────────┤[0m
+                    [90m│ [0mParser[90m │ [0mgreen [90m │ [0mKeeps token order [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mstable.           [90m │[0m
+                    [90m│ [0mANSI  [90m │ [0mgreen [90m │ [0mMargins are       [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mabsolute and style[90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mescapes must stay [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0minside them.      [90m │[0m
+                    [90m│ [0mHTML  [90m │ [0mgreen [90m │ [0mEscapes text and  [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0memits semantic    [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mwrappers.         [90m │[0m
+                    [90m│ [0mDeck  [90m │ [0mwatch [90m │ [0mSlide wrappers    [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mmust not perturb  [90m │[0m
+                    [90m│ [0m      [90m │ [0m      [90m │ [0mbody HTML.        [90m │[0m
+                    [90m└────────┴────────┴────────────────────┘[0m
+
+                    [32mstatic int boundary(const char *s)[0m
+                    [32m{[0m
+                    [32m    return s != NUL…0] == '-' && s[1][0m
+                    [32m == '-' && s[2] == …';[0m
+                    [32m}[0m
+
+                    The literal thematic break marker in the
+                    code fence must not split a deck slide.
+
+                    [1;32m# [0m[1;32mHorizontal Chart[0m
+
+                            [1;32mVerifica[0m[90m │ [0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m [1;32m34[0m[1;32m 41.0%[0m
+                            [1;34mImplemen[0m[90m │ [0m[1;34m█[0m[1;34m█[0m[1;34m█[0m  [1;34m29[0m[1;34m 34.9%[0m
+                            [1;35mDesign[0m  [90m │ [0m[1;35m█[0m    [1;35m12[0m[1;35m 14.5%[0m
+                            [33mRelease[0m [90m │ [0m[33m█[0m    [33m8[0m[33m 9.6%[0m
+
+                    [1;32m# [0m[1;32mVertical Chart[0m
+
+                         18[90m ┤ [0m                   [33m█[0m[33m█[0m[33m█[0m  
+                           [90m │ [0m                   [33m█[0m[33m█[0m[33m█[0m  
+                           [90m │ [0m       [1;34m█[0m[1;34m█[0m[1;34m█[0m         [33m█[0m[33m█[0m[33m█[0m  
+                          9[90m ┤ [0m       [1;34m█[0m[1;34m█[0m[1;34m█[0m   [1;35m█[0m[1;35m█[0m[1;35m█[0m   [33m█[0m[33m█[0m[33m█[0m  
+                           [90m │ [0m [1;32m█[0m[1;32m█[0m[1;32m█[0m   [1;34m█[0m[1;34m█[0m[1;34m█[0m   [1;35m█[0m[1;35m█[0m[1;35m█[0m   [33m█[0m[33m█[0m[33m█[0m  
+                           [90m │ [0m [1;32m█[0m[1;32m█[0m[1;32m█[0m   [1;34m█[0m[1;34m█[0m[1;34m█[0m   [1;35m█[0m[1;35m█[0m[1;35m█[0m   [33m█[0m[33m█[0m[33m█[0m  
+                          0[90m [0m[90m└[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m
+                                1     2     3     4   
+
+                    [1;32m# [0m[1;32mTile Chart[0m
+
+                    [1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[30;42mTests[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[30;44mHTML[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[30;45mDeck[0m[1;35m[45m█[0m[1;35m[45m█[0m[33m[43m█[0m[33m[43m█[0m[30;43mCLI[0m[33m[43m█[0m[33m[43m█[0m[36m[46m█[0m[30;46mLua[0m[36m[46m█[0m
+                    [1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[30;42m26.7%[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[30;44m23.3%[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;35m[45m█[0m[30;45m20.0%[0m[1;35m[45m█[0m[1;35m[45m█[0m[33m[43m█[0m[30;43m17.8%[0m[33m[43m█[0m[30;46m12.2%[0m
+                    
+                      [1;32m■[0m [1;32mTests[0m [1;32m24[0m  [1;34m■[0m [1;34mHTML[0m [1;34m21[0m  [1;35m■[0m [1;35mDeck[0m [1;35m18[0m[1m[36m +2[0m

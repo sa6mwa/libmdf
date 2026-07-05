@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "description": "libmdf direct API benchmark baseline for testdata/deck-corpus/comprehensive.md. bench-check fails when a path exceeds its baseline median by more than the configured allowance.",
+  "input": "testdata/deck-corpus/comprehensive.md",
+  "rounds": 200,
+  "warmups": 20,
+  "allowance": 0.05,
+  "baseline_commit": "1e75838",
+  "results": [
+    {
+      "impl": "C API",
+      "mode": "ansi",
+      "median_s": 0.004343
+    },
+    {
+      "impl": "C API",
+      "mode": "html",
+      "median_s": 0.005696
+    },
+    {
+      "impl": "C API",
+      "mode": "deck",
+      "median_s": 0.005895
+    },
+    {
+      "impl": "Lua API",
+      "mode": "ansi",
+      "median_s": 0.006748
+    },
+    {
+      "impl": "Lua API",
+      "mode": "html",
+      "median_s": 0.007986
+    },
+    {
+      "impl": "Lua API",
+      "mode": "deck",
+      "median_s": 0.007811
+    }
+  ]
+}

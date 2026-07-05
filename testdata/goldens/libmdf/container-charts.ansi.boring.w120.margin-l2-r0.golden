@@ -1,0 +1,90 @@
+  # Container Chart Golden Fixture
+
+  This fixture concentrates on chart rendering inside Markdown containers. It is used as an ANSI, HTML, and deck golden
+  input because container prefixes are a common source of width, margin, and wrapping regressions.
+
+  # Blockquote Charts
+
+  > Before the horizontal chart.
+  >
+  >                       Evidence │ ██████████████████████████████████████████████████ 53 60.2%
+  >                       Habit    │ ██████████                                         11 12.5%
+  >                       Review   │ ███████████████████████                            24 27.3%
+
+  > Before the vertical chart.
+  >
+  >                       9 ┤                                                         ██████      
+  >                         │                                                         ██████      
+  >                         │                                                         ██████      
+  >                         │                                                         ██████      
+  >                         │                       ██████                            ██████      
+  >                         │                       ██████                            ██████      
+  >                         │                       ██████                            ██████      
+  >                         │                       ██████                            ██████      
+  >                    4.50 ┤                       ██████                            ██████      
+  >                         │      ██████           ██████                            ██████      
+  >                         │      ██████           ██████                            ██████      
+  >                         │      ██████           ██████           ██████           ██████      
+  >                         │      ██████           ██████           ██████           ██████      
+  >                         │      ██████           ██████           ██████           ██████      
+  >                         │      ██████           ██████           ██████           ██████      
+  >                         │      ██████           ██████           ██████           ██████      
+  >                       0 └─────────────────────────────────────────────────────────────────────
+  >                                  n                e                d                u         
+
+  # List Charts
+
+  - Horizontal chart in a list:
+
+                          Build │ █████████████████████████████████████████████████████ 40 53.3%
+                          Test  │ █████████████████████████████████                     25 33.3%
+                          Ship  │ █████████████                                         10 13.3%
+
+  - Tile chart in a list:
+
+                         ██████Parser██████████████████Renderer████████████████CLI█████████Lua███
+                         ███████26.0%███████████████████42.5%█████████████████19.2%███████12.3%██
+    
+                                      ■ Parser 19  ■ Renderer 31  ■ CLI 14  ■ Lua 9
+
+  # Adjacent And Lazy Containers
+
+  > text immediately before chart
+  >                       A │ █████████████████████████████                              1 33.3%
+  >                       B │ ██████████████████████████████████████████████████████████ 2 66.7%
+
+  - list text immediately before chart
+                         2 ┤                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                           │                                                 ██████              
+                         1 ┤               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                           │               ██████                            ██████              
+                         0 └─────────────────────────────────────────────────────────────────────
+                                             A                                 B                 
+
+
+  The paragraphs around these charts should remain separate and should not absorb container prefixes or chart rows.
+
+  # Mixed Table And Links
+
+  ┌────────────────┬────────────┬─────────────────────┐
+  │ Container      │ Chart      │ Risk                │
+  ├────────────────┼────────────┼─────────────────────┤
+  │ blockquote     │ horizontal │ prefix accumulation │
+  │ unordered list │ tile       │ indentation drift   │
+  │ lazy quote     │ bar        │ boundary detection  │
+  └────────────────┴────────────┴─────────────────────┘
+
+  Container link (https://example.com/container-chart) and bare https://example.com/container-chart/autolink should both
+  remain safe in HTML and deck output.

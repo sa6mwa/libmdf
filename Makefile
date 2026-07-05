@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
@@ -10,6 +10,11 @@ help:
 	@printf '%s\n' '  make build                  Build static cmdf for local install'
 	@printf '%s\n' '  make build-debug            Configure and build debug preset'
 	@printf '%s\n' '  make build-release          Configure and build host release preset'
+	@printf '%s\n' '  make benchmark              Benchmark C libmdf and Lua binding ANSI/HTML/deck paths'
+	@printf '%s\n' '  make benchmark-cmdf         Benchmark C cmdf and cmdf.lua UX paths'
+	@printf '%s\n' '  make bench-check            Fail if C/Lua ANSI, HTML, or deck medians regress >5%'
+	@printf '%s\n' '  make golden-update          Regenerate libmdf API output goldens'
+	@printf '%s\n' '  make golden-test            Verify libmdf API output goldens'
 	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
 	@printf '%s\n' '  make test                   Run debug tests'
 	@printf '%s\n' '  make test-all               Run bounded local gate: tests, ASan, fuzz smoke, quick parity'
@@ -58,6 +63,27 @@ build-debug:
 
 build-release:
 	@scripts/build.sh x86_64-linux-gnu-release
+
+benchmark:
+	@scripts/benchmark_libmdf.py $(BENCH_ARGS)
+
+benchmark-cmdf:
+	@scripts/benchmark_cmdf.py $(BENCH_ARGS)
+
+bench-check:
+	@scripts/check_benchmark_libmdf.py $(BENCH_CHECK_ARGS)
+
+golden-update:
+	@scripts/update_libmdf_goldens.sh
+
+golden-test: build-debug
+	@tests/test_libmdf_goldens.sh build/debug/golden_render
+
+cmdf-golden-update:
+	@scripts/update_cmdf_goldens.sh
+
+cmdf-golden-test: build-debug
+	@tests/test_cmdf_goldens.sh build/debug/cmdf
 
 install:
 	@scripts/install_cmdf.sh

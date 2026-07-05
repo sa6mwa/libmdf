@@ -2,6 +2,11 @@ local core = require("libmdf.core")
 local mdf = {}
 
 mdf.token = core.token
+mdf.status = core.status
+mdf.version = core.version
+mdf.version_major = core.version_major
+mdf.version_minor = core.version_minor
+mdf.version_patch = core.version_patch
 
 function mdf.new(opts)
   return core.new(opts or {})
@@ -25,6 +30,10 @@ end
 
 function mdf.theme_exists(name)
   return core.theme_exists(name)
+end
+
+function mdf.status_string(status)
+  return core.status_string(status)
 end
 
 function mdf.detect_osc8_support()

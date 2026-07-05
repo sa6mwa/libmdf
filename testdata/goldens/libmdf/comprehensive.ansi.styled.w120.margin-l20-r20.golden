@@ -1,0 +1,285 @@
+                    [1;32m# [0m[1;32mlibmdf Deck Mode[0m
+
+                    [1;32m# [0m[1;32mCentered Front Page With More Content[0m
+
+                    [1;34m## [0m[1;34mSubtitle Block[0m
+
+                    This slide verifies that the first slide can include more than a single heading
+                    while still centering the content block.
+
+                    [1;32m# [0m[1;32mStable Heading Scale[0m
+
+                    [1;34m## [0m[1;34mSecond-Level Heading[0m
+
+                    [1;35m### [0m[1;35mThird-Level Heading[0m
+
+                    [33m#### [0m[33mFourth-Level Heading[0m
+
+                    [36m##### [0m[36mFifth-Level Heading[0m
+
+                    [37m###### [0m[37mSixth-Level Heading[0m
+
+                    ATX headings should remain stable from slide to slide while body content
+                    participates in autofit.
+
+                    [1;32m# [0m[1;32mHeader And Body Heading Paths[0m
+
+                    [1;32m# [0m[1;32mBody First-Level Heading[0m
+
+                    [1;34m## [0m[1;34mBody Second-Level Heading[0m
+
+                    [1;35m### [0m[1;35mBody Third-Level Heading[0m
+
+                    [33m#### [0m[33mBody Fourth-Level Heading[0m
+
+                    [36m##### [0m[36mBody Fifth-Level Heading[0m
+
+                    This paragraph verifies that headings in the slide body use the body-heading
+                    scale instead of the promoted slide-header scale. The smallest body heading on
+                    this slide should still read as a heading and must not become smaller than this
+                    paragraph text.
+
+                    [1;32m# [0m[1;32mSparse Body Autofit[0m
+
+                    One short paragraph should become comfortably large without looking like a
+                    marketing splash page.
+
+                    [1;32m# [0m[1;32mDense Body Autofit[0m
+
+                    This slide intentionally contains enough body content to force a smaller body
+                    font. The renderer should preserve readable spacing, keep headings predictable,
+                    and avoid clipping content in a typical fullscreen browser viewport.
+
+                    Autofit should treat this as normal slide content rather than a failure mode. If
+                    a slide is too dense even at the minimum font size, the fallback should be
+                    visually obvious and still allow the presenter to reach all content.
+
+                    The goal is to test the everyday case where a technical presenter adds a little
+                    too much detail but still expects the deck to adapt gracefully on desktop and
+                    laptop screens.
+
+                    [1;32m# [0m[1;32mInline Markdown[0m
+
+                    Plain text can include [3m[34memphasis[0m, [1m[1;37mstrong text[0m, [1m[3m[1;35mcombined emphasis[0m, [35minline code[0m,
+                    [4m[1;34mlinks[0m ([90mhttps://example.com/deck[0m), and autolinks like https:
+                    //example.com/autolink.
+
+                    [1;32m# [0m[1;32mLists[0m
+
+                    [36m-[0m Unordered item with a short label.
+                    [36m-[0m Unordered item with [3m[34minline emphasis[0m, [1m[1;37mstrong text[0m, and [35minline code[0m.
+                    [36m-[0m Unordered item with nested structure:
+                      [36m-[0m Nested unordered item.
+                      [36m-[0m Nested item with [4m[1;34ma link[0m ([90mhttps://example.com/nested[0m).
+
+                    [36m1.[0m Ordered item one.
+                    [36m2.[0m Ordered item two with a longer sentence that should wrap cleanly.
+                    [36m3.[0m Ordered item three.
+
+                    [1;32m# [0m[1;32mTask Lists[0m
+
+                    [36m-[0m [ ] Unchecked task item.
+                    [36m-[0m [x] Checked task item.
+                    [36m-[0m [ ] Task item with enough text to wrap across more than one visual line when
+                          the browser viewport is narrow.
+
+                    Task list rendering is a future Markdown extension in some contexts, so this
+                    slide also documents the desired visual target if task markers are supported.
+
+                    [1;32m# [0m[1;32mBlock Quotes[0m
+
+                    [90m>[0m A short quote should read as a distinct block.
+
+                    [90m>[0m A longer quote should wrap cleanly and preserve the quote treatment across
+                    [90m>[0m lines. It should not collide with the slide number indicator.
+                    [90m>[0m
+                    [90m>[0m [36m-[0m Quoted list item.
+                    [90m>[0m [36m-[0m Another quoted list item with [1m[1;37mstrong text[0m.
+
+                    [1;32m# [0m[1;32mCode[0m
+
+                    [32mint main(void)[0m
+                    [32m{[0m
+                    [32m    const char *boundary = "---";[0m
+                    [32m    return boundary[0] == '-' ? 0 : 1;[0m
+                    [32m}[0m
+
+                    The fenced [35m---[0m string above must not split the deck.
+
+                    [1;32m# [0m[1;32mPreformatted Text[0m
+
+                    [32mmake test[0m
+                    [32mcmdf --deck --slide-numbers -x fade -o deck.html testdata/deck-corpus/comprehen…[0m
+                    [32mopen deck.html[0m
+
+                    Indented code should remain readable and should not participate in Markdown
+                    slide boundary parsing.
+
+                    [1;32m# [0m[1;32mTables[0m
+
+                    [90m┌─────────────────────┬─────────┬────────┬─────────────────────────────────────┐[0m
+                    [90m│ [0m[1m[36mCapability         [0m[90m │ [0m[1m[36mDesktop[0m[90m │ [0m[1m[36mMobile[0m[90m │ [0m[1m[36mNotes                              [0m[90m │[0m
+                    [90m├─────────────────────┼─────────┼────────┼─────────────────────────────────────┤[0m
+                    [90m│ [0mKeyboard navigation[90m │ [0m  yes  [90m │ [0m yes  [90m │ [0mexternal keyboards should work     [90m │[0m
+                    [90m│ [0mTouch navigation   [90m │ [0m  yes  [90m │ [0m yes  [90m │ [0mhorizontal and vertical swipes are [90m │[0m
+                    [90m│ [0m                   [90m │ [0m       [90m │ [0m      [90m │ [0msupported                          [90m │[0m
+                    [90m│ [0mAutofit            [90m │ [0m  yes  [90m │ [0m yes  [90m │ [0mbody content adapts per slide      [90m │[0m
+                    [90m│ [0mCharts             [90m │ [0m  yes  [90m │ [0m yes  [90m │ [0mchart boxes stay inspectable       [90m │[0m
+                    [90m└─────────────────────┴─────────┴────────┴─────────────────────────────────────┘[0m
+
+                    [1;32m# [0m[1;32mWide Table Pressure[0m
+
+                    [90m┌────────┬───────┬──────────────────────┬──────────────────────────────────────┐[0m
+                    [90m│ [0m[1m[36mColumn[0m[90m │ [0m[1m[36mShort[0m[90m │ [0m[1m[36mMedium length header[0m[90m │ [0m[1m[36mLong content pressure               [0m[90m │[0m
+                    [90m├────────┼───────┼──────────────────────┼──────────────────────────────────────┤[0m
+                    [90m│ [0malpha [90m │ [0m    1[90m │ [0msmall               [90m │ [0mlong text that should wrap inside   [90m │[0m
+                    [90m│ [0m      [90m │ [0m     [90m │ [0m                    [90m │ [0mthe table cell without forcing the  [90m │[0m
+                    [90m│ [0m      [90m │ [0m     [90m │ [0m                    [90m │ [0mwhole slide out of the viewport     [90m │[0m
+                    [90m│ [0mbeta  [90m │ [0m   22[90m │ [0mmedium              [90m │ [0manother deliberately long table     [90m │[0m
+                    [90m│ [0m      [90m │ [0m     [90m │ [0m                    [90m │ [0mvalue with [35minline code[0m and [1m[1;37mstrong[0m   [90m │[0m
+                    [90m│ [0m      [90m │ [0m     [90m │ [0m                    [90m │ [0m[1m[1;37mtext[0m                                [90m │[0m
+                    [90m│ [0mgamma [90m │ [0m  333[90m │ [0mlarge               [90m │ [0m[4m[1;34ma link with a descriptive label[0m     [90m │[0m
+                    [90m│ [0m      [90m │ [0m     [90m │ [0m                    [90m │ [0m([90mhttps://example.com/table/link[0m)    [90m │[0m
+                    [90m└────────┴───────┴──────────────────────┴──────────────────────────────────────┘[0m
+
+                    [1;32m# [0m[1;32mHorizontal Chart[0m
+
+                                    [1;32mImplementation[0m[90m │ [0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m [1;32m42[0m[1;32m 42.0%[0m
+                                    [1;34mVerification[0m  [90m │ [0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m       [1;34m31[0m[1;34m 31.0%[0m
+                                    [1;35mDesign[0m        [90m │ [0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m              [1;35m18[0m[1;35m 18.0%[0m
+                                    [33mRelease[0m       [90m │ [0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m                  [33m9[0m[33m 9.0%[0m
+
+                    [1;32m# [0m[1;32mVertical Chart[0m
+
+                                   27[90m ┤ [0m                                       [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m                                       [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m                                       [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m                                       [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m               [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m                  [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m               [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m                  [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                13.50[90m ┤ [0m               [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m   [1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m      [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m   [1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m      [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m   [1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m      [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m   [1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m      [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                     [90m │ [0m   [1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m[1;32m█[0m      [1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m[1;34m█[0m      [1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m      [33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m[33m█[0m   
+                                    0[90m [0m[90m└[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m[90m─[0m
+                                             1           2           3           4      
+
+                    [1;32m# [0m[1;32mTile Chart[0m
+
+                        [1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[30;42mRenderer[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[30;44mTests[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[30;45mParser[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[30;43mCLI[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m
+                        [1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[30;42m34.0%[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;32m[42m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[30;44m27.0%[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;34m[44m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[30;45m21.0%[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[1;35m[45m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[30;43m18.0%[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m[33m[43m█[0m
+                    
+                                    [1;32m■[0m [1;32mRenderer[0m [1;32m34[0m  [1;34m■[0m [1;34mTests[0m [1;34m27[0m  [1;35m■[0m [1;35mParser[0m [1;35m21[0m  [33m■[0m [33mCLI[0m [33m18[0m
+
+                    [1;32m# [0m[1;32mChart In Quote[0m
+
+                    [90m>[0m               [1;35mExplicit[0m[90m │ [0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m        [1;35m40[0m[1;35m 40.0%[0m
+                    [90m>[0m               [1;35mMagic[0m   [90m │ [0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m                         [1;35m7[0m[1;35m 7.0%[0m
+                    [90m>[0m               [1;35mEvidence[0m[90m │ [0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m[1;35m█[0m [1;35m53[0m[1;35m 53.0%[0m
+
+                    Quoted charts should inherit the surrounding container treatment without
+                    breaking chart layout.
+
+                    [1;32m# [0m[1;32mMixed Technical Slide[0m
+
+                    [1;34m## [0m[1;34mRelease Checklist[0m
+
+                    [36m1.[0m API options initialized by [35mmdf_options_init[0m.
+                    [36m2.[0m CLI validates [35m--transition[0m before rendering.
+                    [36m3.[0m [35mMDF_FORMAT_HTML[0m output remains unchanged.
+                    [36m4.[0m [35mMDF_FORMAT_HTML_DECK[0m emits deck shell, CSS, and JavaScript.
+
+                    [90m>[0m The deck renderer may materialize one slide at a time, but ordinary HTML mode
+                    [90m>[0m should not inherit deck-only behavior.
+
+                    [1;32m# [0m[1;32mThematic Break Edge Cases[0m
+
+                    The next fenced block contains a line that looks like a slide separator:
+
+                    [32mParagraph before a thematic break.[0m
+                    [32m---[0m
+                    [32mParagraph after a thematic break inside an example.[0m
+
+                    The deck must keep this entire fenced block on one slide.
+
+                    [1;32m# [0m[1;32mQuoted Thematic Break[0m
+
+                    [90m>[0m This quote contains a thematic-looking line:
+                    [90m>[0m
+                    [90m>[0m ---
+                    [90m>[0m
+                    [90m>[0m It is quoted content and should remain on the current slide.
+
+                    The actual slide separator is the unquoted thematic break after this slide.
+
+                    [1;32m# [0m[1;32mList Thematic Break[0m
+
+                    [36m-[0m List item before an indented thematic-looking line.
+
+                      ---
+
+                    [36m-[0m List item after the indented line.
+
+                    The indented line belongs to the list context and should not split slides unless
+                    the Markdown parser classifies it as a block-level thematic break outside the
+                    container.
+
+                    [1;32m# [0m[1;32mRaw HTML[0m
+
+                    <p data-deck-fixture="raw-html">Raw inline HTML is escaped and rendered as text
+                    according to existing HTML renderer rules.</p>
+
+                    <details> <summary>Disclosure content</summary> This is intentionally shown as
+                    escaped text rather than a live disclosure. </details>
+
+                    [1;32m# [0m[1;32mLinks And Interaction[0m
+
+                    [4m[1;34mPrimary documentation link[0m ([90mhttps://example.com/docs[0m)
+
+                    [4m[1;34mA longer link label that wraps across lines in narrow viewports[0m
+                    ([90mhttps://example.com/docs/deck/mode/long/link[0m)
+
+                    Link activation should not accidentally advance the deck. Focus should remain
+                    usable on the current slide only.
+
+                    [1;32m# [0m[1;32mImage Syntax[0m
+
+                    ![4m[1;34mTiny transparent pixel[0m ([90mdata:image/gif;base64,R0lGODlhAQABAAAAACw=[0m)
+
+                    This exercises Markdown image output without requiring network access. The image
+                    is intentionally tiny so it does not dominate the slide.
+
+                    [1;32m# [0m[1;32mLong Word Pressure[0m
+
+                    The renderer should avoid layout explosions from a long token:
+
+                    [35msupercalifragilisticexpialidocious-supercalifragilisticexpialidocious-supercali…[0m
+
+                    Normal prose after the long token should remain visible.
+
+                    [1;32m# [0m[1;32mEscapes And Entity Text[0m
+
+                    Escaped punctuation should remain readable as literal text: [35m*not emphasis*[0m,
+                    [35m[not a link][0m, and [35m# not a heading[0m.
+
+                    Entity-looking text should also remain readable: [35mAT&amp;T[0m, [35m&lt;tag&gt;[0m, and
+                    [35m10&nbsp;000[0m.
+
+                    [1;34m## [0m[1;34mSecond-Level Slide Header[0m
+
+                    This slide starts with a [35m##[0m ATX heading instead of [35m#[0m. The deck renderer should
+                    still treat it as the slide header and keep the body content below it.
+
+                    [1;35m### [0m[1;35mThird-Level Slide Header[0m
+
+                    This slide starts with a [35m###[0m ATX heading. It verifies that lower-level first
+                    headings can act as slide headers without inheriting body centering behavior.
+
+                    [1;32m# [0m[1;32mFinal Slide[0m
+
+                    [1;34m## [0m[1;34mEnd State[0m
+
+                    This slide verifies [35mEnd[0m, [35mG[0m, URL hash restoration, and slide number rendering
+                    near the end of the deck.

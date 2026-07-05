@@ -9099,6 +9099,12 @@ mdf_status html_renderer_finish(mdf_renderer *self, mdf_impl *impl, mdf_sink *si
     if (st != MDF_OK) {
         return st;
     }
+    if (impl->html_fragment) {
+        if (footer_needs_newline && mdf_write_cstr(sink, "\n") != 0) {
+            return mdf_renderer_fail_sink_write(self);
+        }
+        return MDF_OK;
+    }
     if (mdf_write_cstr(sink,
                        footer_needs_newline ? "\n</main>\n</body>\n</html>\n"
                                             : "</main>\n</body>\n</html>\n") != 0) {

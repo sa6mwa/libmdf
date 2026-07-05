@@ -1,0 +1,140 @@
+# Mixed Layout
+  Golden Fixture
+
+This fixture is
+intentionally
+compact but broad.
+It exercises
+headings, paragraph
+wrapping, inline
+emphasis, strong
+text, inline code,
+links, autolinks
+like https:
+//example.com/mixed,
+tables, charts,
+quotes, lists, code,
+and deck slide
+boundaries.
+
+# Inline And
+  Containers
+
+> Quoted prose
+> should preserve
+> quote styling
+> while wrapping
+> under configured
+> widths and
+> margins.
+>
+> - Quoted list item
+>   with strong
+>   text.
+> - Quoted list item
+>   with a link
+>   
+>   (https://example
+>   .com/quoted-list
+>   ).
+
+- Top-level list
+  item with enough
+  text to wrap in
+  narrow ANSI
+  output.
+- Nested material:
+  - Nested item with
+    inline code.
+  - Nested item with
+    emphasis and
+    strong text.
+
+1. Ordered item
+   alpha.
+2. Ordered item beta
+   with a
+   descriptive link
+   to the project
+   
+   (https://pkt.syst
+   ems/c/libmdf).
+
+# Table And Code
+
+┌───┬───┬──────────┐
+│ A │ S │ Notes    │
+│ r │ t │          │
+│ e │ a │          │
+│ a │ t │          │
+│   │ u │          │
+│   │ s │          │
+├───┼───┼──────────┤
+│ P │ g │ Keeps    │
+│ a │ r │ token    │
+│ r │ e │ order    │
+│ s │ e │ stable.  │
+│ e │ n │          │
+│ r │   │          │
+│ A │ g │ Margins  │
+│ N │ r │ are      │
+│ S │ e │ absolute │
+│ I │ e │ and      │
+│   │ n │ style    │
+│   │   │ escapes  │
+│   │   │ must     │
+│   │   │ stay     │
+│   │   │ inside   │
+│   │   │ them.    │
+│ H │ g │ Escapes  │
+│ T │ r │ text and │
+│ M │ e │ emits    │
+│ L │ e │ semantic │
+│   │ n │ wrappers │
+│   │   │ .        │
+│ D │ w │ Slide    │
+│ e │ a │ wrappers │
+│ c │ t │ must not │
+│ k │ c │ perturb  │
+│   │ h │ body     │
+│   │   │ HTML.    │
+└───┴───┴──────────┘
+
+static int boundary(
+const char *s)
+{
+    return s != NUL…
+0] == '-' && s[1]
+ == '-' && s[2]
+ == '-';
+}
+
+The literal thematic
+break marker in the
+code fence must not
+split a deck slide.
+
+# Horizontal Chart
+
+   V │ █ 34 41.0%
+   I │ █ 29 34.9%
+   D │ █ 12 14.5%
+   R │ █ 8 9.6%
+
+# Vertical Chart
+
+ 18 ┤          ██ 
+    │          ██ 
+    │    ██    ██ 
+  9 ┤    ██ ██ ██ 
+    │ ██ ██ ██ ██ 
+    │ ██ ██ ██ ██ 
+  0 └─────────────
+      1  2  3  4  
+
+# Tile Chart
+
+TestsHTML█DeckCLI███
+26.7%23.3%██████████
+
+   ■ Tests 24 +4

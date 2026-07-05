@@ -33,7 +33,13 @@ static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
 
 static const char *lua_mdf_format_name(mdf_format format)
 {
-    return format == MDF_FORMAT_HTML ? "html" : "ansi";
+    if (format == MDF_FORMAT_HTML) {
+        return "html";
+    }
+    if (format == MDF_FORMAT_HTML_DECK) {
+        return "deck";
+    }
+    return "ansi";
 }
 
 static int lua_mdf_trace_emit(void *userdata, mdf_format format, const char *src, size_t len)
@@ -71,13 +77,40 @@ static mdf_format lua_mdf_format_from_options(lua_State *L, int index)
             lua_pop(L, 1);
             return MDF_FORMAT_HTML;
         }
+        if (strcmp(format, "deck") == 0 || strcmp(format, "html_deck") == 0) {
+            lua_pop(L, 1);
+            return MDF_FORMAT_HTML_DECK;
+        }
         return (mdf_format)luaL_error(L, "unknown format: %s", format);
     }
     lua_pop(L, 1);
+    if (lua_mdf_get_boolean_field(L, index, "deck")) {
+        return MDF_FORMAT_HTML_DECK;
+    }
     if (lua_mdf_get_boolean_field(L, index, "html")) {
         return MDF_FORMAT_HTML;
     }
     return MDF_FORMAT_ANSI;
+}
+
+static mdf_deck_transition lua_mdf_deck_transition(lua_State *L, int index)
+{
+    const char *s;
+
+    if (lua_isnoneornil(L, index)) {
+        return MDF_DECK_TRANSITION_FADE;
+    }
+    s = luaL_checkstring(L, index);
+    if (strcmp(s, "fade") == 0) {
+        return MDF_DECK_TRANSITION_FADE;
+    }
+    if (strcmp(s, "cross") == 0) {
+        return MDF_DECK_TRANSITION_CROSS;
+    }
+    if (strcmp(s, "hard") == 0) {
+        return MDF_DECK_TRANSITION_HARD;
+    }
+    return (mdf_deck_transition)luaL_error(L, "unknown deck transition: %s", s);
 }
 
 static int lua_mdf_font_format(lua_State *L, int index)
@@ -198,6 +231,15 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
         opts->html_content_width_ch = luaL_checknumber(L, -1);
     }
     lua_pop(L, 1);
+    lua_getfield(L, index, "deck_transition");
+    opts->deck_transition = lua_mdf_deck_transition(L, -1);
+    lua_pop(L, 1);
+    if (lua_mdf_get_boolean_field(L, index, "slide_numbers")) {
+        opts->slide_numbers = 1;
+    }
+    if (lua_mdf_get_boolean_field(L, index, "deck_center_front_text")) {
+        opts->deck_center_front_text = 1;
+    }
     lua_getfield(L, index, "table_buffer_mode");
     opts->table_buffer_mode = lua_mdf_table_buffer_mode(L, -1);
     lua_pop(L, 1);
@@ -319,6 +361,7 @@ static int lua_mdf_token_type(lua_State *L, int index)
     if (strcmp(s, "code_text") == 0) return MDF_TOKEN_CODE_TEXT;
     if (strcmp(s, "thematic_break") == 0) return MDF_TOKEN_THEMATIC_BREAK;
     if (strcmp(s, "document_end") == 0) return MDF_TOKEN_DOCUMENT_END;
+    if (strcmp(s, "chart_block") == 0) return MDF_TOKEN_CHART_BLOCK;
     return luaL_error(L, "unknown token type: %s", s);
 }
 
@@ -390,7 +433,7 @@ static int lua_mdf_render(lua_State *L)
         }
         return luaL_error(L, "mdf_create: %s", mdf_status_string(st));
     }
-    if (format == MDF_FORMAT_HTML && html_title != NULL) {
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(inst, html_title);
         if (st != MDF_OK) {
             inst->destroy(inst);
@@ -460,7 +503,7 @@ static int lua_mdf_render_stream(lua_State *L)
     sink.write = lua_mdf_sink_write;
     inst = NULL;
     st = mdf_create(format, &opts, &inst);
-    if (st == MDF_OK && format == MDF_FORMAT_HTML && html_title != NULL) {
+    if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(inst, html_title);
     }
     if (st == MDF_OK) {
@@ -505,7 +548,7 @@ static int lua_mdf_new(lua_State *L)
         handle->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     }
     st = mdf_create(format, &opts, &handle->mdf);
-    if (st == MDF_OK && format == MDF_FORMAT_HTML && html_title != NULL) {
+    if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(handle->mdf, html_title);
     }
     if (st != MDF_OK) {
@@ -574,6 +617,24 @@ static int lua_mdf_handle_render_stream(lua_State *L)
     luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_render_stream: %s: %s",
+                          mdf_status_string(st),
+                          handle->mdf->error(handle->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_handle_set_html_title(lua_State *L)
+{
+    lua_mdf_handle *handle;
+    const char *title;
+    mdf_status st;
+
+    handle = lua_mdf_check_handle(L, 1);
+    title = lua_isnoneornil(L, 2) ? NULL : luaL_checkstring(L, 2);
+    st = mdf_set_html_title(handle->mdf, title);
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_set_html_title: %s: %s",
                           mdf_status_string(st),
                           handle->mdf->error(handle->mdf));
     }
@@ -688,6 +749,12 @@ static int lua_mdf_theme_exists(lua_State *L)
     return 1;
 }
 
+static int lua_mdf_status_string(lua_State *L)
+{
+    lua_pushstring(L, mdf_status_string((mdf_status)luaL_checkinteger(L, 1)));
+    return 1;
+}
+
 static int lua_mdf_terminal_width(lua_State *L)
 {
     int fd;
@@ -706,6 +773,7 @@ static const luaL_Reg lua_mdf_funcs[] = {
     {"render_stream", lua_mdf_render_stream},
     {"theme_names", lua_mdf_theme_names},
     {"theme_exists", lua_mdf_theme_exists},
+    {"status_string", lua_mdf_status_string},
     {"detect_osc8_support", lua_mdf_detect_osc8_support},
     {"terminal_width", lua_mdf_terminal_width},
     {NULL, NULL}
@@ -714,6 +782,7 @@ static const luaL_Reg lua_mdf_funcs[] = {
 static const luaL_Reg lua_mdf_methods[] = {
     {"render", lua_mdf_handle_render},
     {"render_stream", lua_mdf_handle_render_stream},
+    {"set_html_title", lua_mdf_handle_set_html_title},
     {"write_token", lua_mdf_handle_write_token},
     {"finish", lua_mdf_handle_finish},
     {"error", lua_mdf_handle_error},
@@ -743,7 +812,31 @@ static void lua_mdf_set_token_constants(lua_State *L)
     lua_pushinteger(L, MDF_TOKEN_CODE_TEXT); lua_setfield(L, -2, "CODE_TEXT");
     lua_pushinteger(L, MDF_TOKEN_THEMATIC_BREAK); lua_setfield(L, -2, "THEMATIC_BREAK");
     lua_pushinteger(L, MDF_TOKEN_DOCUMENT_END); lua_setfield(L, -2, "DOCUMENT_END");
+    lua_pushinteger(L, MDF_TOKEN_CHART_BLOCK); lua_setfield(L, -2, "CHART_BLOCK");
     lua_setfield(L, -2, "token");
+}
+
+static void lua_mdf_set_status_constants(lua_State *L)
+{
+    lua_newtable(L);
+    lua_pushinteger(L, MDF_OK); lua_setfield(L, -2, "OK");
+    lua_pushinteger(L, MDF_ERROR_INVALID); lua_setfield(L, -2, "INVALID");
+    lua_pushinteger(L, MDF_ERROR_NOMEM); lua_setfield(L, -2, "NOMEM");
+    lua_pushinteger(L, MDF_ERROR_IO); lua_setfield(L, -2, "IO");
+    lua_pushinteger(L, MDF_ERROR_PARSE); lua_setfield(L, -2, "PARSE");
+    lua_setfield(L, -2, "status");
+}
+
+static void lua_mdf_set_version_constants(lua_State *L)
+{
+    lua_pushstring(L, LIBMDF_VERSION);
+    lua_setfield(L, -2, "version");
+    lua_pushinteger(L, LIBMDF_VERSION_MAJOR);
+    lua_setfield(L, -2, "version_major");
+    lua_pushinteger(L, LIBMDF_VERSION_MINOR);
+    lua_setfield(L, -2, "version_minor");
+    lua_pushinteger(L, LIBMDF_VERSION_PATCH);
+    lua_setfield(L, -2, "version_patch");
 }
 
 int luaopen_libmdf_core(lua_State *L)
@@ -756,5 +849,7 @@ int luaopen_libmdf_core(lua_State *L)
 
     luaL_newlib(L, lua_mdf_funcs);
     lua_mdf_set_token_constants(L);
+    lua_mdf_set_status_constants(L);
+    lua_mdf_set_version_constants(L);
     return 1;
 }

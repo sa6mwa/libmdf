@@ -1,0 +1,124 @@
+# Container Chart
+  Golden Fixture
+
+This fixture
+concentrates on
+chart rendering
+inside Markdown
+containers. It is
+used as an ANSI,
+HTML, and deck
+golden input because
+container prefixes
+are a common source
+of width, margin,
+and wrapping
+regressions.
+
+# Blockquote Charts
+
+> Before the
+> horizontal chart.
+>
+>  E │ █ 53 60.2%
+>  H │ █ 11 12.5%
+>  R │ █ 24 27.3%
+
+> Before the
+> vertical chart.
+>
+>    9 ┤          ██ 
+>      │    ██    ██ 
+>      │    ██    ██ 
+> 4.50 ┤ ██ ██    ██ 
+>      │ ██ ██ ██ ██ 
+>      │ ██ ██ ██ ██ 
+>    0 └─────────────
+>        n  e  d  u  
+
+# List Charts
+
+- Horizontal chart
+  in a list:
+
+   B │ █ 40 53.3%
+   T │ █ 25 33.3%
+   S │ █ 10 13.3%
+
+- Tile chart in a
+  list:
+
+  █████Renderer█CLI███
+  26.0%██42.5%████████
+  
+   ■ Parser 19 +3
+
+# Adjacent And Lazy
+  Containers
+
+> text immediately
+> before chart
+>  A │ █ 1 33.3%
+>  B │ █ 2 66.7%
+
+- list text
+  immediately before
+  chart
+   2 ┤       ███ 
+     │       ███ 
+     │       ███ 
+   1 ┤  ███  ███ 
+     │  ███  ███ 
+     │  ███  ███ 
+   0 └───────────
+         A    B  
+
+
+The paragraphs
+around these charts
+should remain
+separate and should
+not absorb container
+prefixes or chart
+rows.
+
+# Mixed Table And
+  Links
+
+┌─────┬───┬────────┐
+│ Con │ C │ Risk   │
+│ tai │ h │        │
+│ ner │ a │        │
+│     │ r │        │
+│     │ t │        │
+├─────┼───┼────────┤
+│ blo │ h │ prefix │
+│ ckq │ o │ accumu │
+│ uot │ r │ lation │
+│ e   │ i │        │
+│     │ z │        │
+│     │ o │        │
+│     │ n │        │
+│     │ t │        │
+│     │ a │        │
+│     │ l │        │
+│ uno │ t │ indent │
+│ rde │ i │ ation  │
+│ red │ l │ drift  │
+│ lis │ e │        │
+│ t   │   │        │
+│ laz │ b │ bounda │
+│ y   │ a │ ry     │
+│ quo │ r │ detect │
+│ te  │   │ ion    │
+└─────┴───┴────────┘
+
+Container link
+(https://example.com
+/container-chart)
+and bare https:
+//example.com/
+container-chart/
+autolink should both
+remain safe in HTML
+and deck output.

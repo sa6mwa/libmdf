@@ -1,0 +1,147 @@
+  # Container Chart
+    Golden Fixture
+
+  This fixture
+  concentrates on
+  chart rendering
+  inside Markdown
+  containers. It is
+  used as an ANSI,
+  HTML, and deck
+  golden input
+  because container
+  prefixes are a
+  common source of
+  width, margin, and
+  wrapping
+  regressions.
+
+  # Blockquote
+    Charts
+
+  > Before the
+  > horizontal
+  > chart.
+  >
+  > E │ █ 53 60.2%
+  > H │ █ 11 12.5%
+  > R │ █ 24 27.3%
+
+  > Before the
+  > vertical chart.
+  >
+  >    9 ┤          ██ 
+  >      │    ██    ██ 
+  >      │    ██    ██ 
+  > 4.50 ┤ ██ ██    ██ 
+  >      │ ██ ██ ██ ██ 
+  >      │ ██ ██ ██ ██ 
+  >    0 └─────────────
+  >        n  e  d  u  
+
+  # List Charts
+
+  - Horizontal chart
+    in a list:
+
+    B │ █ 40 53.3%
+    T │ █ 25 33.3%
+    S │ █ 10 13.3%
+
+  - Tile chart in a
+    list:
+
+    ████████████CLI███
+    26.0%█42.5%███████
+    
+    ■ Parser 19 +3
+
+  # Adjacent And
+    Lazy Containers
+
+  > text immediately
+  > before chart
+  > A │ █ 1 33.3%
+  > B │ █ 2 66.7%
+
+  - list text
+    immediately
+    before chart
+    2 ┤       ███ 
+      │       ███ 
+      │       ███ 
+    1 ┤  ███  ███ 
+      │  ███  ███ 
+      │  ███  ███ 
+    0 └───────────
+          A    B  
+
+
+  The paragraphs
+  around these
+  charts should
+  remain separate
+  and should not
+  absorb container
+  prefixes or chart
+  rows.
+
+  # Mixed Table And
+    Links
+
+  ┌───┬───┬────────┐
+  │ C │ C │ Risk   │
+  │ o │ h │        │
+  │ n │ a │        │
+  │ t │ r │        │
+  │ a │ t │        │
+  │ i │   │        │
+  │ n │   │        │
+  │ e │   │        │
+  │ r │   │        │
+  ├───┼───┼────────┤
+  │ b │ h │ prefix │
+  │ l │ o │ accumu │
+  │ o │ r │ lation │
+  │ c │ i │        │
+  │ k │ z │        │
+  │ q │ o │        │
+  │ u │ n │        │
+  │ o │ t │        │
+  │ t │ a │        │
+  │ e │ l │        │
+  │ u │ t │ indent │
+  │ n │ i │ ation  │
+  │ o │ l │ drift  │
+  │ r │ e │        │
+  │ d │   │        │
+  │ e │   │        │
+  │ r │   │        │
+  │ e │   │        │
+  │ d │   │        │
+  │ l │   │        │
+  │ i │   │        │
+  │ s │   │        │
+  │ t │   │        │
+  │ l │ b │ bounda │
+  │ a │ a │ ry     │
+  │ z │ r │ detect │
+  │ y │   │ ion    │
+  │ q │   │        │
+  │ u │   │        │
+  │ o │   │        │
+  │ t │   │        │
+  │ e │   │        │
+  └───┴───┴────────┘
+
+  Container link
+  (https://example.co
+  m
+  /container-chart)
+  and bare https:
+  //example.com/
+  container-chart/
+  autolink should
+  both remain safe
+  in HTML and deck
+  output.

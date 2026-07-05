@@ -1,5 +1,7 @@
 #include "render_internal.h"
 
+#include <limits.h>
+
 static void html_state_reset_style(html_state *state);
 static void html_state_parse_sgr(html_state *state, const char *buf, size_t len);
 static const char *html_rgb_for_fg(mdf_impl *impl, int fg, int bold, char *buf, size_t buf_len);
@@ -308,18 +310,8 @@ static int html_code_heading_style_level(mdf_impl *impl, int fg, int bold, int i
 
 static int html_semantic_heading_level(mdf_impl *impl, int fg, int bold, int italic, int underline, int list_marker)
 {
-    html_state code;
-
     if (list_marker) {
         return html_style_heading_level(impl, fg, bold, italic, underline);
-    }
-    html_parse_style_prefix(&code, mdf_theme_code_inline(impl));
-    if (html_style_attrs_equal(&code, fg, bold, italic, underline)) {
-        return 0;
-    }
-    html_parse_style_prefix(&code, mdf_theme_code_block(impl));
-    if (html_style_attrs_equal(&code, fg, bold, italic, underline)) {
-        return 0;
     }
     return 0;
 }
@@ -522,7 +514,7 @@ static int html_write_default_font_faces(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
-static int html_write_default_css(mdf_renderer *self, mdf_sink *sink)
+int html_write_default_css(mdf_renderer *self, mdf_sink *sink)
 {
     mdf_impl *impl;
     char buf[1024];
@@ -591,6 +583,9 @@ int html_start(mdf_renderer *self, mdf_sink *sink)
         return 0;
     }
     impl->html_open = 1;
+    if (impl->html_fragment) {
+        return 0;
+    }
     memset(&shell, 0, sizeof(shell));
     shell.allocator = &impl->allocator;
     shell_sink.userdata = &shell;
@@ -858,38 +853,33 @@ static void html_state_reset_style(html_state *state)
     state->bg = -1;
 }
 
-static long html_parse_sgr_value(char *s)
+static int html_sgr_next(const char *buf, size_t len, size_t *off, long *value)
 {
-    char *end;
-    long value;
-
-    if (s == NULL || *s == '\0') {
-        return 0;
-    }
-    value = strtol(s, &end, 10);
-    if (end == s || *end != '\0') {
-        return -1;
-    }
-    return value;
-}
-
-static int html_sgr_next(char *tmp, size_t len, size_t *off, long *value)
-{
-    size_t i;
+    long parsed;
+    size_t start;
 
     if (*off > len) {
         return 0;
     }
-    i = *off;
-    while (i < len && tmp[i] != ';') {
-        i++;
+    start = *off;
+    parsed = 0;
+    while (*off < len && buf[*off] != ';') {
+        if (buf[*off] < '0' || buf[*off] > '9') {
+            return 0;
+        }
+        if (parsed > (LONG_MAX - (long)(buf[*off] - '0')) / 10) {
+            return 0;
+        }
+        parsed = parsed * 10 + (long)(buf[*off] - '0');
+        (*off)++;
     }
-    if (i < len) {
-        tmp[i] = '\0';
+    if (*off < len) {
+        (*off)++;
+    } else {
+        *off = len + 1;
     }
-    *value = html_parse_sgr_value(tmp + *off);
-    *off = i >= len ? len + 1 : i + 1;
-    return *value >= 0;
+    *value = *off == start ? 0 : parsed;
+    return 1;
 }
 
 static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
@@ -897,20 +887,17 @@ static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
     long value;
     long mode;
     long color;
-    char tmp[64];
     size_t off;
 
     if (len == 0) {
         html_state_reset_style(state);
         return;
     }
-    if (len >= sizeof(tmp)) {
-        len = sizeof(tmp) - 1;
+    if (len > 63) {
+        len = 63;
     }
-    memcpy(tmp, buf, len);
-    tmp[len] = '\0';
     off = 0;
-    while (html_sgr_next(tmp, len, &off, &value)) {
+    while (html_sgr_next(buf, len, &off, &value)) {
         if (value == 0) {
             html_state_reset_style(state);
         } else if (value == 1) {
@@ -932,16 +919,16 @@ static void html_state_parse_sgr(html_state *state, const char *buf, size_t len)
         } else if (value >= 100 && value <= 107) {
             state->bg = (int)(value - 10);
         } else if (value == 38) {
-            if (html_sgr_next(tmp, len, &off, &mode) &&
+            if (html_sgr_next(buf, len, &off, &mode) &&
                 mode == 5 &&
-                html_sgr_next(tmp, len, &off, &color) &&
+                html_sgr_next(buf, len, &off, &color) &&
                 color >= 0 && color <= 255) {
                 state->fg = 1000 + (int)color;
             }
         } else if (value == 48) {
-            if (html_sgr_next(tmp, len, &off, &mode) &&
+            if (html_sgr_next(buf, len, &off, &mode) &&
                 mode == 5 &&
-                html_sgr_next(tmp, len, &off, &color) &&
+                html_sgr_next(buf, len, &off, &color) &&
                 color >= 0 && color <= 255) {
                 state->bg = 1000 + (int)color;
             }

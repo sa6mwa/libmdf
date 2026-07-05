@@ -3059,10 +3059,28 @@ int main(void)
     out = NULL;
     st = mdf_set_html_title(renderer, NULL);
     fails += expect(st == MDF_OK, "html title setter clears reusable renderer after render");
-    st = renderer->render_cstr(renderer, "Default body.\n", &out);
+    st = renderer->render_cstr(renderer, "# Automatic Title\n\nDefault body.\n", &out);
     fails += expect(st == MDF_OK && out != NULL &&
-                    strstr(out, "<title>mdf</title>") != NULL,
-                    "library html reusable renderer uses default title after clear");
+                    strstr(out, "<title>Automatic Title</title>") != NULL,
+                    "library html reusable renderer uses automatic title after clear");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    st = renderer->render_cstr(renderer, "---\nnot yaml\n# Later\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<title>mdf</title>") != NULL &&
+                    strstr(out, "<title>Later</title>") == NULL,
+                    "library html auto-title stops after invalid front matter");
+    renderer->string_free(renderer, out);
+    out = NULL;
+    renderer->destroy(renderer);
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &renderer);
+    fails += expect(st == MDF_OK && renderer != NULL, "deck invalid front matter title renderer create");
+    st = renderer->render_cstr(renderer, "---\nnot yaml\n# Later\n", &out);
+    fails += expect(st == MDF_OK && out != NULL &&
+                    strstr(out, "<title>mdf</title>") != NULL &&
+                    strstr(out, "<title>Later</title>") == NULL,
+                    "library deck auto-title stops after invalid front matter");
     renderer->string_free(renderer, out);
     out = NULL;
     renderer->destroy(renderer);

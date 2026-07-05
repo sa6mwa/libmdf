@@ -1,5 +1,7 @@
 #include "render_internal.h"
 
+#define MDF_MIN_ANSI_CONTENT_WIDTH 3
+
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,8 +41,20 @@ static void default_free(void *userdata, void *ptr, size_t size)
 
 static void mdf_impl_reset_emit_buffer(mdf_impl *impl);
 
+static void mdf_impl_clear_auto_html_title(mdf_impl *impl)
+{
+    if (impl == NULL || !impl->html_title_auto) {
+        return;
+    }
+    mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
+    impl->html_title = NULL;
+    impl->html_title_cap = 0;
+    impl->html_title_auto = 0;
+}
+
 static void mdf_impl_reset_render_state(mdf_impl *impl)
 {
+    mdf_impl_clear_auto_html_title(impl);
     mdf_impl_reset_emit_buffer(impl);
     MDF_ZERO_IMPL_SPAN(impl, in_paragraph, html_footer_needs_newline);
     MDF_ZERO_IMPL_SPAN(impl, quote_open, heading_style_pending_prefix);
@@ -305,6 +319,17 @@ typedef struct deck_slice {
     size_t len;
 } deck_slice;
 
+typedef struct deck_slice_source {
+    const char *src;
+    size_t len;
+    size_t off;
+} deck_slice_source;
+
+typedef struct deck_slide_sink {
+    deck_string html;
+    int oom;
+} deck_slide_sink;
+
 typedef struct deck_source_reader {
     mdf_source *source;
     char buf[4096];
@@ -312,6 +337,14 @@ typedef struct deck_source_reader {
     size_t len;
     int err;
 } deck_source_reader;
+
+typedef struct auto_title_source {
+    mdf_source *source;
+    deck_string prefix;
+    size_t scan_off;
+    size_t replay_off;
+    int err;
+} auto_title_source;
 
 static int deck_string_append(deck_string *s, const char *src, size_t len)
 {
@@ -354,6 +387,466 @@ static void deck_string_dispose(deck_string *s)
     s->buf = NULL;
     s->len = 0;
     s->cap = 0;
+}
+
+static size_t deck_slice_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    deck_slice_source *src;
+    size_t n;
+
+    (void)err;
+    src = (deck_slice_source *)userdata;
+    if (src->off >= src->len) {
+        return 0;
+    }
+    n = src->len - src->off;
+    if (n > cap) {
+        n = cap;
+    }
+    memcpy(dst, src->src + src->off, n);
+    src->off += n;
+    return n;
+}
+
+static int deck_slide_sink_write(void *userdata, const char *src, size_t len)
+{
+    deck_slide_sink *sink;
+
+    sink = (deck_slide_sink *)userdata;
+    if (deck_string_append(&sink->html, src, len) != 0) {
+        sink->oom = 1;
+        return -1;
+    }
+    return 0;
+}
+
+static size_t auto_title_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    auto_title_source *src;
+    size_t n;
+
+    src = (auto_title_source *)userdata;
+    if (src->replay_off < src->prefix.len) {
+        n = src->prefix.len - src->replay_off;
+        if (n > cap) {
+            n = cap;
+        }
+        memcpy(dst, src->prefix.buf + src->replay_off, n);
+        src->replay_off += n;
+        *err = 0;
+        return n;
+    }
+    return src->source->read(src->source->userdata, dst, cap, err);
+}
+
+static int auto_title_read_more(auto_title_source *src)
+{
+    char buf[256];
+    size_t n;
+    int err;
+
+    err = 0;
+    n = src->source->read(src->source->userdata, buf, sizeof(buf), &err);
+    if (err != 0) {
+        src->err = err;
+        return -1;
+    }
+    if (n == 0) {
+        return 0;
+    }
+    if (deck_string_append(&src->prefix, buf, n) != 0) {
+        src->err = -1;
+        return -1;
+    }
+    return 1;
+}
+
+static int auto_title_read_byte(auto_title_source *src, char *ch)
+{
+    int rc;
+
+    while (src->scan_off >= src->prefix.len) {
+        rc = auto_title_read_more(src);
+        if (rc <= 0) {
+            return rc;
+        }
+    }
+    *ch = src->prefix.buf[src->scan_off++];
+    return 1;
+}
+
+static int auto_title_copy_trimmed(mdf_allocator *allocator, const char *start, const char *end, char **out, size_t *cap_out)
+{
+    char *title;
+    size_t len;
+
+    while (start < end && (*start == ' ' || *start == '\t')) {
+        start++;
+    }
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '#')) {
+        if (end[-1] == '#') {
+            const char *hash;
+
+            hash = end;
+            while (hash > start && hash[-1] == '#') {
+                hash--;
+            }
+            if (hash == start || (hash[-1] != ' ' && hash[-1] != '\t')) {
+                break;
+            }
+            end = hash - 1;
+            while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
+                end--;
+            }
+            continue;
+        }
+        end--;
+    }
+    len = (size_t)(end - start);
+    title = (char *)mdf_realloc_mem(allocator, NULL, 0, len + 1);
+    if (title == NULL) {
+        return -1;
+    }
+    memcpy(title, start, len);
+    title[len] = '\0';
+    *out = title;
+    *cap_out = len + 1;
+    return 0;
+}
+
+static int auto_title_detect_line(mdf_allocator *allocator,
+                                  const char *line_start,
+                                  const char *line_end,
+                                  char **title_out,
+                                  size_t *title_cap_out,
+                                  int *decided)
+{
+    const char *q;
+    int spaces;
+    int hashes;
+
+    q = line_start;
+    spaces = 0;
+    while (q < line_end && *q == ' ' && spaces < 4) {
+        q++;
+        spaces++;
+    }
+    if (q == line_end) {
+        *decided = 0;
+        return 0;
+    }
+    *decided = 1;
+    if (spaces < 4 && *q == '#') {
+        hashes = 0;
+        while (q < line_end && *q == '#' && hashes < 7) {
+            q++;
+            hashes++;
+        }
+        if (hashes >= 1 && hashes <= 6 && (q == line_end || *q == ' ' || *q == '\t')) {
+            return auto_title_copy_trimmed(allocator, q, line_end, title_out, title_cap_out);
+        }
+    }
+    return 0;
+}
+
+static int auto_title_detect_span(mdf_allocator *allocator,
+                                  const char *src,
+                                  size_t start,
+                                  size_t end,
+                                  char **title_out,
+                                  size_t *title_cap_out)
+{
+    while (start < end && *title_out == NULL) {
+        size_t line_start;
+        size_t line_end;
+        int decided;
+
+        line_start = start;
+        while (start < end && src[start] != '\n') {
+            start++;
+        }
+        line_end = start;
+        while (line_end > line_start && (src[line_end - 1] == '\n' || src[line_end - 1] == '\r')) {
+            line_end--;
+        }
+        decided = 0;
+        if (auto_title_detect_line(allocator,
+                                   src + line_start,
+                                   src + line_end,
+                                   title_out,
+                                   title_cap_out,
+                                   &decided) != 0) {
+            return -1;
+        }
+        if (start < end) {
+            start++;
+        }
+    }
+    return 0;
+}
+
+static int auto_title_front_matter_delimiter(const char *line, size_t len)
+{
+    while (len > 0 &&
+           (line[len - 1] == '\n' ||
+            line[len - 1] == '\r' ||
+            line[len - 1] == ' ' ||
+            line[len - 1] == '\t')) {
+        len--;
+    }
+    return len == 3 && line[0] == '-' && line[1] == '-' && line[2] == '-';
+}
+
+static int auto_title_front_matter_metadata_line(const char *line, size_t len, int *has_key_out)
+{
+    size_t i;
+    int saw_key_char;
+
+    *has_key_out = 0;
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
+    i = 0;
+    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
+        i++;
+    }
+    if (i == len) {
+        return 1;
+    }
+    if (line[i] == '#') {
+        return 1;
+    }
+    saw_key_char = 0;
+    while (i < len) {
+        unsigned char ch;
+
+        ch = (unsigned char)line[i];
+        if (ch == ':') {
+            if (saw_key_char) {
+                *has_key_out = 1;
+            }
+            return saw_key_char;
+        }
+        if ((ch >= 'A' && ch <= 'Z') ||
+            (ch >= 'a' && ch <= 'z') ||
+            (ch >= '0' && ch <= '9') ||
+            ch == '_' ||
+            ch == '-') {
+            saw_key_char = 1;
+            i++;
+            continue;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+static int auto_title_front_matter_continuation_line(const char *line, size_t len)
+{
+    size_t i;
+
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        len--;
+    }
+    if (len == 0 || (line[0] != ' ' && line[0] != '\t')) {
+        return 0;
+    }
+    i = 0;
+    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
+        i++;
+    }
+    return i < len && line[i] != '#';
+}
+
+static int auto_title_read_line(auto_title_source *src)
+{
+    for (;;) {
+        char ch;
+        int rc;
+
+        rc = auto_title_read_byte(src, &ch);
+        if (rc <= 0) {
+            return rc;
+        }
+        if (ch == '\n') {
+            return 1;
+        }
+    }
+}
+
+static int auto_title_detect_from_source(mdf_impl *impl, auto_title_source *src)
+{
+    size_t line_start;
+
+    for (;;) {
+        char ch;
+        int spaces;
+        int hash_count;
+        int rc;
+
+        line_start = src->scan_off;
+        spaces = 0;
+        for (;;) {
+            rc = auto_title_read_byte(src, &ch);
+            if (rc < 0) {
+                return -1;
+            }
+            if (rc == 0) {
+                break;
+            }
+            if (ch == '\n') {
+                break;
+            }
+            if (ch == '\r') {
+                continue;
+            }
+            if (ch == '\t') {
+                return 0;
+            }
+            if (ch == ' ') {
+                spaces++;
+                if (spaces >= 4) {
+                    return 0;
+                }
+                continue;
+            }
+            if (ch == '#') {
+                hash_count = 1;
+                for (;;) {
+                    rc = auto_title_read_byte(src, &ch);
+                    if (rc <= 0 || ch != '#') {
+                        break;
+                    }
+                    hash_count++;
+                }
+                if (rc < 0) {
+                    return -1;
+                }
+                if (hash_count >= 1 && hash_count <= 6 &&
+                    (rc == 0 || ch == '\n' || ch == '\r' || ch == ' ' || ch == '\t')) {
+                    while (rc > 0 && ch != '\n') {
+                        rc = auto_title_read_byte(src, &ch);
+                        if (rc < 0) {
+                            return -1;
+                        }
+                    }
+                    {
+                        const char *line;
+                        const char *line_end;
+                        int decided;
+
+                        line = src->prefix.buf + line_start;
+                        line_end = src->prefix.buf + src->scan_off;
+                        while (line_end > line && (line_end[-1] == '\n' || line_end[-1] == '\r')) {
+                            line_end--;
+                        }
+                        decided = 0;
+                        if (auto_title_detect_line(&impl->allocator,
+                                                   line,
+                                                   line_end,
+                                                   &impl->html_title,
+                                                   &impl->html_title_cap,
+                                                   &decided) != 0) {
+                            return -1;
+                        }
+                        if (impl->html_title != NULL) {
+                            impl->html_title_auto = 1;
+                        }
+                    }
+                }
+                return 0;
+            }
+            if (line_start == 0 && spaces == 0 && ch == '-') {
+                int fm;
+                int fm_has_key;
+
+                while (rc > 0 && ch != '\n') {
+                    rc = auto_title_read_byte(src, &ch);
+                    if (rc < 0) {
+                        return -1;
+                    }
+                }
+                fm = auto_title_front_matter_delimiter(src->prefix.buf + line_start,
+                                                       src->scan_off - line_start);
+                fm_has_key = 0;
+                while (fm) {
+                    size_t fm_line_start;
+                    size_t fm_line_len;
+                    int line_has_key;
+
+                    fm_line_start = src->scan_off;
+                    rc = auto_title_read_line(src);
+                    if (rc < 0) {
+                        return -1;
+                    }
+                    if (rc == 0) {
+                        if (auto_title_detect_span(&impl->allocator,
+                                                   src->prefix.buf,
+                                                   line_start,
+                                                   src->scan_off,
+                                                   &impl->html_title,
+                                                   &impl->html_title_cap) != 0) {
+                            return -1;
+                        }
+                        if (impl->html_title != NULL) {
+                            impl->html_title_auto = 1;
+                        }
+                        return 0;
+                    }
+                    fm_line_len = src->scan_off - fm_line_start;
+                    if (auto_title_front_matter_delimiter(src->prefix.buf + fm_line_start, fm_line_len)) {
+                        if (!fm_has_key &&
+                            auto_title_detect_span(&impl->allocator,
+                                                   src->prefix.buf,
+                                                   line_start,
+                                                   src->scan_off,
+                                                   &impl->html_title,
+                                                   &impl->html_title_cap) != 0) {
+                            return -1;
+                        }
+                        break;
+                    }
+                    line_has_key = 0;
+                    if (!auto_title_front_matter_metadata_line(src->prefix.buf + fm_line_start,
+                                                               fm_line_len,
+                                                               &line_has_key) &&
+                        !(fm_has_key &&
+                          auto_title_front_matter_continuation_line(src->prefix.buf + fm_line_start, fm_line_len))) {
+                        if (auto_title_detect_span(&impl->allocator,
+                                                   src->prefix.buf,
+                                                   line_start,
+                                                   src->scan_off,
+                                                   &impl->html_title,
+                                                   &impl->html_title_cap) != 0) {
+                            return -1;
+                        }
+                        if (impl->html_title != NULL) {
+                            impl->html_title_auto = 1;
+                        }
+                        return 0;
+                    }
+                    if (line_has_key) {
+                        fm_has_key = 1;
+                    }
+                }
+                if (fm && fm_has_key) {
+                    break;
+                } else if (fm) {
+                    if (impl->html_title != NULL) {
+                        impl->html_title_auto = 1;
+                        return 0;
+                    }
+                    break;
+                }
+                return 0;
+            }
+            return 0;
+        }
+        if (src->scan_off == line_start) {
+            break;
+        }
+    }
+    return 0;
 }
 
 static int deck_write_html_escaped(mdf_sink *sink, const char *src, size_t len)
@@ -755,12 +1248,10 @@ static int deck_extract_front_matter_options(mdf_allocator *allocator,
 }
 
 static int deck_render_write_slide(mdf_renderer *self,
+                                   mdf **html_io,
                                    const mdf_options *opts,
                                    mdf_sink *sink,
                                    deck_string *markdown,
-                                   char **style_out,
-                                   size_t *style_len_out,
-                                   size_t *style_cap_out,
                                    int *shell_open,
                                    size_t *slide_index);
 
@@ -805,41 +1296,6 @@ static int deck_replay_pending_front_matter_body(mdf_renderer *self,
     return 0;
 }
 
-static int deck_extract_between(mdf_allocator *allocator,
-                                const char *src,
-                                const char *open,
-                                const char *close,
-                                char **out,
-                                size_t *len_out,
-                                size_t *cap_out)
-{
-    const char *start;
-    const char *end;
-    size_t len;
-    char *copy;
-
-    start = strstr(src, open);
-    if (start == NULL) {
-        return -1;
-    }
-    start += strlen(open);
-    end = strstr(start, close);
-    if (end == NULL) {
-        return -1;
-    }
-    len = (size_t)(end - start);
-    copy = (char *)mdf_alloc(allocator, len + 1);
-    if (copy == NULL) {
-        return -2;
-    }
-    memcpy(copy, start, len);
-    copy[len] = '\0';
-    *out = copy;
-    *len_out = len;
-    *cap_out = len + 1;
-    return 0;
-}
-
 static const char *deck_transition_name(mdf_deck_transition transition)
 {
     switch (transition) {
@@ -854,76 +1310,76 @@ static const char *deck_transition_name(mdf_deck_transition transition)
 }
 
 static int deck_write_shell_start(mdf_renderer *self,
+                                  mdf_renderer *html_renderer,
                                   const mdf_options *opts,
-                                  mdf_sink *sink,
-                                  const char *base_style,
-                                  size_t base_style_len);
+                                  mdf_sink *sink);
 static int deck_write_slide(mdf_renderer *self, const mdf_options *opts, mdf_sink *sink, const deck_slide *slide, size_t index);
 
 static int deck_render_slide(mdf_renderer *self,
+                             mdf **html_io,
                              const mdf_options *opts,
                              const deck_slice *slice,
-                             deck_slide *slide,
-                             char **style_out,
-                             size_t *style_len_out,
-                             size_t *style_cap_out)
+                             deck_slide *slide)
 {
     mdf *html;
-    char *full;
     mdf_status st;
     mdf_allocator *allocator;
-    int rc;
+    deck_slice_source src_data;
+    mdf_source src;
+    deck_slide_sink sink_data;
+    mdf_sink sink;
 
     allocator = &((mdf_impl *)self->impl)->allocator;
-    html = NULL;
-    full = NULL;
-    st = mdf_create(MDF_FORMAT_HTML, opts, &html);
-    if (st != MDF_OK) {
-        mdf_set_error(self, st == MDF_ERROR_NOMEM ? "out of memory" : "deck slide HTML renderer creation failed");
-        return -1;
+    html = *html_io;
+    if (html == NULL) {
+        st = mdf_create(MDF_FORMAT_HTML, opts, &html);
+        if (st != MDF_OK) {
+            mdf_set_error(self, st == MDF_ERROR_NOMEM ? "out of memory" : "deck slide HTML renderer creation failed");
+            return -1;
+        }
+        ((mdf_impl *)html->impl)->html_links_blank = 1;
+        ((mdf_impl *)html->impl)->html_fragment = 1;
+        st = mdf_set_html_title(html, "mdf");
+        if (st != MDF_OK) {
+            html->destroy(html);
+            mdf_set_error(self, st == MDF_ERROR_NOMEM ? "out of memory" : "deck slide HTML title setup failed");
+            return -1;
+        }
+        *html_io = html;
     }
-    ((mdf_impl *)html->impl)->html_links_blank = 1;
-    st = html->render_cstr(html, slice->src, &full);
+    memset(&src_data, 0, sizeof(src_data));
+    src_data.src = slice->src;
+    src_data.len = slice->len;
+    src.userdata = &src_data;
+    src.read = deck_slice_source_read;
+    memset(&sink_data, 0, sizeof(sink_data));
+    sink_data.html.allocator = allocator;
+    sink.userdata = &sink_data;
+    sink.write = deck_slide_sink_write;
+    st = html->render(html, &src, &sink);
     if (st != MDF_OK) {
         const char *err;
 
         err = html->error(html);
-        mdf_set_error(self, err != NULL && err[0] != '\0' ? err : "deck slide HTML render failed");
-        html->destroy(html);
-        return -1;
-    }
-    if (*style_out == NULL) {
-        rc = deck_extract_between(allocator, full, "<style>\n", "</style>", style_out, style_len_out, style_cap_out);
-        if (rc != 0) {
-            html->string_free(html, full);
-            html->destroy(html);
-            mdf_set_error(self, rc == -2 ? "out of memory" : "deck slide HTML style extraction failed");
+        deck_string_dispose(&sink_data.html);
+        if (sink_data.oom) {
+            mdf_set_error(self, "out of memory");
             return -1;
         }
-    }
-    rc = deck_extract_between(allocator,
-                              full,
-                              "<main class=\"mdf-document\">",
-                              "</main>",
-                              &slide->html,
-                              &slide->html_len,
-                              &slide->html_cap);
-    html->string_free(html, full);
-    html->destroy(html);
-    if (rc != 0) {
-        mdf_set_error(self, rc == -2 ? "out of memory" : "deck slide HTML extraction failed");
+        mdf_set_error(self, err != NULL && err[0] != '\0' ? err : "deck slide HTML render failed");
         return -1;
     }
+    slide->html = sink_data.html.buf;
+    slide->html_len = sink_data.html.len;
+    slide->html_cap = sink_data.html.cap;
     return 0;
 }
 
 static int deck_render_write_slide(mdf_renderer *self,
+                                   mdf **html_io,
                                    const mdf_options *opts,
                                    mdf_sink *sink,
                                    deck_string *markdown,
-                                   char **style_out,
-                                   size_t *style_len_out,
-                                   size_t *style_cap_out,
                                    int *shell_open,
                                    size_t *slide_index)
 {
@@ -935,11 +1391,11 @@ static int deck_render_write_slide(mdf_renderer *self,
     memset(&slide, 0, sizeof(slide));
     slice.src = markdown->buf != NULL ? markdown->buf : "";
     slice.len = markdown->len;
-    if (deck_render_slide(self, opts, &slice, &slide, style_out, style_len_out, style_cap_out) != 0) {
+    if (deck_render_slide(self, html_io, opts, &slice, &slide) != 0) {
         return -1;
     }
     if (!*shell_open) {
-        if (deck_write_shell_start(self, opts, sink, *style_out, *style_len_out) != 0) {
+        if (deck_write_shell_start(self, *html_io, opts, sink) != 0) {
             mdf_free_mem(&impl->allocator, slide.html, slide.html_cap);
             mdf_set_error(self, "sink write failed");
             return -1;
@@ -975,10 +1431,9 @@ static int deck_write_number(mdf_sink *sink, size_t value, size_t width)
 }
 
 static int deck_write_shell_start(mdf_renderer *self,
+                                  mdf_renderer *html_renderer,
                                   const mdf_options *opts,
-                                  mdf_sink *sink,
-                                  const char *base_style,
-                                  size_t base_style_len)
+                                  mdf_sink *sink)
 {
     mdf_impl *impl;
     mdf_impl theme_impl;
@@ -996,7 +1451,7 @@ static int deck_write_shell_start(mdf_renderer *self,
     if (mdf_write_cstr(sink, "<!doctype html>\n<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>") != 0) return -1;
     if (deck_write_html_escaped(sink, title, strlen(title)) != 0) return -1;
     if (mdf_write_cstr(sink, "</title>\n<style>\n") != 0) return -1;
-    if (mdf_write_all(sink, base_style, base_style_len) != 0) return -1;
+    if (html_write_default_css(html_renderer, sink) != 0) return -1;
     if (mdf_write_cstr(sink, "\nhtml,body{width:100%;height:100%;overflow:hidden;}\n") != 0) return -1;
     if (mdf_write_cstr(sink, "body{background:#000;}\n") != 0) return -1;
     if (mdf_write_cstr(sink, ".mdf-deck{position:relative;width:100vw;height:100vh;overflow:hidden;background:#000;}\n") != 0) return -1;
@@ -1148,8 +1603,26 @@ static int deck_write_body_html(mdf_sink *sink, const char *html, size_t len)
                 continue;
             }
         }
-        if (mdf_write_all(sink, html + pos, 1) != 0) return -1;
-        pos++;
+        {
+            const char *found;
+            size_t next;
+
+            next = pos;
+            for (;;) {
+                found = (const char *)memchr(html + next, '<', len - next);
+                if (found == NULL) {
+                    next = len;
+                    break;
+                }
+                next = (size_t)(found - html);
+                if (len - next >= heading_open_len && memcmp(html + next, heading_open, heading_open_len) == 0) {
+                    break;
+                }
+                next++;
+            }
+            if (mdf_write_all(sink, html + pos, next - pos) != 0) return -1;
+            pos = next;
+        }
     }
     return 0;
 }
@@ -1313,10 +1786,8 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     deck_string front_matter;
     char *front_theme;
     size_t front_theme_cap;
+    mdf *html_renderer;
     mdf_options html_opts;
-    char *base_style;
-    size_t base_style_len;
-    size_t base_style_cap;
     mdf_status status;
     int line_no;
     int pending_front_matter;
@@ -1342,9 +1813,7 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     front_matter.allocator = &impl->allocator;
     front_theme = NULL;
     front_theme_cap = 0;
-    base_style = NULL;
-    base_style_len = 0;
-    base_style_cap = 0;
+    html_renderer = NULL;
     status = MDF_OK;
     html_opts = impl->opts;
     html_opts.allocator = impl->user_allocator;
@@ -1451,12 +1920,10 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
             }
             if (in_front_matter) {
                 if (deck_render_write_slide(self,
+                                            &html_renderer,
                                             &html_opts,
                                             sink,
                                             &slide_markdown,
-                                            &base_style,
-                                            &base_style_len,
-                                            &base_style_cap,
                                             &shell_open,
                                             &slide_index) != 0) {
                     status = strcmp(self->error(self), "out of memory") == 0 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -1507,12 +1974,10 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
             } else if (!blockquote_lazy_active &&
                        deck_line_is_separator(line.buf, content_len, in_list_context, list_indent)) {
                 if (deck_render_write_slide(self,
+                                            &html_renderer,
                                             &html_opts,
                                             sink,
                                             &slide_markdown,
-                                            &base_style,
-                                            &base_style_len,
-                                            &base_style_cap,
                                             &shell_open,
                                             &slide_index) != 0) {
                     status = strcmp(self->error(self), "out of memory") == 0 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -1538,12 +2003,10 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     }
     if (pending_front_matter && front_matter.len > 0) {
         if (deck_render_write_slide(self,
+                                    &html_renderer,
                                     &html_opts,
                                     sink,
                                     &slide_markdown,
-                                    &base_style,
-                                    &base_style_len,
-                                    &base_style_cap,
                                     &shell_open,
                                     &slide_index) != 0) {
             status = strcmp(self->error(self), "out of memory") == 0 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -1558,12 +2021,10 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
         front_matter_has_key = 0;
     }
     if (deck_render_write_slide(self,
+                                &html_renderer,
                                 &html_opts,
                                 sink,
                                 &slide_markdown,
-                                &base_style,
-                                &base_style_len,
-                                &base_style_cap,
                                 &shell_open,
                                 &slide_index) != 0) {
         status = strcmp(self->error(self), "out of memory") == 0 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -1571,12 +2032,10 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     }
     if (slide_index == 0) {
         if (deck_render_write_slide(self,
+                                    &html_renderer,
                                     &html_opts,
                                     sink,
                                     &slide_markdown,
-                                    &base_style,
-                                    &base_style_len,
-                                    &base_style_cap,
                                     &shell_open,
                                     &slide_index) != 0) {
             status = strcmp(self->error(self), "out of memory") == 0 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -1590,7 +2049,9 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     }
 
 done:
-    mdf_free_mem(&impl->allocator, base_style, base_style_cap);
+    if (html_renderer != NULL) {
+        html_renderer->destroy(html_renderer);
+    }
     mdf_free_mem(&impl->allocator, front_theme, front_theme_cap);
     deck_string_dispose(&front_matter);
     deck_string_dispose(&line);
@@ -1604,6 +2065,8 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     mdf_impl *impl;
     mdf_status st;
     const char *parser_err;
+    auto_title_source title_source_data;
+    mdf_source title_source;
 
     impl = (mdf_impl *)self->impl;
     if (source == NULL || sink == NULL || source->read == NULL || sink->write == NULL) {
@@ -1611,12 +2074,29 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         return MDF_ERROR_INVALID;
     }
     mdf_renderer_reset_session_state(self);
+    memset(&title_source_data, 0, sizeof(title_source_data));
+    title_source_data.source = source;
+    title_source_data.prefix.allocator = &impl->allocator;
+    if ((impl->format == MDF_FORMAT_HTML || impl->format == MDF_FORMAT_HTML_DECK) &&
+        impl->html_title == NULL) {
+        if (auto_title_detect_from_source(impl, &title_source_data) != 0) {
+            deck_string_dispose(&title_source_data.prefix);
+            mdf_set_error(self, title_source_data.err == -1 ? "out of memory" : "source read failed");
+            return title_source_data.err == -1 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
+        }
+        title_source.userdata = &title_source_data;
+        title_source.read = auto_title_source_read;
+        source = &title_source;
+    }
     if (impl->format == MDF_FORMAT_HTML_DECK) {
-        return deck_render(self, source, sink);
+        st = deck_render(self, source, sink);
+        deck_string_dispose(&title_source_data.prefix);
+        return st;
     }
     parser = NULL;
     st = mdf_parser_create(&impl->opts, &parser);
     if (st != MDF_OK) {
+        deck_string_dispose(&title_source_data.prefix);
         if (st == MDF_ERROR_NOMEM) {
             mdf_set_error(self, "out of memory");
         } else {
@@ -1627,6 +2107,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     st = self->write_token == NULL || self->finish == NULL ? MDF_ERROR_INVALID : mdf_renderer_begin_internal(self, sink);
     if (st != MDF_OK) {
         parser->destroy(parser);
+        deck_string_dispose(&title_source_data.prefix);
         return st;
     }
     st = parser->parse(parser, source, self, sink);
@@ -1637,6 +2118,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         }
     }
     parser->destroy(parser);
+    deck_string_dispose(&title_source_data.prefix);
     return st;
 }
 
@@ -2098,7 +2580,7 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     }
     if (format == MDF_FORMAT_ANSI &&
         defaults.width > 0 &&
-        defaults.margin_left + defaults.margin_right >= defaults.width) {
+        defaults.width - defaults.margin_left - defaults.margin_right < MDF_MIN_ANSI_CONTENT_WIDTH) {
         return MDF_ERROR_INVALID;
     }
     theme = mdf_theme_resolve(defaults.theme_name);
@@ -2165,6 +2647,7 @@ mdf_status mdf_set_html_title(mdf *self, const char *title)
         mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
         impl->html_title = NULL;
         impl->html_title_cap = 0;
+        impl->html_title_auto = 0;
         return MDF_OK;
     }
     len = strlen(title);
@@ -2180,6 +2663,7 @@ mdf_status mdf_set_html_title(mdf *self, const char *title)
     mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
     impl->html_title = next;
     impl->html_title_cap = cap;
+    impl->html_title_auto = 0;
     return MDF_OK;
 }
 

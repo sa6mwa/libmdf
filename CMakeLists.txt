@@ -169,6 +169,21 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
+  add_executable(golden_render tests/golden_render.c)
+  target_compile_features(golden_render PRIVATE c_std_90)
+  target_include_directories(golden_render PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_link_libraries(golden_render PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(golden_render PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME libmdf_goldens
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_libmdf_goldens.sh
+            $<TARGET_FILE:golden_render>)
+  set_tests_properties(libmdf_goldens PROPERTIES
+    LABELS "integration;api;golden"
+    TIMEOUT 30
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   if(TARGET cmdf)
     add_executable(test_cmdf tests/test_cmdf.c)
     target_compile_features(test_cmdf PRIVATE c_std_90)
@@ -186,6 +201,14 @@ if(LIBMDF_BUILD_TESTS)
     set_tests_properties(chart_corpus PROPERTIES
       LABELS "integration;cli;charts"
       TIMEOUT 20
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME cmdf_goldens
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmdf_goldens.sh
+              $<TARGET_FILE:cmdf>)
+    set_tests_properties(cmdf_goldens PROPERTIES
+      LABELS "integration;cli;golden"
+      TIMEOUT 30
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 

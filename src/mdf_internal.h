@@ -66,8 +66,10 @@ typedef struct mdf_impl {
     int html_body_emitted;
     int html_footer_needs_newline;
     int html_links_blank;
+    int html_fragment;
     char *html_title;
     size_t html_title_cap;
+    int html_title_auto;
     void *html_state;
     int quote_open;
     int quote_wrap_active;

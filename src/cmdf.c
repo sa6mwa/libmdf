@@ -17,16 +17,6 @@ typedef struct file_source {
     size_t reads;
 } file_source;
 
-typedef struct prefixed_file_source {
-    FILE *fp;
-    char *prefix;
-    size_t prefix_len;
-    size_t prefix_off;
-    size_t max_chunk;
-    double delay_seconds;
-    size_t reads;
-} prefixed_file_source;
-
 static int sleep_seconds(double seconds)
 {
     struct timespec req;
@@ -88,52 +78,6 @@ static size_t file_read(void *userdata, char *dst, size_t cap, int *err)
     return (size_t)n;
 }
 
-static size_t prefixed_file_read(void *userdata, char *dst, size_t cap, int *err)
-{
-    prefixed_file_source *src;
-    int fd;
-    size_t n;
-    ssize_t got;
-
-    src = (prefixed_file_source *)userdata;
-    if (src->max_chunk > 0 && cap > src->max_chunk) {
-        cap = src->max_chunk;
-    }
-    if (src->reads > 0) {
-        if (sleep_seconds(src->delay_seconds) != 0) {
-            *err = errno == 0 ? EIO : errno;
-            return 0;
-        }
-    }
-    if (src->prefix_off < src->prefix_len) {
-        n = src->prefix_len - src->prefix_off;
-        if (n > cap) {
-            n = cap;
-        }
-        memcpy(dst, src->prefix + src->prefix_off, n);
-        src->prefix_off += n;
-        if (n > 0) {
-            src->reads++;
-        }
-        return n;
-    }
-    fd = fileno(src->fp);
-    if (fd < 0) {
-        *err = errno == 0 ? EIO : errno;
-        return 0;
-    }
-    do {
-        got = read(fd, dst, cap);
-    } while (got < 0 && errno == EINTR);
-    if (got < 0) {
-        *err = errno == 0 ? EIO : errno;
-        return 0;
-    }
-    if (got > 0) {
-        src->reads++;
-    }
-    return (size_t)got;
-}
 
 typedef struct file_sink {
     FILE *fp;
@@ -468,415 +412,6 @@ static int has_html_extension(const char *path)
     return 0;
 }
 
-static int append_prescan_byte(char **buf, size_t *len, size_t *cap, char ch)
-{
-    char *next;
-    size_t new_cap;
-
-    if (*len + 1 < *len) {
-        return -1;
-    }
-    if (*len + 1 > *cap) {
-        new_cap = *cap == 0 ? 512 : *cap;
-        while (new_cap < *len + 1) {
-            if (new_cap > ((size_t)-1) / 2) {
-                return -1;
-            }
-            new_cap *= 2;
-        }
-        next = (char *)realloc(*buf, new_cap);
-        if (next == NULL) {
-            return -1;
-        }
-        *buf = next;
-        *cap = new_cap;
-    }
-    (*buf)[*len] = ch;
-    *len += 1;
-    return 0;
-}
-
-static int copy_trimmed_title(const char *start, const char *end, char **out)
-{
-    char *title;
-    size_t len;
-
-    while (start < end && (*start == ' ' || *start == '\t')) {
-        start++;
-    }
-    while (end > start && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '#')) {
-        if (end[-1] == '#') {
-            const char *hash = end;
-
-            while (hash > start && hash[-1] == '#') {
-                hash--;
-            }
-            if (hash == start || (hash[-1] != ' ' && hash[-1] != '\t')) {
-                break;
-            }
-            end = hash - 1;
-            while (end > start && (end[-1] == ' ' || end[-1] == '\t')) {
-                end--;
-            }
-            continue;
-        }
-        end--;
-    }
-    len = (size_t)(end - start);
-    title = (char *)malloc(len + 1);
-    if (title == NULL) {
-        return -1;
-    }
-    memcpy(title, start, len);
-    title[len] = '\0';
-    *out = title;
-    return 0;
-}
-
-static int detect_html_title_line(const char *line_start, const char *line_end, char **title_out, int *decided)
-{
-    const char *q;
-    int spaces;
-    int hashes;
-
-    q = line_start;
-    spaces = 0;
-    while (q < line_end && *q == ' ' && spaces < 4) {
-        q++;
-        spaces++;
-    }
-    if (q == line_end) {
-        *decided = 0;
-        return 0;
-    }
-    *decided = 1;
-    if (spaces < 4 && *q == '#') {
-        hashes = 0;
-        while (q < line_end && *q == '#' && hashes < 7) {
-            q++;
-            hashes++;
-        }
-        if (hashes >= 1 && hashes <= 6 && (q == line_end || *q == ' ' || *q == '\t')) {
-            return copy_trimmed_title(q, line_end, title_out);
-        }
-    }
-    return 0;
-}
-
-static int detect_html_title_span(const char *src, size_t start, size_t end, char **title_out)
-{
-    while (start < end && *title_out == NULL) {
-        size_t line_start;
-        size_t line_end;
-        int decided;
-
-        line_start = start;
-        while (start < end && src[start] != '\n') {
-            start++;
-        }
-        line_end = start;
-        while (line_end > line_start && (src[line_end - 1] == '\n' || src[line_end - 1] == '\r')) {
-            line_end--;
-        }
-        decided = 0;
-        if (detect_html_title_line(src + line_start, src + line_end, title_out, &decided) != 0) {
-            return -1;
-        }
-        if (start < end) {
-            start++;
-        }
-    }
-    return 0;
-}
-
-static int title_front_matter_delimiter(const char *line, size_t len)
-{
-    while (len > 0 &&
-           (line[len - 1] == '\n' ||
-            line[len - 1] == '\r' ||
-            line[len - 1] == ' ' ||
-            line[len - 1] == '\t')) {
-        len--;
-    }
-    return len == 3 && line[0] == '-' && line[1] == '-' && line[2] == '-';
-}
-
-static int title_front_matter_metadata_line(const char *line, size_t len, int *has_key_out)
-{
-    size_t i;
-    int saw_key_char;
-
-    *has_key_out = 0;
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-        len--;
-    }
-    i = 0;
-    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
-        i++;
-    }
-    if (i == len) {
-        return 1;
-    }
-    if (line[i] == '#') {
-        return 1;
-    }
-    saw_key_char = 0;
-    while (i < len) {
-        unsigned char ch;
-
-        ch = (unsigned char)line[i];
-        if (ch == ':') {
-            if (saw_key_char) {
-                *has_key_out = 1;
-            }
-            return saw_key_char;
-        }
-        if ((ch >= 'A' && ch <= 'Z') ||
-            (ch >= 'a' && ch <= 'z') ||
-            (ch >= '0' && ch <= '9') ||
-            ch == '_' ||
-            ch == '-') {
-            saw_key_char = 1;
-            i++;
-            continue;
-        }
-        return 0;
-    }
-    return 0;
-}
-
-static int title_front_matter_continuation_line(const char *line, size_t len)
-{
-    size_t i;
-
-    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-        len--;
-    }
-    if (len == 0 || (line[0] != ' ' && line[0] != '\t')) {
-        return 0;
-    }
-    i = 0;
-    while (i < len && (line[i] == ' ' || line[i] == '\t')) {
-        i++;
-    }
-    return i < len && line[i] != '#';
-}
-
-static int read_title_prescan_byte(int fd, char *ch, char **prefix, size_t *prefix_len, size_t *prefix_cap)
-{
-    ssize_t n;
-
-    do {
-        n = read(fd, ch, 1);
-    } while (n < 0 && errno == EINTR);
-    if (n < 0) {
-        return -1;
-    }
-    if (n == 0) {
-        return 0;
-    }
-    if (append_prescan_byte(prefix, prefix_len, prefix_cap, *ch) != 0) {
-        errno = ENOMEM;
-        return -1;
-    }
-    return 1;
-}
-
-static int read_title_prescan_line(int fd, char **prefix, size_t *prefix_len, size_t *prefix_cap)
-{
-    for (;;) {
-        char ch;
-        int rc;
-
-        rc = read_title_prescan_byte(fd, &ch, prefix, prefix_len, prefix_cap);
-        if (rc <= 0) {
-            return rc;
-        }
-        if (ch == '\n') {
-            return 1;
-        }
-    }
-}
-
-static int detect_html_title_from_file(FILE *fp, char **title_out, char **prefix_out, size_t *prefix_len_out)
-{
-    char *prefix;
-    size_t prefix_len;
-    size_t prefix_cap;
-    size_t line_start;
-    int fd;
-
-    *title_out = NULL;
-    *prefix_out = NULL;
-    *prefix_len_out = 0;
-    fd = fileno(fp);
-    if (fd < 0) {
-        return -1;
-    }
-    prefix = NULL;
-    prefix_len = 0;
-    prefix_cap = 0;
-    for (;;) {
-        char ch;
-        int spaces;
-        int hash_count;
-        int rc;
-        int saw_tab;
-
-        line_start = prefix_len;
-        spaces = 0;
-        saw_tab = 0;
-        for (;;) {
-            rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
-            if (rc < 0) {
-                free(prefix);
-                return -1;
-            }
-            if (rc == 0) {
-                break;
-            }
-            if (ch == '\n') {
-                break;
-            }
-            if (ch == '\r') {
-                continue;
-            }
-            if (ch == '\t') {
-                saw_tab = 1;
-                continue;
-            }
-            if (ch == ' ') {
-                spaces++;
-                continue;
-            }
-            if (!saw_tab && spaces < 4 && ch == '#') {
-                hash_count = 1;
-                for (;;) {
-                    rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
-                    if (rc < 0) {
-                        free(prefix);
-                        return -1;
-                    }
-                    if (rc == 0) {
-                        break;
-                    }
-                    if (ch != '#') {
-                        break;
-                    }
-                    hash_count++;
-                }
-                if (hash_count >= 1 && hash_count <= 6 &&
-                    (rc == 0 || ch == '\n' || ch == '\r' || ch == ' ' || ch == '\t')) {
-                    while (rc > 0 && ch != '\n') {
-                        rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
-                        if (rc < 0) {
-                            free(prefix);
-                            return -1;
-                        }
-                    }
-                    {
-                        const char *line;
-                        const char *line_end;
-                        int decided;
-
-                        line = prefix + line_start;
-                        line_end = prefix + prefix_len;
-                        while (line_end > line && (line_end[-1] == '\n' || line_end[-1] == '\r')) {
-                            line_end--;
-                        }
-                        decided = 0;
-                        if (detect_html_title_line(line, line_end, title_out, &decided) != 0) {
-                            free(prefix);
-                            return -1;
-                        }
-                    }
-                }
-                *prefix_out = prefix;
-                *prefix_len_out = prefix_len;
-                return 0;
-            }
-            if (line_start == 0 && !saw_tab && spaces == 0 && ch == '-') {
-                int fm;
-                int fm_has_key;
-
-                while (rc > 0 && ch != '\n') {
-                    rc = read_title_prescan_byte(fd, &ch, &prefix, &prefix_len, &prefix_cap);
-                    if (rc < 0) {
-                        free(prefix);
-                        return -1;
-                    }
-                }
-                fm = title_front_matter_delimiter(prefix + line_start, prefix_len - line_start);
-                fm_has_key = 0;
-                while (fm) {
-                    size_t fm_line_start;
-                    size_t fm_line_len;
-                    int line_has_key;
-
-                    fm_line_start = prefix_len;
-                    rc = read_title_prescan_line(fd, &prefix, &prefix_len, &prefix_cap);
-                    if (rc < 0) {
-                        free(prefix);
-                        return -1;
-                    }
-                    if (rc == 0) {
-                        if (detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
-                            free(prefix);
-                            return -1;
-                        }
-                        *prefix_out = prefix;
-                        *prefix_len_out = prefix_len;
-                        return 0;
-                    }
-                    fm_line_len = prefix_len - fm_line_start;
-                    if (title_front_matter_delimiter(prefix + fm_line_start, fm_line_len)) {
-                        if (!fm_has_key &&
-                            detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
-                            free(prefix);
-                            return -1;
-                        }
-                        break;
-                    }
-                    line_has_key = 0;
-                    if (!title_front_matter_metadata_line(prefix + fm_line_start, fm_line_len, &line_has_key) &&
-                        !(fm_has_key &&
-                          title_front_matter_continuation_line(prefix + fm_line_start, fm_line_len))) {
-                        if (detect_html_title_span(prefix, line_start, prefix_len, title_out) != 0) {
-                            free(prefix);
-                            return -1;
-                        }
-                        *prefix_out = prefix;
-                        *prefix_len_out = prefix_len;
-                        return 0;
-                    }
-                    if (line_has_key) {
-                        fm_has_key = 1;
-                    }
-                }
-                if (fm && fm_has_key) {
-                    break;
-                } else if (fm) {
-                    if (*title_out != NULL) {
-                        *prefix_out = prefix;
-                        *prefix_len_out = prefix_len;
-                        return 0;
-                    }
-                    break;
-                }
-            }
-            *prefix_out = prefix;
-            *prefix_len_out = prefix_len;
-            return 0;
-        }
-        if (prefix_len == line_start) {
-            break;
-        }
-    }
-    *prefix_out = prefix;
-    *prefix_len_out = prefix_len;
-    return 0;
-}
-
 int main(int argc, char **argv)
 {
     int opt;
@@ -928,17 +463,12 @@ int main(int argc, char **argv)
     mdf_format format;
     mdf *renderer;
     file_source source_data;
-    prefixed_file_source prefixed_source_data;
     file_sink sink_data;
     trace_output trace_data;
     mdf_source source;
     mdf_sink sink;
     mdf_status st;
     FILE *trace_fp;
-    char *prefix_buf;
-    size_t prefix_len;
-    char *detected_title;
-    int use_prefixed_source;
 
     mdf_options_init(&opts);
     opts.osc8 = mdf_detect_osc8_support();
@@ -1137,10 +667,6 @@ int main(int argc, char **argv)
     in_fp = stdin;
     out_fp = stdout;
     trace_fp = NULL;
-    prefix_buf = NULL;
-    prefix_len = 0;
-    detected_title = NULL;
-    use_prefixed_source = 0;
     if (in_path != NULL) {
         in_fp = fopen(in_path, "rb");
         if (in_fp == NULL) {
@@ -1155,15 +681,6 @@ int main(int argc, char **argv)
             if (in_fp != stdin) fclose(in_fp);
             return 1;
         }
-    }
-    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && title_override == NULL) {
-        if (detect_html_title_from_file(in_fp, &detected_title, &prefix_buf, &prefix_len) != 0) {
-            fprintf(stderr, "cmdf: detect HTML title: %s\n", errno == 0 ? "input read failed" : strerror(errno));
-            if (out_fp != stdout) fclose(out_fp);
-            if (in_fp != stdin) fclose(in_fp);
-            return 1;
-        }
-        use_prefixed_source = 1;
     }
     if (trace_writes_path != NULL) {
         if (strcmp(trace_writes_path, "-") == 0) {
@@ -1186,20 +703,16 @@ int main(int argc, char **argv)
     st = mdf_create(format, &opts, &renderer);
     if (st != MDF_OK) {
         fprintf(stderr, "cmdf: create renderer: %s\n", mdf_status_string(st));
-        free(detected_title);
-        free(prefix_buf);
         if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
         if (out_fp != stdout) fclose(out_fp);
         if (in_fp != stdin) fclose(in_fp);
         return 1;
     }
-    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && (title_override != NULL || detected_title != NULL)) {
-        st = mdf_set_html_title(renderer, title_override != NULL ? title_override : detected_title);
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && title_override != NULL) {
+        st = mdf_set_html_title(renderer, title_override);
         if (st != MDF_OK) {
             fprintf(stderr, "cmdf: set HTML title: %s\n", mdf_status_string(st));
             renderer->destroy(renderer);
-            free(detected_title);
-            free(prefix_buf);
             if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
             if (out_fp != stdout) fclose(out_fp);
             if (in_fp != stdin) fclose(in_fp);
@@ -1211,20 +724,8 @@ int main(int argc, char **argv)
     source_data.delay_seconds = simulate_delay_seconds;
     source_data.reads = 0;
     sink_data.fp = out_fp;
-    prefixed_source_data.fp = in_fp;
-    prefixed_source_data.prefix = prefix_buf;
-    prefixed_source_data.prefix_len = prefix_len;
-    prefixed_source_data.prefix_off = 0;
-    prefixed_source_data.max_chunk = simulate_chunk;
-    prefixed_source_data.delay_seconds = simulate_delay_seconds;
-    prefixed_source_data.reads = 0;
-    if (use_prefixed_source) {
-        source.userdata = &prefixed_source_data;
-        source.read = prefixed_file_read;
-    } else {
-        source.userdata = &source_data;
-        source.read = file_read;
-    }
+    source.userdata = &source_data;
+    source.read = file_read;
     sink.userdata = &sink_data;
     sink.write = file_write;
     st = renderer->render(renderer, &source, &sink);
@@ -1234,8 +735,6 @@ int main(int argc, char **argv)
         rc = 1;
     }
     renderer->destroy(renderer);
-    free(detected_title);
-    free(prefix_buf);
     if (trace_fp != NULL && trace_fp != stderr && fclose(trace_fp) != 0) {
         fprintf(stderr, "cmdf: close trace output: %s\n", strerror(errno));
         rc = 1;

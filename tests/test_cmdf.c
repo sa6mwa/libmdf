@@ -379,6 +379,7 @@ static int run_cmdf_first_chunk(char *const argv[], run_result *out, char **firs
 static int run_cmdf_stdin_first_chunk(char *const argv[],
                                       const char *prefix,
                                       const char *suffix,
+                                      const char *before_suffix_marker,
                                       run_result *out,
                                       char **first_chunk_out,
                                       long *first_ms_out)
@@ -484,7 +485,9 @@ static int run_cmdf_stdin_first_chunk(char *const argv[],
             free(first_chunk);
             return -1;
         }
-        break;
+        if (before_suffix_marker == NULL || strstr(first_chunk, before_suffix_marker) != NULL) {
+            break;
+        }
     }
     if (saw_first && write_all(stdin_pipe[1], suffix, strlen(suffix)) != 0) {
         close(stdout_pipe[0]);
@@ -1074,6 +1077,7 @@ int main(int argc, char **argv)
     if (run_cmdf_stdin_first_chunk(html_title_stdin_args,
                                    "unfinished paragraph",
                                    "\n\n# Later Heading\n",
+                                   "<title>Pipe Title</title>",
                                    &result,
                                    &first_chunk,
                                    &first_ms) != 0) {
@@ -1098,6 +1102,7 @@ int main(int argc, char **argv)
     if (run_cmdf_stdin_first_chunk(html_autotitle_stdin_args,
                                    "unfinished paragraph",
                                    "\n\n# Later Heading\n",
+                                   "<title>mdf</title>",
                                    &result,
                                    &first_chunk,
                                    &first_ms) != 0) {
@@ -1116,6 +1121,28 @@ int main(int argc, char **argv)
     free(first_chunk);
     free(result.buf);
 
+    first_chunk = NULL;
+    first_ms = -1;
+    if (run_cmdf_stdin_first_chunk(html_autotitle_stdin_args,
+                                   "    ",
+                                   "indented paragraph\n# Later Heading\n",
+                                   "<title>mdf</title>",
+                                   &result,
+                                   &first_chunk,
+                                   &first_ms) != 0) {
+        unlink(input_path);
+        fprintf(stderr, "run cmdf html stdin indented autotitle stream probe: %s\n", strerror(errno));
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf html stdin indented autotitle exits successfully");
+    fails += expect(first_chunk != NULL && strstr(first_chunk, "<title>mdf</title>") != NULL,
+                    "cmdf html stdin indented autotitle emits default shell before completed input");
+    fails += expect(first_ms >= 0 && first_ms < 1500L,
+                    "cmdf html stdin indented autotitle does not wait after four spaces");
+    free(first_chunk);
+    free(result.buf);
+
     deck_title_stdin_args[0] = argv[1];
     deck_title_stdin_args[1] = "--deck";
     deck_title_stdin_args[2] = "-T";
@@ -1126,6 +1153,7 @@ int main(int argc, char **argv)
     if (run_cmdf_stdin_first_chunk(deck_title_stdin_args,
                                    "# First streamed slide\n\n---\n",
                                    "\n# Second streamed slide\n",
+                                   "<title>Deck Pipe Title</title>",
                                    &result,
                                    &first_chunk,
                                    &first_ms) != 0) {
@@ -1853,8 +1881,8 @@ int main(int argc, char **argv)
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
                     "cmdf html tab-blank-before-heading exits successfully");
-    fails += expect(result.buf != NULL && strstr(result.buf, "<title>Tab Title</title>") != NULL,
-                    "cmdf html title ignores tab-only leading blank lines");
+    fails += expect(result.buf != NULL && strstr(result.buf, "<title>mdf</title>") != NULL,
+                    "cmdf html title stops when leading tab rules out a heading");
     free(result.buf);
 
     {

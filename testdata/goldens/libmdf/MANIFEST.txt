@@ -1,0 +1,121 @@
+# name input args...
+comprehensive.ansi.styled.w20.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi -w 20 --margin-left 0 --margin-right 0
+comprehensive.ansi.styled.w20.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi -w 20 --margin-left 2 --margin-right 0
+comprehensive.ansi.styled.w20.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi -w 20 --margin-left 0 --margin-right 1
+comprehensive.ansi.styled.w40.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi -w 40 --margin-left 0 --margin-right 0
+comprehensive.ansi.styled.w40.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi -w 40 --margin-left 2 --margin-right 0
+comprehensive.ansi.styled.w40.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi -w 40 --margin-left 0 --margin-right 1
+comprehensive.ansi.styled.w40.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi -w 40 --margin-left 4 --margin-right 6
+comprehensive.ansi.styled.w80.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi -w 80 --margin-left 0 --margin-right 0
+comprehensive.ansi.styled.w80.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi -w 80 --margin-left 2 --margin-right 0
+comprehensive.ansi.styled.w80.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi -w 80 --margin-left 0 --margin-right 1
+comprehensive.ansi.styled.w80.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi -w 80 --margin-left 4 --margin-right 6
+comprehensive.ansi.styled.w80.margin-l20-r20 testdata/deck-corpus/comprehensive.md --ansi -w 80 --margin-left 20 --margin-right 20
+comprehensive.ansi.styled.w120.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi -w 120 --margin-left 0 --margin-right 0
+comprehensive.ansi.styled.w120.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi -w 120 --margin-left 2 --margin-right 0
+comprehensive.ansi.styled.w120.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi -w 120 --margin-left 0 --margin-right 1
+comprehensive.ansi.styled.w120.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi -w 120 --margin-left 4 --margin-right 6
+comprehensive.ansi.styled.w120.margin-l20-r20 testdata/deck-corpus/comprehensive.md --ansi -w 120 --margin-left 20 --margin-right 20
+comprehensive.ansi.boring.w20.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+comprehensive.ansi.boring.w20.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 20 --margin-left 2 --margin-right 0
+comprehensive.ansi.boring.w20.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi --boring -w 20 --margin-left 0 --margin-right 1
+comprehensive.ansi.boring.w40.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+comprehensive.ansi.boring.w40.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 40 --margin-left 2 --margin-right 0
+comprehensive.ansi.boring.w40.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi --boring -w 40 --margin-left 0 --margin-right 1
+comprehensive.ansi.boring.w40.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi --boring -w 40 --margin-left 4 --margin-right 6
+comprehensive.ansi.boring.w80.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+comprehensive.ansi.boring.w80.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 80 --margin-left 2 --margin-right 0
+comprehensive.ansi.boring.w80.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi --boring -w 80 --margin-left 0 --margin-right 1
+comprehensive.ansi.boring.w80.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi --boring -w 80 --margin-left 4 --margin-right 6
+comprehensive.ansi.boring.w80.margin-l20-r20 testdata/deck-corpus/comprehensive.md --ansi --boring -w 80 --margin-left 20 --margin-right 20
+comprehensive.ansi.boring.w120.margin-l0-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+comprehensive.ansi.boring.w120.margin-l2-r0 testdata/deck-corpus/comprehensive.md --ansi --boring -w 120 --margin-left 2 --margin-right 0
+comprehensive.ansi.boring.w120.margin-l0-r1 testdata/deck-corpus/comprehensive.md --ansi --boring -w 120 --margin-left 0 --margin-right 1
+comprehensive.ansi.boring.w120.margin-l4-r6 testdata/deck-corpus/comprehensive.md --ansi --boring -w 120 --margin-left 4 --margin-right 6
+comprehensive.ansi.boring.w120.margin-l20-r20 testdata/deck-corpus/comprehensive.md --ansi --boring -w 120 --margin-left 20 --margin-right 20
+comprehensive.html.default testdata/deck-corpus/comprehensive.md --html
+comprehensive.html.w42 testdata/deck-corpus/comprehensive.md --html -w 42
+comprehensive.deck.default testdata/deck-corpus/comprehensive.md --deck
+comprehensive.deck.w42 testdata/deck-corpus/comprehensive.md --deck -w 42
+comprehensive.deck.slide-numbers.fade testdata/deck-corpus/comprehensive.md --deck --slide-numbers -x fade
+comprehensive.deck.boring testdata/deck-corpus/comprehensive.md --deck --boring
+mixed-layout.ansi.styled.w20.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 20 --margin-left 0 --margin-right 0
+mixed-layout.ansi.styled.w20.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 20 --margin-left 2 --margin-right 0
+mixed-layout.ansi.styled.w20.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi -w 20 --margin-left 0 --margin-right 1
+mixed-layout.ansi.styled.w40.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 40 --margin-left 0 --margin-right 0
+mixed-layout.ansi.styled.w40.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 40 --margin-left 2 --margin-right 0
+mixed-layout.ansi.styled.w40.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi -w 40 --margin-left 0 --margin-right 1
+mixed-layout.ansi.styled.w40.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi -w 40 --margin-left 4 --margin-right 6
+mixed-layout.ansi.styled.w80.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 80 --margin-left 0 --margin-right 0
+mixed-layout.ansi.styled.w80.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 80 --margin-left 2 --margin-right 0
+mixed-layout.ansi.styled.w80.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi -w 80 --margin-left 0 --margin-right 1
+mixed-layout.ansi.styled.w80.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi -w 80 --margin-left 4 --margin-right 6
+mixed-layout.ansi.styled.w80.margin-l20-r20 tests/golden-fixtures/mixed-layout.md --ansi -w 80 --margin-left 20 --margin-right 20
+mixed-layout.ansi.styled.w120.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 120 --margin-left 0 --margin-right 0
+mixed-layout.ansi.styled.w120.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi -w 120 --margin-left 2 --margin-right 0
+mixed-layout.ansi.styled.w120.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi -w 120 --margin-left 0 --margin-right 1
+mixed-layout.ansi.styled.w120.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi -w 120 --margin-left 4 --margin-right 6
+mixed-layout.ansi.styled.w120.margin-l20-r20 tests/golden-fixtures/mixed-layout.md --ansi -w 120 --margin-left 20 --margin-right 20
+mixed-layout.ansi.boring.w20.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+mixed-layout.ansi.boring.w20.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 20 --margin-left 2 --margin-right 0
+mixed-layout.ansi.boring.w20.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 20 --margin-left 0 --margin-right 1
+mixed-layout.ansi.boring.w40.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+mixed-layout.ansi.boring.w40.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 40 --margin-left 2 --margin-right 0
+mixed-layout.ansi.boring.w40.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 40 --margin-left 0 --margin-right 1
+mixed-layout.ansi.boring.w40.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 40 --margin-left 4 --margin-right 6
+mixed-layout.ansi.boring.w80.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+mixed-layout.ansi.boring.w80.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 80 --margin-left 2 --margin-right 0
+mixed-layout.ansi.boring.w80.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 80 --margin-left 0 --margin-right 1
+mixed-layout.ansi.boring.w80.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 80 --margin-left 4 --margin-right 6
+mixed-layout.ansi.boring.w80.margin-l20-r20 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 80 --margin-left 20 --margin-right 20
+mixed-layout.ansi.boring.w120.margin-l0-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+mixed-layout.ansi.boring.w120.margin-l2-r0 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 120 --margin-left 2 --margin-right 0
+mixed-layout.ansi.boring.w120.margin-l0-r1 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 120 --margin-left 0 --margin-right 1
+mixed-layout.ansi.boring.w120.margin-l4-r6 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 120 --margin-left 4 --margin-right 6
+mixed-layout.ansi.boring.w120.margin-l20-r20 tests/golden-fixtures/mixed-layout.md --ansi --boring -w 120 --margin-left 20 --margin-right 20
+mixed-layout.html.default tests/golden-fixtures/mixed-layout.md --html
+mixed-layout.html.w42 tests/golden-fixtures/mixed-layout.md --html -w 42
+mixed-layout.deck.default tests/golden-fixtures/mixed-layout.md --deck
+mixed-layout.deck.w42 tests/golden-fixtures/mixed-layout.md --deck -w 42
+mixed-layout.deck.slide-numbers.fade tests/golden-fixtures/mixed-layout.md --deck --slide-numbers -x fade
+mixed-layout.deck.boring tests/golden-fixtures/mixed-layout.md --deck --boring
+container-charts.ansi.styled.w20.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi -w 20 --margin-left 0 --margin-right 0
+container-charts.ansi.styled.w20.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi -w 20 --margin-left 2 --margin-right 0
+container-charts.ansi.styled.w20.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi -w 20 --margin-left 0 --margin-right 1
+container-charts.ansi.styled.w40.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi -w 40 --margin-left 0 --margin-right 0
+container-charts.ansi.styled.w40.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi -w 40 --margin-left 2 --margin-right 0
+container-charts.ansi.styled.w40.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi -w 40 --margin-left 0 --margin-right 1
+container-charts.ansi.styled.w40.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi -w 40 --margin-left 4 --margin-right 6
+container-charts.ansi.styled.w80.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi -w 80 --margin-left 0 --margin-right 0
+container-charts.ansi.styled.w80.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi -w 80 --margin-left 2 --margin-right 0
+container-charts.ansi.styled.w80.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi -w 80 --margin-left 0 --margin-right 1
+container-charts.ansi.styled.w80.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi -w 80 --margin-left 4 --margin-right 6
+container-charts.ansi.styled.w80.margin-l20-r20 tests/golden-fixtures/container-charts.md --ansi -w 80 --margin-left 20 --margin-right 20
+container-charts.ansi.styled.w120.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi -w 120 --margin-left 0 --margin-right 0
+container-charts.ansi.styled.w120.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi -w 120 --margin-left 2 --margin-right 0
+container-charts.ansi.styled.w120.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi -w 120 --margin-left 0 --margin-right 1
+container-charts.ansi.styled.w120.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi -w 120 --margin-left 4 --margin-right 6
+container-charts.ansi.styled.w120.margin-l20-r20 tests/golden-fixtures/container-charts.md --ansi -w 120 --margin-left 20 --margin-right 20
+container-charts.ansi.boring.w20.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+container-charts.ansi.boring.w20.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 20 --margin-left 2 --margin-right 0
+container-charts.ansi.boring.w20.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi --boring -w 20 --margin-left 0 --margin-right 1
+container-charts.ansi.boring.w40.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+container-charts.ansi.boring.w40.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 40 --margin-left 2 --margin-right 0
+container-charts.ansi.boring.w40.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi --boring -w 40 --margin-left 0 --margin-right 1
+container-charts.ansi.boring.w40.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi --boring -w 40 --margin-left 4 --margin-right 6
+container-charts.ansi.boring.w80.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+container-charts.ansi.boring.w80.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 80 --margin-left 2 --margin-right 0
+container-charts.ansi.boring.w80.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi --boring -w 80 --margin-left 0 --margin-right 1
+container-charts.ansi.boring.w80.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi --boring -w 80 --margin-left 4 --margin-right 6
+container-charts.ansi.boring.w80.margin-l20-r20 tests/golden-fixtures/container-charts.md --ansi --boring -w 80 --margin-left 20 --margin-right 20
+container-charts.ansi.boring.w120.margin-l0-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+container-charts.ansi.boring.w120.margin-l2-r0 tests/golden-fixtures/container-charts.md --ansi --boring -w 120 --margin-left 2 --margin-right 0
+container-charts.ansi.boring.w120.margin-l0-r1 tests/golden-fixtures/container-charts.md --ansi --boring -w 120 --margin-left 0 --margin-right 1
+container-charts.ansi.boring.w120.margin-l4-r6 tests/golden-fixtures/container-charts.md --ansi --boring -w 120 --margin-left 4 --margin-right 6
+container-charts.ansi.boring.w120.margin-l20-r20 tests/golden-fixtures/container-charts.md --ansi --boring -w 120 --margin-left 20 --margin-right 20
+container-charts.html.default tests/golden-fixtures/container-charts.md --html
+container-charts.html.w42 tests/golden-fixtures/container-charts.md --html -w 42
+container-charts.deck.default tests/golden-fixtures/container-charts.md --deck
+container-charts.deck.w42 tests/golden-fixtures/container-charts.md --deck -w 42
+container-charts.deck.slide-numbers.fade tests/golden-fixtures/container-charts.md --deck --slide-numbers -x fade
+container-charts.deck.boring tests/golden-fixtures/container-charts.md --deck --boring

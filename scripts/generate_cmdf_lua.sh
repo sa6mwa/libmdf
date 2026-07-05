@@ -70,6 +70,7 @@ end
 local function usage()
   io.stderr:write("Usage: cmdf.lua [flags] [input]\\n")
   io.stderr:write("  -H, --html                 Render HTML\\n")
+  io.stderr:write("      --deck                 Render HTML slide deck\\n")
   io.stderr:write("  -b, --boring               Boring ANSI output\\n")
   io.stderr:write("  -o, --output PATH          Output file\\n")
   io.stderr:write("  -t, --theme NAME           Theme name\\n")
@@ -80,30 +81,98 @@ local function usage()
   io.stderr:write("  -8, --osc8 MODE            OSC8 mode: auto|on|off\\n")
   io.stderr:write("      --list-themes          List available themes\\n")
   io.stderr:write("      --html-content-width N HTML content max width in ch\\n")
+  io.stderr:write("  -x, --transition MODE      Deck transition: fade|cross|hard\\n")
+  io.stderr:write("      --slide-numbers        Show deck slide numbers after the first slide\\n")
+  io.stderr:write("      --deck-center-front-text Center-align first-slide paragraph text\\n")
   io.stderr:write("      --table-buffer MODE    Table buffering mode: full|row\\n")
   io.stderr:write("      --table-wire MODE      Table wire mode: line|ascii|space\\n")
+  io.stderr:write("      --simulate             Simulate input streaming with default chunk\\n")
+  io.stderr:write("      --simulate-chunk N     Simulate input streaming with max N bytes per read\\n")
+  io.stderr:write("      --simulate-delay D     Delay duration between simulated reads; implies --simulate\\n")
   io.stderr:write("      --trace-writes PATH    Write ANSI renderer-emission NDJSON trace to PATH or - for stderr\\n")
   io.stderr:write("  -h, --help                 Show help\\n")
+  io.stderr:write("  -V, --version              Show version\\n")
 end
 
 local opts = { osc8 = mdf.detect_osc8_support() }
 local input_path, output_path, trace_path, trace_file
 local format_explicit = false
+local width_flag = nil
+local html_content_width_seen = false
+local simulate_enabled = false
+local simulate_chunk = nil
+local simulate_delay_seconds = 0
 local i = 1
+
+local function parse_duration_seconds(s)
+  if not s or s == "" then return nil end
+  local pos = 1
+  local total = 0
+  while pos <= #s do
+    local num, next_pos = s:match("^([+-]?%d+%.?%d*[eE][+-]?%d+)()", pos)
+    if not num then num, next_pos = s:match("^([+-]?%.%d+[eE][+-]?%d+)()", pos) end
+    if not num then num, next_pos = s:match("^([+-]?%d+%.?%d*)()", pos) end
+    if not num then num, next_pos = s:match("^([+-]?%.%d+)()", pos) end
+    if not num then return nil end
+    local value = tonumber(num)
+    if not value or value < 0 then return nil end
+    local unit
+    if s:sub(next_pos, next_pos + 1) == "ns" then
+      unit = "ns"
+      next_pos = next_pos + 2
+    elseif s:sub(next_pos, next_pos + 1) == "us" then
+      unit = "us"
+      next_pos = next_pos + 2
+    elseif s:sub(next_pos, next_pos + 2) == "µs" then
+      unit = "µs"
+      next_pos = next_pos + 3
+    elseif s:sub(next_pos, next_pos + 1) == "ms" then
+      unit = "ms"
+      next_pos = next_pos + 2
+    else
+      unit = s:sub(next_pos, next_pos)
+      if unit == "s" or unit == "m" or unit == "h" then
+        next_pos = next_pos + 1
+      else
+        return nil
+      end
+    end
+    local scale = ({ ns = 0.000000001, us = 0.000001, ["µs"] = 0.000001, ms = 0.001, s = 1, m = 60, h = 3600 })[unit]
+    total = total + value * scale
+    pos = next_pos
+  end
+  if total <= 0 then return nil end
+  return total
+end
+
+local function sleep_seconds(seconds)
+  if not seconds or seconds <= 0 then return end
+  os.execute(string.format("sleep %.9f", seconds))
+end
+
 while i <= #arg do
   local a = arg[i]
   if a == "-h" or a == "--help" then
     usage()
     os.exit(0)
+  elseif a == "-V" or a == "--version" then
+    print(mdf.version)
+    os.exit(0)
   elseif a == "-H" or a == "--html" then
     opts.html = true
+    format_explicit = true
+  elseif a == "--deck" then
+    -- Match native cmdf: deck is the more specific HTML mode once requested.
+    opts.deck = true
+    opts.html = nil
     format_explicit = true
   elseif a == "-b" or a == "--boring" then
     opts.boring = true
   elseif a == "-w" or a == "--width" then
     i = i + 1
     opts.width = tonumber(arg[i])
-    if not opts.width or opts.width <= 0 then error("cmdf.lua: invalid width", 0) end
+    if not opts.width or opts.width <= 0 or opts.width > 10000 or opts.width ~= math.floor(opts.width) then error("cmdf.lua: invalid width", 0) end
+    width_flag = opts.width
   elseif a == "--margin-left" then
     i = i + 1
     opts.margin_left = tonumber(arg[i])
@@ -128,6 +197,20 @@ while i <= #arg do
     i = i + 1
     opts.html_content_width_ch = tonumber(arg[i])
     if not opts.html_content_width_ch or opts.html_content_width_ch <= 0 then error("cmdf.lua: invalid html content width", 0) end
+    html_content_width_seen = true
+  elseif a == "-x" or a == "--transition" then
+    i = i + 1
+    opts.deck_transition = arg[i]
+    if opts.deck_transition ~= "fade" and opts.deck_transition ~= "cross" and opts.deck_transition ~= "hard" then
+      error("cmdf.lua: invalid deck transition", 0)
+    end
+    opts.deck_option_seen = true
+  elseif a == "--slide-numbers" then
+    opts.slide_numbers = true
+    opts.deck_option_seen = true
+  elseif a == "--deck-center-front-text" then
+    opts.deck_center_front_text = true
+    opts.deck_option_seen = true
   elseif a == "--table-buffer" then
     i = i + 1
     opts.table_buffer_mode = arg[i]
@@ -136,6 +219,21 @@ while i <= #arg do
     i = i + 1
     opts.table_wire_mode = arg[i]
     if not opts.table_wire_mode then error("cmdf.lua: missing table wire mode", 0) end
+  elseif a == "--simulate" then
+    simulate_enabled = true
+    simulate_chunk = 3
+    simulate_delay_seconds = 0.02
+  elseif a == "-S" or a == "--simulate-chunk" then
+    i = i + 1
+    simulate_chunk = tonumber(arg[i])
+    if not simulate_chunk or simulate_chunk <= 0 or simulate_chunk > 10000 or simulate_chunk ~= math.floor(simulate_chunk) then
+      error("cmdf.lua: invalid simulate chunk", 0)
+    end
+  elseif a == "--simulate-delay" then
+    i = i + 1
+    simulate_delay_seconds = parse_duration_seconds(arg[i])
+    if not simulate_delay_seconds then error("cmdf.lua: invalid simulate delay", 0) end
+    simulate_enabled = true
   elseif a == "--trace-writes" then
     i = i + 1
     trace_path = arg[i]
@@ -170,14 +268,29 @@ if not format_explicit and has_html_extension(output_path) then
   io.stderr:write("cmdf.lua: warning: inferring --html from output path " .. output_path .. "\\n")
 end
 
-if opts.html and opts.table_wire_mode == "ascii" then
-  error("cmdf.lua: --table-wire ascii is not supported with --html; use line or space", 0)
+if opts.deck_option_seen and not opts.deck then
+  error("cmdf.lua: deck options require --deck", 0)
 end
-if trace_path and opts.html then
+opts.deck_option_seen = nil
+
+local html_like = opts.html or opts.deck
+
+if (simulate_enabled or simulate_delay_seconds > 0) and not simulate_chunk then
+  simulate_chunk = 3
+end
+
+if html_like and width_flag and not html_content_width_seen then
+  opts.html_content_width_ch = width_flag
+end
+
+if html_like and opts.table_wire_mode == "ascii" then
+  error("cmdf.lua: --table-wire ascii is not supported with HTML output; use line or space", 0)
+end
+if trace_path and html_like then
   error("cmdf.lua: --trace-writes is only supported for ANSI output", 0)
 end
 
-if opts.html then
+if html_like then
   opts.html_font = {
     family = "JetBrains Mono",
     regular_format = "woff2",
@@ -208,86 +321,6 @@ else
   input_file = io.stdin
 end
 
-local pending_chunks = {}
-local pending_index = 1
-local pending_offset = 1
-
-local function trim_detected_title(s)
-  s = s:gsub("^[ \\t]+", "")
-  while true do
-    local trimmed = s:gsub("[ \\t]+$", "")
-    local without_closer = trimmed:gsub("[ \\t]#+$", "")
-    if without_closer == trimmed then
-      return trimmed
-    end
-    s = without_closer
-  end
-end
-
-local function read_title_prescan_byte(line)
-  local ch = input_file:read(1)
-  if ch == nil then return nil end
-  pending_chunks[#pending_chunks + 1] = ch
-  line[#line + 1] = ch
-  return ch
-end
-
-local function detect_html_title_from_line(line)
-  line = line:gsub("[\\r\\n]+$", "")
-  local pos = 1
-  local spaces = 0
-  while spaces < 4 and line:sub(pos, pos) == " " do
-    pos = pos + 1
-    spaces = spaces + 1
-  end
-  local hash_end = pos
-  while hash_end <= #line and line:sub(hash_end, hash_end) == "#" do
-    hash_end = hash_end + 1
-  end
-  return trim_detected_title(line:sub(hash_end))
-end
-
-local function detect_html_title_from_stream()
-  while true do
-    local line = {}
-    local spaces = 0
-    local saw_tab = false
-    while true do
-      local ch = read_title_prescan_byte(line)
-      if ch == nil then return nil end
-      if ch == "\\n" then
-        break
-      elseif ch == "\\r" then
-        -- CR before LF does not make a blank line nonblank.
-      elseif ch == "\\t" then
-        saw_tab = true
-      elseif ch == " " then
-        spaces = spaces + 1
-      elseif not saw_tab and spaces < 4 and ch == "#" then
-        local hash_count = 1
-        repeat
-          ch = read_title_prescan_byte(line)
-          if ch == "#" then hash_count = hash_count + 1 end
-        until ch ~= "#"
-        if hash_count >= 1 and hash_count <= 6 and
-            (ch == nil or ch == "\\n" or ch == "\\r" or ch == " " or ch == "\\t") then
-          while ch ~= nil and ch ~= "\\n" do
-            ch = read_title_prescan_byte(line)
-          end
-          return detect_html_title_from_line(table.concat(line))
-        end
-        return nil
-      else
-        return nil
-      end
-    end
-  end
-end
-
-if opts.html and opts.html_title == nil then
-  opts.html_title = detect_html_title_from_stream()
-end
-
 local output_file
 if output_path then
   output_file = assert(io.open(output_path, "wb"))
@@ -295,20 +328,24 @@ else
   output_file = io.stdout
 end
 
+local simulated_reads = 0
+
+local function maybe_sleep_between_simulated_reads()
+  if simulated_reads > 0 then
+    sleep_seconds(simulate_delay_seconds)
+  end
+end
+
 local function read_chunk(cap)
   local n = cap
   if n == nil or n <= 0 or n > 4096 then n = 4096 end
-  if pending_index <= #pending_chunks then
-    local chunk = pending_chunks[pending_index]:sub(pending_offset, pending_offset + n - 1)
-    pending_offset = pending_offset + #chunk
-    if pending_offset > #pending_chunks[pending_index] then
-      pending_index = pending_index + 1
-      pending_offset = 1
-    end
-    if chunk ~= "" then return chunk end
-  end
+  if simulate_chunk and n > simulate_chunk then n = simulate_chunk end
   local chunk = input_file:read(n)
   if chunk == "" then return nil end
+  if chunk ~= nil then
+    maybe_sleep_between_simulated_reads()
+    simulated_reads = simulated_reads + 1
+  end
   return chunk
 end
 

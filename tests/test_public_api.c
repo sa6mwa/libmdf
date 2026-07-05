@@ -832,10 +832,10 @@ int main(void)
     st = inst->render_cstr(inst, "# Cleared Deck Title\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "html deck cleared title render succeeds");
     fails += expect(out != NULL &&
-                    strstr(out, "<title>mdf</title>") != NULL &&
+                    strstr(out, "<title>Cleared Deck Title</title>") != NULL &&
                     strstr(out, "<title>Deck &amp; &lt;API&gt;</title>") == NULL &&
                     strstr(out, "<main class=\"mdf-deck\"") != NULL,
-                    "html deck cleared title returns to default shell title");
+                    "html deck cleared title returns to automatic shell title");
     inst->string_free(inst, out);
     out = NULL;
     inst->destroy(inst);
@@ -1854,6 +1854,23 @@ int main(void)
     opts.margin_right = 5;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID, "ansi rejects margins that consume width");
+
+    mdf_options_init(&opts);
+    opts.width = 1;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_ERROR_INVALID, "ansi rejects one-column content width");
+
+    mdf_options_init(&opts);
+    opts.width = 2;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_ERROR_INVALID, "ansi rejects two-column content width");
+
+    mdf_options_init(&opts);
+    opts.width = 4;
+    opts.margin_left = 1;
+    opts.margin_right = 1;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_ERROR_INVALID, "ansi rejects margins that leave two content columns");
 
     mdf_options_init(&opts);
     opts.margin_left = 4;

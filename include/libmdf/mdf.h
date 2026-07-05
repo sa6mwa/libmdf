@@ -122,7 +122,10 @@ typedef struct mdf_html_font {
  * deck_center_front_text. Deck slide bodies are vertically centered by default.
  */
 typedef struct mdf_options {
-    /** ANSI wrap width. Horizontal/vertical/tile charts fit to this width after margins. */
+    /**
+     * ANSI wrap width. Effective content width after margins must be at least 3.
+     * Horizontal/vertical/tile charts fit to this width after margins.
+     */
     int width;
     /** ANSI-only left margin emitted on non-empty lines, including chart lines. */
     int margin_left;

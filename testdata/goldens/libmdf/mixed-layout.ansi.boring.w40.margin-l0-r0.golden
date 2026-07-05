@@ -1,0 +1,85 @@
+# Mixed Layout Golden Fixture
+
+This fixture is intentionally compact
+but broad. It exercises headings,
+paragraph wrapping, inline emphasis,
+strong text, inline code, links,
+autolinks like https:
+//example.com/mixed, tables, charts,
+quotes, lists, code, and deck slide
+boundaries.
+
+# Inline And Containers
+
+> Quoted prose should preserve quote
+> styling while wrapping under
+> configured widths and margins.
+>
+> - Quoted list item with strong text.
+> - Quoted list item with a link
+>   (https://example.com/quoted-list).
+
+- Top-level list item with enough text
+  to wrap in narrow ANSI output.
+- Nested material:
+  - Nested item with inline code.
+  - Nested item with emphasis and strong
+    text.
+
+1. Ordered item alpha.
+2. Ordered item beta with a descriptive
+   link to the project
+   (https://pkt.systems/c/libmdf).
+
+# Table And Code
+
+┌────────┬────────┬────────────────────┐
+│ Area   │ Status │ Notes              │
+├────────┼────────┼────────────────────┤
+│ Parser │ green  │ Keeps token order  │
+│        │        │ stable.            │
+│ ANSI   │ green  │ Margins are        │
+│        │        │ absolute and style │
+│        │        │ escapes must stay  │
+│        │        │ inside them.       │
+│ HTML   │ green  │ Escapes text and   │
+│        │        │ emits semantic     │
+│        │        │ wrappers.          │
+│ Deck   │ watch  │ Slide wrappers     │
+│        │        │ must not perturb   │
+│        │        │ body HTML.         │
+└────────┴────────┴────────────────────┘
+
+static int boundary(const char *s)
+{
+    return s != NULL && s[0] == '-
+' && s[1] == '-' && s[2] == '-';
+}
+
+The literal thematic break marker in the
+code fence must not split a deck slide.
+
+# Horizontal Chart
+
+        Verifica │ ████ 34 41.0%
+        Implemen │ ███  29 34.9%
+        Design   │ █    12 14.5%
+        Release  │ █    8 9.6%
+
+# Vertical Chart
+
+     18 ┤                    ███  
+        │                    ███  
+        │        ███         ███  
+      9 ┤        ███   ███   ███  
+        │  ███   ███   ███   ███  
+        │  ███   ███   ███   ███  
+      0 └─────────────────────────
+            1     2     3     4   
+
+# Tile Chart
+
+███Tests█████HTML█████Deck████CLI███Lua█
+███26.7%█████23.3%███20.0%███17.8%█12.2%
+
+  ■ Tests 24  ■ HTML 21  ■ Deck 18 +2
