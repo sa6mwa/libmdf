@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 typedef struct counting_allocator {
     size_t allocs;
@@ -500,6 +501,11 @@ int main(void)
     grow_sink sink_data;
     mdf_sink sink;
     size_t before_allocs;
+    mdf_html_font jetbrains_font;
+    char regular_font_path[128];
+    char italic_font_path[128];
+    FILE *font_fp;
+    int first_font_byte;
     static const unsigned char deck_font_bytes[] = {1, 2, 3};
 
     fails = 0;
@@ -565,6 +571,56 @@ int main(void)
     fails += expect(mdf_terminal_width(-1, 0) == 80,
                     "terminal width normalizes non-positive fallback");
     mdf_options_init(NULL);
+    memset(&jetbrains_font, 0, sizeof(jetbrains_font));
+    mdf_html_jetbrains_mono_font(&jetbrains_font);
+    fails += expect(jetbrains_font.family != NULL &&
+                    strcmp(jetbrains_font.family, "JetBrains Mono") == 0 &&
+                    jetbrains_font.regular.format == MDF_HTML_FONT_FORMAT_WOFF2 &&
+                    jetbrains_font.regular.data_len > 0 &&
+                    jetbrains_font.italic.format == MDF_HTML_FONT_FORMAT_WOFF2 &&
+                    jetbrains_font.italic.data_len > 0,
+                    "built-in JetBrains Mono font descriptor exposes both WOFF2 faces");
+    snprintf(regular_font_path, sizeof(regular_font_path),
+             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+    snprintf(italic_font_path, sizeof(italic_font_path),
+             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+    st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
+    fails += expect(st == MDF_OK, "built-in JetBrains Mono fonts dump to explicit paths");
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) {
+        fclose(font_fp);
+    }
+    fails += expect(first_font_byte == 'w', "dumped regular JetBrains Mono font is WOFF2 data");
+    font_fp = fopen(italic_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) {
+        fclose(font_fp);
+    }
+    fails += expect(first_font_byte == 'w', "dumped italic JetBrains Mono font is WOFF2 data");
+    font_fp = fopen(regular_font_path, "wb");
+    if (font_fp != NULL) {
+        fputs("preserve", font_fp);
+        fclose(font_fp);
+    }
+    st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
+    fails += expect(st == MDF_OK, "default font dump preserves existing files");
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) {
+        fclose(font_fp);
+    }
+    fails += expect(first_font_byte == 'p', "default font dump does not replace an existing font");
+    st = mdf_dump_html_jetbrains_mono_font_force(regular_font_path, italic_font_path);
+    fails += expect(st == MDF_OK, "forced font dump replaces existing files");
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) {
+        fclose(font_fp);
+    }
+    fails += expect(first_font_byte == 'w', "forced font dump restores WOFF2 data");
+    remove(regular_font_path);
+    remove(italic_font_path);
 
     st = mdf_create(MDF_FORMAT_ANSI, NULL, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "ansi create succeeds with default options");
@@ -592,6 +648,8 @@ int main(void)
                     "html default-options handle renders");
     fails += expect(strstr(out, "<!doctype html>") != NULL,
                     "html default-options handle emits shell");
+    fails += expect(strstr(out, "@font-face{font-family:\"JetBrains Mono\";src:url(data:font/woff2;base64,") != NULL,
+                    "html defaults to embedded JetBrains Mono");
     inst->string_free(inst, out);
     out = NULL;
     st = inst->render_cstr(inst,
@@ -625,6 +683,45 @@ int main(void)
     out = NULL;
     inst->destroy(inst);
     inst = NULL;
+
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "external html font renderer create succeeds");
+    if (inst != NULL) {
+        st = mdf_set_html_jetbrains_mono_font_uris(inst,
+                                                   "fonts/JetBrainsMono-Regular.woff2",
+                                                   "fonts/JetBrainsMono-Italic.woff2");
+        fails += expect(st == MDF_OK, "external paired HTML font URIs are accepted");
+        st = inst->render_cstr(inst, "external font html\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "external font HTML renders");
+        fails += expect(out != NULL &&
+                        strstr(out, "src:url(\"fonts/JetBrainsMono-Regular.woff2\") format('woff2')") != NULL &&
+                        strstr(out, "src:url(\"fonts/JetBrainsMono-Italic.woff2\") format('woff2')") != NULL &&
+                        strstr(out, "data:font/woff2;base64,") == NULL,
+                        "external font URIs replace embedded font data");
+        inst->string_free(inst, out);
+        out = NULL;
+        inst->destroy(inst);
+        inst = NULL;
+    }
+    mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "default external html font renderer create succeeds");
+    if (inst != NULL) {
+        st = mdf_set_html_jetbrains_mono_font_uris(inst, NULL, NULL);
+        fails += expect(st == MDF_OK, "default paired HTML font URIs are accepted");
+        st = inst->render_cstr(inst, "default external font html\n", &out);
+        fails += expect(st == MDF_OK && out != NULL, "default external font HTML renders");
+        fails += expect(out != NULL &&
+                        strstr(out, "JetBrainsMono-Regular.woff2") != NULL &&
+                        strstr(out, "JetBrainsMono-Italic.woff2") != NULL &&
+                        strstr(out, "data:font/woff2;base64,") == NULL,
+                        "default external font URIs replace embedded font data");
+        inst->string_free(inst, out);
+        out = NULL;
+        inst->destroy(inst);
+        inst = NULL;
+    }
     mdf_options_init(&opts);
     opts.deck_transition = MDF_DECK_TRANSITION_CROSS;
     opts.slide_numbers = 1;

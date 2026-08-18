@@ -1,5 +1,4 @@
 #include "libmdf/mdf.h"
-#include "cmdf_fonts.h"
 #include "mdf_internal.h"
 
 #include <errno.h>
@@ -220,6 +219,14 @@ static void usage(FILE *fp)
     fprintf(fp, "  -8, --osc8 MODE            OSC8 mode: auto|on|off\n");
     fprintf(fp, "      --list-themes          List available themes\n");
     fprintf(fp, "      --html-content-width N HTML content max width in ch\n");
+    fprintf(fp, "      --html-disable-embedded-font Use external JetBrains Mono web fonts\n");
+    fprintf(fp, "      --html-font-uri URI    External regular JetBrains Mono font URI\n");
+    fprintf(fp, "      --html-font-italic-uri URI External italic JetBrains Mono font URI\n");
+    fprintf(fp, "      --html-dump-font       Write external local font URIs to their paths\n");
+    fprintf(fp, "      --html-dump-font-force Replace existing font files while dumping\n");
+    fprintf(fp, "      --html-dump-font-path DIR Write and reference paired fonts in DIR\n");
+    fprintf(fp, "      --html-dump-font-regular-path PATH Override regular font destination\n");
+    fprintf(fp, "      --html-dump-font-italic-path PATH Override italic font destination\n");
     fprintf(fp, "  -x, --transition MODE      Deck transition: fade|cross|hard\n");
     fprintf(fp, "      --slide-numbers        Show deck slide numbers after the first slide\n");
     fprintf(fp, "      --deck-center-front-text Center-align first-slide paragraph text\n");
@@ -242,6 +249,42 @@ static int parse_int(const char *s, int *out)
         return -1;
     }
     *out = (int)value;
+    return 0;
+}
+
+static const char *html_local_font_path(const char *uri)
+{
+    if (uri == NULL || uri[0] == '\0' ||
+        strncmp(uri, "http://", 7) == 0 || strncmp(uri, "https://", 8) == 0) {
+        return NULL;
+    }
+    if (strncmp(uri, "file://", 7) == 0) {
+        uri += 7;
+        if (uri[0] == '\0' || uri[0] != '/') {
+            return NULL;
+        }
+    }
+    return uri;
+}
+
+static int html_font_path_join(char *dst, size_t cap, const char *dir, const char *name)
+{
+    size_t len;
+    int need_slash;
+
+    if (dst == NULL || cap == 0 || dir == NULL || dir[0] == '\0' || name == NULL) {
+        return -1;
+    }
+    len = strlen(dir);
+    need_slash = dir[len - 1] != '/';
+    if (len + (size_t)need_slash + strlen(name) + 1 > cap) {
+        return -1;
+    }
+    memcpy(dst, dir, len);
+    if (need_slash) {
+        dst[len++] = '/';
+    }
+    strcpy(dst + len, name);
     return 0;
 }
 
@@ -431,6 +474,18 @@ int main(int argc, char **argv)
     int deck_requested;
     int deck_option_seen;
     int html_content_width_flag;
+    int html_disable_embedded_font;
+    int html_dump_font;
+    int html_dump_font_force;
+    const char *html_font_uri;
+    const char *html_font_italic_uri;
+    const char *html_font_path;
+    const char *html_font_regular_path;
+    const char *html_font_italic_path;
+    const char *regular_font_dump_path;
+    const char *italic_font_dump_path;
+    char html_font_regular_path_buf[4096];
+    char html_font_italic_path_buf[4096];
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
@@ -446,6 +501,14 @@ int main(int argc, char **argv)
         {"osc8", required_argument, NULL, '8'},
         {"list-themes", no_argument, NULL, 1000},
         {"html-content-width", required_argument, NULL, 1001},
+        {"html-disable-embedded-font", no_argument, NULL, 1012},
+        {"html-font-uri", required_argument, NULL, 1013},
+        {"html-font-italic-uri", required_argument, NULL, 1014},
+        {"html-dump-font", no_argument, NULL, 1015},
+        {"html-dump-font-force", no_argument, NULL, 1018},
+        {"html-dump-font-path", required_argument, NULL, 1016},
+        {"html-dump-font-regular-path", required_argument, NULL, 1019},
+        {"html-dump-font-italic-path", required_argument, NULL, 1017},
         {"table-buffer", required_argument, NULL, 1002},
         {"table-wire", required_argument, NULL, 1003},
         {"simulate", no_argument, NULL, 1004},
@@ -487,6 +550,16 @@ int main(int argc, char **argv)
     deck_requested = 0;
     deck_option_seen = 0;
     html_content_width_flag = 0;
+    html_disable_embedded_font = 0;
+    html_dump_font = 0;
+    html_dump_font_force = 0;
+    html_font_uri = NULL;
+    html_font_italic_uri = NULL;
+    html_font_path = NULL;
+    html_font_regular_path = NULL;
+    html_font_italic_path = NULL;
+    regular_font_dump_path = NULL;
+    italic_font_dump_path = NULL;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
     while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:x:", long_options, NULL)) != -1) {
@@ -565,6 +638,31 @@ int main(int argc, char **argv)
                 return 2;
             }
             html_content_width_flag = 1;
+            break;
+        case 1012:
+            html_disable_embedded_font = 1;
+            break;
+        case 1013:
+            html_font_uri = optarg;
+            break;
+        case 1014:
+            html_font_italic_uri = optarg;
+            break;
+        case 1015:
+            html_dump_font = 1;
+            break;
+        case 1018:
+            html_dump_font = 1;
+            html_dump_font_force = 1;
+            break;
+        case 1016:
+            html_font_path = optarg;
+            break;
+        case 1017:
+            html_font_italic_path = optarg;
+            break;
+        case 1019:
+            html_font_regular_path = optarg;
             break;
         case 1002:
             if (parse_table_buffer(optarg, &opts.table_buffer_mode) != 0) {
@@ -647,7 +745,56 @@ int main(int argc, char **argv)
         if (width_flag > 0 && !html_content_width_flag) {
             opts.html_content_width_ch = (double)width_flag;
         }
-        cmdf_enable_embedded_fonts(&opts);
+    }
+    if ((html_disable_embedded_font || html_font_uri != NULL || html_font_italic_uri != NULL ||
+         html_dump_font || html_font_path != NULL || html_font_regular_path != NULL || html_font_italic_path != NULL) &&
+        format != MDF_FORMAT_HTML && format != MDF_FORMAT_HTML_DECK) {
+        fprintf(stderr, "cmdf: HTML font options require HTML or deck output\n");
+        return 2;
+    }
+    if ((html_font_uri == NULL) != (html_font_italic_uri == NULL)) {
+        fprintf(stderr, "cmdf: --html-font-uri and --html-font-italic-uri must be used together\n");
+        return 2;
+    }
+    if (html_font_path != NULL) {
+        if (html_font_path_join(html_font_regular_path_buf, sizeof(html_font_regular_path_buf),
+                                html_font_path, "JetBrainsMono-Regular.woff2") != 0 ||
+            html_font_path_join(html_font_italic_path_buf, sizeof(html_font_italic_path_buf),
+                                html_font_path, "JetBrainsMono-Italic.woff2") != 0) {
+            fprintf(stderr, "cmdf: HTML font path is too long\n");
+            return 2;
+        }
+        if (html_font_regular_path == NULL) {
+            html_font_regular_path = html_font_regular_path_buf;
+        }
+        if (html_font_italic_path == NULL) {
+            html_font_italic_path = html_font_italic_path_buf;
+        }
+    }
+    if ((html_font_regular_path == NULL) != (html_font_italic_path == NULL)) {
+        fprintf(stderr, "cmdf: paired font paths require both regular and italic destinations\n");
+        return 2;
+    }
+    if (html_font_regular_path != NULL) {
+        html_font_uri = html_font_regular_path;
+        html_font_italic_uri = html_font_italic_path;
+        html_disable_embedded_font = 1;
+        html_dump_font = 1;
+    }
+    if (html_dump_font) {
+        regular_font_dump_path = html_local_font_path(html_font_uri);
+        italic_font_dump_path = html_local_font_path(html_font_italic_uri);
+        if (regular_font_dump_path == NULL || italic_font_dump_path == NULL) {
+            fprintf(stderr, "cmdf: --html-dump-font requires paired local paths or file:// URIs\n");
+            return 2;
+        }
+        st = html_dump_font_force ?
+            mdf_dump_html_jetbrains_mono_font_force(regular_font_dump_path, italic_font_dump_path) :
+            mdf_dump_html_jetbrains_mono_font(regular_font_dump_path, italic_font_dump_path);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: dump HTML fonts: %s\n", mdf_status_string(st));
+            return 1;
+        }
     }
     if (trace_writes_path != NULL && format != MDF_FORMAT_ANSI) {
         fprintf(stderr, "cmdf: --trace-writes is only supported for ANSI output\n");
@@ -707,6 +854,18 @@ int main(int argc, char **argv)
         if (out_fp != stdout) fclose(out_fp);
         if (in_fp != stdin) fclose(in_fp);
         return 1;
+    }
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) &&
+        (html_disable_embedded_font || html_font_uri != NULL)) {
+        st = mdf_set_html_jetbrains_mono_font_uris(renderer, html_font_uri, html_font_italic_uri);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: set HTML font URIs: %s\n", mdf_status_string(st));
+            renderer->destroy(renderer);
+            if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
+            if (out_fp != stdout) fclose(out_fp);
+            if (in_fp != stdin) fclose(in_fp);
+            return 1;
+        }
     }
     if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && title_override != NULL) {
         st = mdf_set_html_title(renderer, title_override);

@@ -189,8 +189,8 @@ Important options:
 - `theme_name`: theme name. `default` is used when unset.
 - `html_content_width_ch`: HTML document content width in `ch`. Default is
   `96`.
-- `html_font`: optional user-supplied HTML font data. The library does not
-  embed a default font.
+- `html_font`: optional user-supplied HTML font data. HTML and deck output use
+  the built-in JetBrains Mono regular and italic WOFF2 faces when this is unset.
 - `deck_transition`: `MDF_DECK_TRANSITION_FADE`,
   `MDF_DECK_TRANSITION_CROSS`, or `MDF_DECK_TRANSITION_HARD`. Default is
   `MDF_DECK_TRANSITION_FADE`.
@@ -355,6 +355,14 @@ Flags:
 -8, --osc8 auto|on|off
     --list-themes
     --html-content-width N
+    --html-disable-embedded-font
+    --html-font-uri URI
+    --html-font-italic-uri URI
+    --html-dump-font
+    --html-dump-font-force
+    --html-dump-font-path DIR
+    --html-dump-font-regular-path PATH
+    --html-dump-font-italic-path PATH
     --transition fade|cross|hard
     --slide-numbers
     --deck-center-front-text
@@ -372,9 +380,20 @@ visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
 
-For HTML, `cmdf` embeds JetBrains Mono woff2 data by default. The library API
-does not hardcode this font; applications can provide their own font bytes or
-callbacks through `mdf_options.html_font`. `cmdf` infers HTML output from
+For HTML, libmdf and `cmdf` embed JetBrains Mono WOFF2 data by default.
+`--html-disable-embedded-font` instead references version-pinned JetBrains
+hosted regular and italic font files. `--html-font-uri` and
+`--html-font-italic-uri` replace those paired external URIs and also disable
+embedding. `--html-dump-font` writes the built-in faces to paired local or
+`file://` URI paths. `--html-dump-font-path` is a directory and derives the
+regular and italic filenames; `--html-dump-font-regular-path` and
+`--html-dump-font-italic-path` independently override those destinations.
+Existing files are preserved unless `--html-dump-font-force` is used. Dump
+destinations become the output URIs. Applications can provide a different embedded family through
+`mdf_options.html_font`, obtain the built-in family through
+`mdf_html_jetbrains_mono_font`, dump it through
+`mdf_dump_html_jetbrains_mono_font`, or select paired external JetBrains URIs
+before rendering through `mdf_set_html_jetbrains_mono_font_uris`. `cmdf` infers HTML output from
 `.html` and `.htm` output paths when `--html` is omitted, warning before it
 renders. libmdf sets the HTML document title from the first ATX heading before
 any paragraph, falls back to `mdf`, and lets `cmdf` override it with `--title`
@@ -485,10 +504,18 @@ html_font = {
   italic_format = "woff2" | "ttf",
   italic_data = bytes,
 }
+disable_embedded_font = true
+font_uri = REGULAR_URI
+font_italic_uri = ITALIC_URI
+dump_font = true
+dump_font_force = true
+font_path = DIRECTORY
+font_regular_path = REGULAR_PATH
+font_italic_path = ITALIC_PATH
 ```
 
 The generated `cmdf.lua` shipped in CLI archives uses the streaming Lua API and
-embeds JetBrains Mono for HTML and deck parity with `cmdf`.
+the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.
 
 The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 `mdf.version_minor`, `mdf.version_patch`, `mdf.status`, `mdf.status_string`,

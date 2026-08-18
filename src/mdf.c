@@ -2613,6 +2613,11 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     if (impl->opts.html_content_width_ch <= 0.0) {
         impl->opts.html_content_width_ch = defaults.html_content_width_ch;
     }
+    if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) &&
+        impl->opts.html_font.family == NULL &&
+        impl->opts.html_font.regular.format == MDF_HTML_FONT_FORMAT_NONE) {
+        mdf_html_jetbrains_mono_font(&impl->opts.html_font);
+    }
     st = mdf_impl_configure_emit_buffer(impl);
     if (st != MDF_OK) {
         mdf_allocator user_allocator;

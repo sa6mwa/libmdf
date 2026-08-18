@@ -214,6 +214,29 @@ local handle_html = html_handle:render("# Ignored\n\nbody\n")
 html_handle:close()
 assert(handle_html:match("<title>Handle HTML</title>"), "lua html handle set_html_title applies title")
 
+local external_font_html = mdf.render("# External Font\n", {
+  html = true,
+  font_uri = "fonts/JetBrainsMono-Regular.woff2",
+  font_italic_uri = "fonts/JetBrainsMono-Italic.woff2",
+})
+assert(external_font_html:match('src:url%("fonts/JetBrainsMono%-Regular%.woff2"%) format%(\'woff2\'%)'),
+  "lua paired regular font URI disables embedded font")
+assert(external_font_html:match('src:url%("fonts/JetBrainsMono%-Italic%.woff2"%) format%(\'woff2\'%)'),
+  "lua paired italic font URI disables embedded font")
+assert(not external_font_html:match("data:font/woff2;base64,"),
+  "lua external font configuration omits embedded font data")
+
+local default_external_font_html = mdf.render("# Default External Font\n", {
+  html = true,
+  disable_embedded_font = true,
+})
+assert(default_external_font_html:match("JetBrainsMono%-Regular%.woff2"),
+  "lua disable_embedded_font uses the default regular web font URI")
+assert(default_external_font_html:match("JetBrainsMono%-Italic%.woff2"),
+  "lua disable_embedded_font uses the default italic web font URI")
+assert(not default_external_font_html:match("data:font/woff2;base64,"),
+  "lua disable_embedded_font omits embedded font data")
+
 local token_out = {}
 local token_handle = mdf.new({ boring = true })
 token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" }, function(chunk) token_out[#token_out + 1] = chunk end)

@@ -5,43 +5,9 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT=${1:-"$ROOT/build/cmdf.lua"}
 mkdir -p "$(dirname "$OUT")"
 
-font_b64() {
-  perl -0777 -ne 'if (/\{(.*)\};/s) { $b = $1; while ($b =~ /\b(0x[0-9a-fA-F]+|[0-9]+)\b/g) { print chr(oct($1)) } }' "$1" | base64 -w0
-}
-
-REGULAR=$(font_b64 "$ROOT/src/html_embedded/jetbrains_regular.h")
-ITALIC=$(font_b64 "$ROOT/src/html_embedded/jetbrains_italic.h")
-
 cat > "$OUT" <<EOF
 #!/usr/bin/env lua
 local mdf = require("libmdf")
-
-local regular_b64 = "$REGULAR"
-local italic_b64 = "$ITALIC"
-
-local function b64decode(s)
-  local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-  local map = {}
-  for i = 1, #alphabet do map[alphabet:sub(i, i)] = i - 1 end
-  local out = {}
-  local bits, bit_count = 0, 0
-  for i = 1, #s do
-    local c = s:sub(i, i)
-    if c == "=" then break end
-    local v = map[c]
-    if v then
-      bits = bits * 64 + v
-      bit_count = bit_count + 6
-      while bit_count >= 8 do
-        bit_count = bit_count - 8
-        local byte = math.floor(bits / (2 ^ bit_count))
-        out[#out + 1] = string.char(byte % 256)
-        bits = bits % (2 ^ bit_count)
-      end
-    end
-  end
-  return table.concat(out)
-end
 
 local function b64encode(s)
   local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -81,6 +47,14 @@ local function usage()
   io.stderr:write("  -8, --osc8 MODE            OSC8 mode: auto|on|off\\n")
   io.stderr:write("      --list-themes          List available themes\\n")
   io.stderr:write("      --html-content-width N HTML content max width in ch\\n")
+  io.stderr:write("      --html-disable-embedded-font Use external JetBrains Mono web fonts\\n")
+  io.stderr:write("      --html-font-uri URI    External regular JetBrains Mono font URI\\n")
+  io.stderr:write("      --html-font-italic-uri URI External italic JetBrains Mono font URI\\n")
+  io.stderr:write("      --html-dump-font       Write external local font URIs to their paths\\n")
+  io.stderr:write("      --html-dump-font-force Replace existing font files while dumping\\n")
+  io.stderr:write("      --html-dump-font-path DIR Write and reference paired fonts in DIR\\n")
+  io.stderr:write("      --html-dump-font-regular-path PATH Override regular font destination\\n")
+  io.stderr:write("      --html-dump-font-italic-path PATH Override italic font destination\\n")
   io.stderr:write("  -x, --transition MODE      Deck transition: fade|cross|hard\\n")
   io.stderr:write("      --slide-numbers        Show deck slide numbers after the first slide\\n")
   io.stderr:write("      --deck-center-front-text Center-align first-slide paragraph text\\n")
@@ -198,6 +172,33 @@ while i <= #arg do
     opts.html_content_width_ch = tonumber(arg[i])
     if not opts.html_content_width_ch or opts.html_content_width_ch <= 0 then error("cmdf.lua: invalid html content width", 0) end
     html_content_width_seen = true
+  elseif a == "--html-disable-embedded-font" then
+    opts.disable_embedded_font = true
+  elseif a == "--html-font-uri" then
+    i = i + 1
+    opts.font_uri = arg[i]
+    if not opts.font_uri then error("cmdf.lua: missing HTML font URI", 0) end
+  elseif a == "--html-font-italic-uri" then
+    i = i + 1
+    opts.font_italic_uri = arg[i]
+    if not opts.font_italic_uri then error("cmdf.lua: missing HTML italic font URI", 0) end
+  elseif a == "--html-dump-font" then
+    opts.dump_font = true
+  elseif a == "--html-dump-font-force" then
+    opts.dump_font = true
+    opts.dump_font_force = true
+  elseif a == "--html-dump-font-path" then
+    i = i + 1
+    opts.font_path = arg[i]
+    if not opts.font_path then error("cmdf.lua: missing HTML dump font path", 0) end
+  elseif a == "--html-dump-font-regular-path" then
+    i = i + 1
+    opts.font_regular_path = arg[i]
+    if not opts.font_regular_path then error("cmdf.lua: missing HTML regular dump font path", 0) end
+  elseif a == "--html-dump-font-italic-path" then
+    i = i + 1
+    opts.font_italic_path = arg[i]
+    if not opts.font_italic_path then error("cmdf.lua: missing HTML italic dump font path", 0) end
   elseif a == "-x" or a == "--transition" then
     i = i + 1
     opts.deck_transition = arg[i]
@@ -275,6 +276,14 @@ opts.deck_option_seen = nil
 
 local html_like = opts.html or opts.deck
 
+if (opts.disable_embedded_font or opts.font_uri or opts.font_italic_uri or opts.dump_font or opts.dump_font_force or
+    opts.font_path or opts.font_regular_path or opts.font_italic_path) and not html_like then
+  error("cmdf.lua: HTML font options require HTML or deck output", 0)
+end
+if (opts.font_uri == nil) ~= (opts.font_italic_uri == nil) then
+  error("cmdf.lua: --html-font-uri and --html-font-italic-uri must be used together", 0)
+end
+
 if (simulate_enabled or simulate_delay_seconds > 0) and not simulate_chunk then
   simulate_chunk = 3
 end
@@ -290,15 +299,6 @@ if trace_path and html_like then
   error("cmdf.lua: --trace-writes is only supported for ANSI output", 0)
 end
 
-if html_like then
-  opts.html_font = {
-    family = "JetBrains Mono",
-    regular_format = "woff2",
-    regular_data = b64decode(regular_b64),
-    italic_format = "woff2",
-    italic_data = b64decode(italic_b64),
-  }
-end
 if trace_path then
   if trace_path == "-" then
     trace_file = io.stderr

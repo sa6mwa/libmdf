@@ -9,7 +9,7 @@
 #include "../src/render_html.c"
 #include "../src/render_ansi.c"
 #include "../src/render_parse.c"
-#include "../src/cmdf_fonts.c"
+#include "../src/html_fonts.c"
 
 typedef struct bridge_source {
     const char *data;
@@ -231,9 +231,6 @@ int libmdf_bridge_render(int format,
     opts.osc8 = osc8;
     opts.table_buffer_mode = (mdf_table_buffer_mode)table_buffer;
     opts.table_wire_mode = (mdf_table_wire_mode)table_wire;
-    if (format == MDF_FORMAT_HTML) {
-        cmdf_enable_embedded_fonts(&opts);
-    }
     if (trace) {
         opts.write_trace.userdata = &sink_data;
         opts.write_trace.emit = bridge_trace_emit;

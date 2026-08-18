@@ -142,7 +142,7 @@ typedef struct mdf_options {
     const char *theme_name;
     /** HTML document width in ch. HTML charts are centered inside this content width. */
     double html_content_width_ch;
-    /** Optional HTML font. cmdf supplies JetBrains Mono; the library does not. */
+    /** Optional HTML font. HTML defaults to the built-in JetBrains Mono family. */
     mdf_html_font html_font;
     /** HTML deck transition behavior. Default is MDF_DECK_TRANSITION_FADE. */
     mdf_deck_transition deck_transition;
@@ -248,6 +248,26 @@ void mdf_options_init(mdf_options *opts);
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
 /** Set or clear the HTML document/deck title before rendering starts. */
 mdf_status mdf_set_html_title(mdf *self, const char *title);
+/** Fill out with libmdf's built-in JetBrains Mono regular and italic WOFF2 faces. */
+void mdf_html_jetbrains_mono_font(mdf_html_font *out);
+/**
+ * Write the built-in JetBrains Mono regular and italic WOFF2 files to explicit
+ * destination paths. Both paths are required. Existing files are preserved.
+ */
+mdf_status mdf_dump_html_jetbrains_mono_font(const char *regular_path,
+                                             const char *italic_path);
+/** Write the built-in JetBrains Mono faces to explicit paths, replacing existing files. */
+mdf_status mdf_dump_html_jetbrains_mono_font_force(const char *regular_path,
+                                                   const char *italic_path);
+/**
+ * Select external JetBrains Mono regular and italic font URIs for an HTML or
+ * deck renderer before it starts rendering. Both URI arguments are required;
+ * passing both as NULL selects the version-pinned JetBrains-hosted defaults.
+ * Non-NULL URI strings must remain valid until rendering has finished.
+ */
+mdf_status mdf_set_html_jetbrains_mono_font_uris(mdf *self,
+                                                 const char *regular_uri,
+                                                 const char *italic_uri);
 /** Stable string for a status code. */
 const char *mdf_status_string(mdf_status status);
 /** Number of built-in themes. */

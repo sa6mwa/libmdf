@@ -81,6 +81,7 @@ set(LIBMDF_SOURCES
   src/render.c
   src/render_ansi.c
   src/render_ansi_blocks.c
+  src/html_fonts.c
   src/render_html.c
   src/render_parse.c)
 
@@ -127,7 +128,7 @@ if(LIBMDF_BUILD_SHARED)
 endif()
 
 if(LIBMDF_BUILD_BINARY)
-  add_executable(cmdf src/cmdf.c src/cmdf_fonts.c)
+  add_executable(cmdf src/cmdf.c)
   target_include_directories(cmdf PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(cmdf PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   target_compile_features(cmdf PRIVATE c_std_90)
