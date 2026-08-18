@@ -290,71 +290,30 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_pop(L, 1);
 }
 
-static const char *lua_mdf_local_font_path(const char *uri)
+static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_format format, mdf_options *opts)
 {
-    if (uri == NULL || uri[0] == '\0' ||
-        strncmp(uri, "http://", 7) == 0 || strncmp(uri, "https://", 8) == 0) {
-        return NULL;
-    }
-    if (strncmp(uri, "file://", 7) == 0) {
-        uri += 7;
-        if (uri[0] == '\0' || uri[0] != '/') {
-            return NULL;
-        }
-    }
-    return uri;
-}
-
-static int lua_mdf_font_path_join(char *dst, size_t cap, const char *dir, const char *name)
-{
-    size_t len;
-    int need_slash;
-
-    if (dst == NULL || cap == 0 || dir == NULL || dir[0] == '\0' || name == NULL) {
-        return -1;
-    }
-    len = strlen(dir);
-    need_slash = dir[len - 1] != '/';
-    if (len + (size_t)need_slash + strlen(name) + 1 > cap) {
-        return -1;
-    }
-    memcpy(dst, dir, len);
-    if (need_slash) {
-        dst[len++] = '/';
-    }
-    strcpy(dst + len, name);
-    return 0;
-}
-
-static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_format format, mdf *inst)
-{
+    const char *font_uri;
     const char *regular_uri;
     const char *italic_uri;
-    const char *regular_dump_path;
-    const char *italic_dump_path;
-    const char *font_path;
     int disable_embedded_font;
     int dump_font;
     int dump_font_force;
-    mdf_status st;
-    char regular_path_buf[4096];
-    char italic_path_buf[4096];
 
-    if (!lua_istable(L, index)) {
+    if (!lua_istable(L, index) || opts == NULL) {
         return MDF_OK;
     }
     disable_embedded_font = lua_mdf_get_boolean_field(L, index, "disable_embedded_font");
     dump_font = lua_mdf_get_boolean_field(L, index, "dump_font");
     dump_font_force = lua_mdf_get_boolean_field(L, index, "dump_font_force");
-    if (dump_font_force) {
-        dump_font = 1;
-    }
+    font_uri = NULL;
     regular_uri = NULL;
     italic_uri = NULL;
-    regular_dump_path = NULL;
-    italic_dump_path = NULL;
-    font_path = NULL;
     lua_getfield(L, index, "font_uri");
+    if (!lua_isnil(L, -1)) {
+        font_uri = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_regular_uri");
     if (!lua_isnil(L, -1)) {
         regular_uri = luaL_checkstring(L, -1);
     }
@@ -366,68 +325,32 @@ static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_f
     lua_pop(L, 1);
     lua_getfield(L, index, "font_path");
     if (!lua_isnil(L, -1)) {
-        font_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_path = luaL_checkstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_regular_path");
     if (!lua_isnil(L, -1)) {
-        regular_dump_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_regular_path = luaL_checkstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_italic_path");
     if (!lua_isnil(L, -1)) {
-        italic_dump_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_italic_path = luaL_checkstring(L, -1);
     }
     lua_pop(L, 1);
-    if (!disable_embedded_font && !dump_font && !dump_font_force && regular_uri == NULL && italic_uri == NULL &&
-        font_path == NULL && regular_dump_path == NULL && italic_dump_path == NULL) {
-        return MDF_OK;
-    }
-    if (format != MDF_FORMAT_HTML && format != MDF_FORMAT_HTML_DECK) {
+    if ((disable_embedded_font || dump_font || dump_font_force || font_uri != NULL || regular_uri != NULL || italic_uri != NULL ||
+         opts->html_font_dump_path != NULL || opts->html_font_dump_regular_path != NULL || opts->html_font_dump_italic_path != NULL) &&
+        format != MDF_FORMAT_HTML && format != MDF_FORMAT_HTML_DECK) {
         return MDF_ERROR_INVALID;
     }
-    if ((regular_uri == NULL) != (italic_uri == NULL)) {
-        return MDF_ERROR_INVALID;
-    }
-    if (font_path != NULL) {
-        if (lua_mdf_font_path_join(regular_path_buf, sizeof(regular_path_buf),
-                                   font_path, "JetBrainsMono-Regular.woff2") != 0 ||
-            lua_mdf_font_path_join(italic_path_buf, sizeof(italic_path_buf),
-                                   font_path, "JetBrainsMono-Italic.woff2") != 0) {
-            return MDF_ERROR_INVALID;
-        }
-        if (regular_dump_path == NULL) {
-            regular_dump_path = regular_path_buf;
-        }
-        if (italic_dump_path == NULL) {
-            italic_dump_path = italic_path_buf;
-        }
-    }
-    if ((regular_dump_path == NULL) != (italic_dump_path == NULL)) {
-        return MDF_ERROR_INVALID;
-    }
-    if (regular_dump_path != NULL) {
-        regular_uri = regular_dump_path;
-        italic_uri = italic_dump_path;
-        disable_embedded_font = 1;
-        dump_font = 1;
-    }
-    if (dump_font) {
-        regular_dump_path = lua_mdf_local_font_path(regular_uri);
-        italic_dump_path = lua_mdf_local_font_path(italic_uri);
-        if (regular_dump_path == NULL || italic_dump_path == NULL) {
-            return MDF_ERROR_INVALID;
-        }
-        st = dump_font_force ?
-            mdf_dump_html_jetbrains_mono_font_force(regular_dump_path, italic_dump_path) :
-            mdf_dump_html_jetbrains_mono_font(regular_dump_path, italic_dump_path);
-        if (st != MDF_OK) {
-            return st;
-        }
-    }
-    if (disable_embedded_font || regular_uri != NULL) {
-        return mdf_set_html_jetbrains_mono_font_uris(inst, regular_uri, italic_uri);
-    }
+    opts->html_font_source = disable_embedded_font ?
+        MDF_HTML_FONT_SOURCE_EXTERNAL : MDF_HTML_FONT_SOURCE_EMBEDDED;
+    opts->html_font_uri = font_uri;
+    opts->html_font_regular_uri = regular_uri;
+    opts->html_font_italic_uri = italic_uri;
+    opts->html_dump_font = dump_font || opts->html_font_dump_path != NULL ||
+        opts->html_font_dump_regular_path != NULL || opts->html_font_dump_italic_path != NULL;
+    opts->html_dump_font_force = dump_font_force;
     return MDF_OK;
 }
 
@@ -567,9 +490,9 @@ static int lua_mdf_render(lua_State *L)
         lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
     }
     inst = NULL;
-    st = mdf_create(format, &opts, &inst);
-    if (st == MDF_OK && lua_istable(L, 2)) {
-        st = lua_mdf_apply_html_font_options(L, 2, format, inst);
+    st = lua_istable(L, 2) ? lua_mdf_apply_html_font_options(L, 2, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &inst);
     }
     if (st != MDF_OK) {
         if (inst != NULL) {
@@ -649,9 +572,9 @@ static int lua_mdf_render_stream(lua_State *L)
     sink.userdata = &sink_ctx;
     sink.write = lua_mdf_sink_write;
     inst = NULL;
-    st = mdf_create(format, &opts, &inst);
-    if (st == MDF_OK && lua_istable(L, 3)) {
-        st = lua_mdf_apply_html_font_options(L, 3, format, inst);
+    st = lua_istable(L, 3) ? lua_mdf_apply_html_font_options(L, 3, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &inst);
     }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(inst, html_title);
@@ -697,9 +620,9 @@ static int lua_mdf_new(lua_State *L)
         lua_pushvalue(L, 1);
         handle->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     }
-    st = mdf_create(format, &opts, &handle->mdf);
-    if (st == MDF_OK && lua_istable(L, 1)) {
-        st = lua_mdf_apply_html_font_options(L, 1, format, handle->mdf);
+    st = lua_istable(L, 1) ? lua_mdf_apply_html_font_options(L, 1, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &handle->mdf);
     }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(handle->mdf, html_title);

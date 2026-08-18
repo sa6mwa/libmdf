@@ -178,6 +178,10 @@ while i <= #arg do
     i = i + 1
     opts.font_uri = arg[i]
     if not opts.font_uri then error("cmdf.lua: missing HTML font URI", 0) end
+  elseif a == "--html-font-regular-uri" then
+    i = i + 1
+    opts.font_regular_uri = arg[i]
+    if not opts.font_regular_uri then error("cmdf.lua: missing HTML regular font URI", 0) end
   elseif a == "--html-font-italic-uri" then
     i = i + 1
     opts.font_italic_uri = arg[i]
@@ -276,12 +280,9 @@ opts.deck_option_seen = nil
 
 local html_like = opts.html or opts.deck
 
-if (opts.disable_embedded_font or opts.font_uri or opts.font_italic_uri or opts.dump_font or opts.dump_font_force or
+if (opts.disable_embedded_font or opts.font_uri or opts.font_regular_uri or opts.font_italic_uri or opts.dump_font or opts.dump_font_force or
     opts.font_path or opts.font_regular_path or opts.font_italic_path) and not html_like then
   error("cmdf.lua: HTML font options require HTML or deck output", 0)
-end
-if (opts.font_uri == nil) ~= (opts.font_italic_uri == nil) then
-  error("cmdf.lua: --html-font-uri and --html-font-italic-uri must be used together", 0)
 end
 
 if (simulate_enabled or simulate_delay_seconds > 0) and not simulate_chunk then

@@ -216,7 +216,8 @@ assert(handle_html:match("<title>Handle HTML</title>"), "lua html handle set_htm
 
 local external_font_html = mdf.render("# External Font\n", {
   html = true,
-  font_uri = "fonts/JetBrainsMono-Regular.woff2",
+  font_uri = "fonts",
+  font_regular_uri = "fonts/JetBrainsMono-Regular.woff2",
   font_italic_uri = "fonts/JetBrainsMono-Italic.woff2",
 })
 assert(external_font_html:match('src:url%("fonts/JetBrainsMono%-Regular%.woff2"%) format%(\'woff2\'%)'),

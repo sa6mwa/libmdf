@@ -1322,6 +1322,7 @@ static int deck_render_slide(mdf_renderer *self,
                              deck_slide *slide)
 {
     mdf *html;
+    mdf_options html_opts;
     mdf_status st;
     mdf_allocator *allocator;
     deck_slice_source src_data;
@@ -1332,7 +1333,10 @@ static int deck_render_slide(mdf_renderer *self,
     allocator = &((mdf_impl *)self->impl)->allocator;
     html = *html_io;
     if (html == NULL) {
-        st = mdf_create(MDF_FORMAT_HTML, opts, &html);
+        html_opts = *opts;
+        html_opts.html_dump_font = 0;
+        html_opts.html_dump_font_force = 0;
+        st = mdf_create(MDF_FORMAT_HTML, &html_opts, &html);
         if (st != MDF_OK) {
             mdf_set_error(self, st == MDF_ERROR_NOMEM ? "out of memory" : "deck slide HTML renderer creation failed");
             return -1;
@@ -2411,6 +2415,8 @@ static void mdf_impl_release_heap_state(mdf_impl *impl)
     mdf_free_mem(allocator, impl->ansi_word, impl->ansi_word_cap);
     mdf_free_mem(allocator, impl->pre_code_buf, impl->pre_code_cap);
     mdf_free_mem(allocator, impl->html_title, impl->html_title_cap);
+    mdf_free_mem(allocator, impl->html_font_regular_uri, impl->html_font_regular_uri_cap);
+    mdf_free_mem(allocator, impl->html_font_italic_uri, impl->html_font_italic_uri_cap);
     if (impl->emit_owns_buf && impl->emit_buf != NULL && impl->emit_workspace_owned) {
         mdf_free_mem(allocator, impl->emit_buf, impl->emit_cap);
     } else if (impl->emit_owns_buf && impl->emit_buf != NULL) {
@@ -2617,6 +2623,19 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
         impl->opts.html_font.family == NULL &&
         impl->opts.html_font.regular.format == MDF_HTML_FONT_FORMAT_NONE) {
         mdf_html_jetbrains_mono_font(&impl->opts.html_font);
+    }
+    if (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) {
+        st = mdf_configure_html_font(impl);
+        if (st != MDF_OK) {
+            mdf_allocator user_allocator;
+
+            user_allocator = impl->user_allocator;
+            mdf_impl_release_heap_state(impl);
+            mdf_memory_destroy(&impl->memory);
+            mdf_free_mem(&user_allocator, impl, sizeof(*impl));
+            mdf_free_mem(&user_allocator, r, sizeof(*r));
+            return st;
+        }
     }
     st = mdf_impl_configure_emit_buffer(impl);
     if (st != MDF_OK) {

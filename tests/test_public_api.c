@@ -621,6 +621,27 @@ int main(void)
     fails += expect(first_font_byte == 'w', "forced font dump restores WOFF2 data");
     remove(regular_font_path);
     remove(italic_font_path);
+    mdf_options_init(&opts);
+    opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
+    opts.html_font_uri = "assets/fonts";
+    opts.html_dump_font = 1;
+    opts.html_font_dump_regular_path = regular_font_path;
+    opts.html_font_dump_italic_path = italic_font_path;
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL,
+                    "HTML font options dump built-in faces before renderer creation");
+    if (inst != NULL) {
+        inst->destroy(inst);
+        inst = NULL;
+    }
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) {
+        fclose(font_fp);
+    }
+    fails += expect(first_font_byte == 'w', "HTML font dump pre-operation writes regular WOFF2 data");
+    remove(regular_font_path);
+    remove(italic_font_path);
 
     st = mdf_create(MDF_FORMAT_ANSI, NULL, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "ansi create succeeds with default options");
@@ -685,13 +706,12 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.html_font_uri = "fonts";
+    opts.html_font_regular_uri = "fonts/JetBrainsMono-Regular.woff2";
+    opts.html_font_italic_uri = "fonts/JetBrainsMono-Italic.woff2";
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "external html font renderer create succeeds");
     if (inst != NULL) {
-        st = mdf_set_html_jetbrains_mono_font_uris(inst,
-                                                   "fonts/JetBrainsMono-Regular.woff2",
-                                                   "fonts/JetBrainsMono-Italic.woff2");
-        fails += expect(st == MDF_OK, "external paired HTML font URIs are accepted");
         st = inst->render_cstr(inst, "external font html\n", &out);
         fails += expect(st == MDF_OK && out != NULL, "external font HTML renders");
         fails += expect(out != NULL &&
@@ -705,11 +725,10 @@ int main(void)
         inst = NULL;
     }
     mdf_options_init(&opts);
+    opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "default external html font renderer create succeeds");
     if (inst != NULL) {
-        st = mdf_set_html_jetbrains_mono_font_uris(inst, NULL, NULL);
-        fails += expect(st == MDF_OK, "default paired HTML font URIs are accepted");
         st = inst->render_cstr(inst, "default external font html\n", &out);
         fails += expect(st == MDF_OK && out != NULL, "default external font HTML renders");
         fails += expect(out != NULL &&
@@ -723,6 +742,8 @@ int main(void)
         inst = NULL;
     }
     mdf_options_init(&opts);
+    opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
+    opts.html_font_uri = "deck-fonts";
     opts.deck_transition = MDF_DECK_TRANSITION_CROSS;
     opts.slide_numbers = 1;
     opts.deck_center_front_text = 1;
@@ -750,6 +771,9 @@ int main(void)
                     strstr(out, ".mdf-document .mdf-heading") == NULL &&
                     strstr(out, ".mdf-deck[data-transition=\"cross\"] .mdf-slide{transition:opacity 1600ms ease,visibility 0s linear 1600ms;}") != NULL &&
                     strstr(out, ".mdf-deck[data-transition=\"cross\"] .mdf-slide[aria-hidden=\"false\"]{transition:opacity 1600ms ease,visibility 0s linear 0s;}") != NULL &&
+                    strstr(out, "deck-fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(out, "deck-fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(out, "data:font/woff2;base64,") == NULL &&
                     strstr(out, "<section class=\"mdf-slide mdf-slide-front mdf-center-front-text\" data-slide=\"1\" aria-hidden=\"false\">") != NULL &&
                     strstr(out, "<section class=\"mdf-slide\" data-slide=\"2\" aria-hidden=\"true\">") != NULL,
                     "html deck emits shell, front slide, and second slide");

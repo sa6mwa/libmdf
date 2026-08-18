@@ -86,7 +86,7 @@ verify_install_tree() {
   test -f "$install/$pcdir/libmdf.pc"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.1"
+    test -f "$libdir/libmdf.so.2"
   fi
 
   write_consumer_sources "$consumer/src"

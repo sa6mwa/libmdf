@@ -111,6 +111,14 @@ typedef struct mdf_html_font {
     mdf_html_font_face italic;
 } mdf_html_font;
 
+/** Source for the JetBrains Mono faces used by HTML and HTML deck output. */
+typedef enum mdf_html_font_source {
+    /** Embed the configured font data; this is the default. */
+    MDF_HTML_FONT_SOURCE_EMBEDDED = 0,
+    /** Reference paired external font URIs instead of embedding data. */
+    MDF_HTML_FONT_SOURCE_EXTERNAL = 1
+} mdf_html_font_source;
+
 /**
  * Renderer options.
  *
@@ -144,6 +152,24 @@ typedef struct mdf_options {
     double html_content_width_ch;
     /** Optional HTML font. HTML defaults to the built-in JetBrains Mono family. */
     mdf_html_font html_font;
+    /** Embedded or external JetBrains Mono font source. Default is embedded. */
+    mdf_html_font_source html_font_source;
+    /** Base external font URI; standard regular and italic WOFF2 names are appended. */
+    const char *html_font_uri;
+    /** External regular font URI; overrides the URI derived from html_font_uri. */
+    const char *html_font_regular_uri;
+    /** External italic font URI; overrides the URI derived from html_font_uri. */
+    const char *html_font_italic_uri;
+    /** Directory used to derive regular and italic WOFF2 dump destinations. */
+    const char *html_font_dump_path;
+    /** Optional regular dump destination; overrides html_font_dump_path. */
+    const char *html_font_dump_regular_path;
+    /** Optional italic dump destination; overrides html_font_dump_path. */
+    const char *html_font_dump_italic_path;
+    /** Dump built-in JetBrains Mono to the configured destinations before rendering. */
+    int html_dump_font;
+    /** Replace existing files while dumping; otherwise existing files are preserved. */
+    int html_dump_font_force;
     /** HTML deck transition behavior. Default is MDF_DECK_TRANSITION_FADE. */
     mdf_deck_transition deck_transition;
     /** Show slide numbers on deck slides after the first slide. */
@@ -260,14 +286,16 @@ mdf_status mdf_dump_html_jetbrains_mono_font(const char *regular_path,
 mdf_status mdf_dump_html_jetbrains_mono_font_force(const char *regular_path,
                                                    const char *italic_path);
 /**
- * Select external JetBrains Mono regular and italic font URIs for an HTML or
- * deck renderer before it starts rendering. Both URI arguments are required;
- * passing both as NULL selects the version-pinned JetBrains-hosted defaults.
- * Non-NULL URI strings must remain valid until rendering has finished.
+ * Resolve a directory and optional paired path overrides, then dump the
+ * built-in JetBrains Mono faces. Existing files are preserved.
  */
-mdf_status mdf_set_html_jetbrains_mono_font_uris(mdf *self,
-                                                 const char *regular_uri,
-                                                 const char *italic_uri);
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths(const char *font_path,
+                                                      const char *regular_path,
+                                                      const char *italic_path);
+/** Same as mdf_dump_html_jetbrains_mono_font_to_paths, replacing existing files. */
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths_force(const char *font_path,
+                                                            const char *regular_path,
+                                                            const char *italic_path);
 /** Stable string for a status code. */
 const char *mdf_status_string(mdf_status status);
 /** Number of built-in themes. */

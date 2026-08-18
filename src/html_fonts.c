@@ -92,30 +92,200 @@ mdf_status mdf_dump_html_jetbrains_mono_font_force(const char *regular_path,
     return mdf_dump_html_jetbrains_mono_font_impl(regular_path, italic_path, 1);
 }
 
-mdf_status mdf_set_html_jetbrains_mono_font_uris(mdf *self,
-                                                 const char *regular_uri,
-                                                 const char *italic_uri)
+static int mdf_html_font_path_join(char *dst, size_t cap, const char *dir, const char *name)
 {
-    mdf_impl *impl;
+    size_t len;
+    int need_slash;
 
-    if (self == NULL || self->impl == NULL) {
+    if (dst == NULL || cap == 0 || dir == NULL || dir[0] == '\0' || name == NULL) {
+        return -1;
+    }
+    len = strlen(dir);
+    need_slash = dir[len - 1] != '/';
+    if (len + (size_t)need_slash + strlen(name) + 1 > cap) {
+        return -1;
+    }
+    memcpy(dst, dir, len);
+    if (need_slash) {
+        dst[len++] = '/';
+    }
+    strcpy(dst + len, name);
+    return 0;
+}
+
+static mdf_status mdf_dump_html_jetbrains_mono_font_to_paths_impl(const char *font_path,
+                                                                   const char *regular_path,
+                                                                   const char *italic_path,
+                                                                   int force)
+{
+    char regular_path_buf[4096];
+    char italic_path_buf[4096];
+
+    if (font_path != NULL) {
+        if (mdf_html_font_path_join(regular_path_buf, sizeof(regular_path_buf),
+                                    font_path, "JetBrainsMono-Regular.woff2") != 0 ||
+            mdf_html_font_path_join(italic_path_buf, sizeof(italic_path_buf),
+                                    font_path, "JetBrainsMono-Italic.woff2") != 0) {
+            return MDF_ERROR_INVALID;
+        }
+        if (regular_path == NULL) {
+            regular_path = regular_path_buf;
+        }
+        if (italic_path == NULL) {
+            italic_path = italic_path_buf;
+        }
+    }
+    return mdf_dump_html_jetbrains_mono_font_impl(regular_path, italic_path, force);
+}
+
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths(const char *font_path,
+                                                      const char *regular_path,
+                                                      const char *italic_path)
+{
+    return mdf_dump_html_jetbrains_mono_font_to_paths_impl(font_path, regular_path, italic_path, 0);
+}
+
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths_force(const char *font_path,
+                                                            const char *regular_path,
+                                                            const char *italic_path)
+{
+    return mdf_dump_html_jetbrains_mono_font_to_paths_impl(font_path, regular_path, italic_path, 1);
+}
+
+static mdf_status mdf_html_font_uri_copy(mdf_impl *impl,
+                                         char **dst,
+                                         size_t *dst_cap,
+                                         const char *src)
+{
+    size_t len;
+    char *copy;
+
+    len = strlen(src);
+    if (len + 1 < len) {
+        return MDF_ERROR_NOMEM;
+    }
+    copy = (char *)mdf_realloc_mem(&impl->allocator, NULL, 0, len + 1);
+    if (copy == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    memcpy(copy, src, len + 1);
+    *dst = copy;
+    *dst_cap = len + 1;
+    return MDF_OK;
+}
+
+static mdf_status mdf_html_font_uri_join(mdf_impl *impl,
+                                         char **dst,
+                                         size_t *dst_cap,
+                                         const char *base,
+                                         const char *name)
+{
+    size_t base_len;
+    size_t name_len;
+    size_t len;
+    int need_slash;
+    char *copy;
+
+    if (base == NULL || base[0] == '\0' || name == NULL) {
         return MDF_ERROR_INVALID;
     }
-    impl = (mdf_impl *)self->impl;
-    if (impl->format != MDF_FORMAT_HTML && impl->format != MDF_FORMAT_HTML_DECK) {
+    base_len = strlen(base);
+    name_len = strlen(name);
+    need_slash = base[base_len - 1] != '/';
+    if (base_len > (size_t)-1 - (size_t)need_slash ||
+        base_len + (size_t)need_slash > (size_t)-1 - name_len ||
+        base_len + (size_t)need_slash + name_len == (size_t)-1) {
+        return MDF_ERROR_NOMEM;
+    }
+    len = base_len + (size_t)need_slash + name_len;
+    copy = (char *)mdf_realloc_mem(&impl->allocator, NULL, 0, len + 1);
+    if (copy == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    memcpy(copy, base, base_len);
+    if (need_slash) {
+        copy[base_len++] = '/';
+    }
+    memcpy(copy + base_len, name, name_len + 1);
+    *dst = copy;
+    *dst_cap = len + 1;
+    return MDF_OK;
+}
+
+mdf_status mdf_configure_html_font(mdf_impl *impl)
+{
+    const char *regular_uri;
+    const char *italic_uri;
+    mdf_html_font_source source;
+    mdf_status st;
+
+    if (impl == NULL ||
+        (impl->format != MDF_FORMAT_HTML && impl->format != MDF_FORMAT_HTML_DECK)) {
         return MDF_ERROR_INVALID;
     }
-    if (impl->html_open ||
-        ((regular_uri == NULL) != (italic_uri == NULL)) ||
-        (regular_uri != NULL && (regular_uri[0] == '\0' || italic_uri[0] == '\0'))) {
+    if (impl->opts.html_dump_font || impl->opts.html_dump_font_force) {
+        st = impl->opts.html_dump_font_force ?
+            mdf_dump_html_jetbrains_mono_font_to_paths_force(impl->opts.html_font_dump_path,
+                                                              impl->opts.html_font_dump_regular_path,
+                                                              impl->opts.html_font_dump_italic_path) :
+            mdf_dump_html_jetbrains_mono_font_to_paths(impl->opts.html_font_dump_path,
+                                                        impl->opts.html_font_dump_regular_path,
+                                                        impl->opts.html_font_dump_italic_path);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+    source = impl->opts.html_font_source;
+    if (source != MDF_HTML_FONT_SOURCE_EMBEDDED && source != MDF_HTML_FONT_SOURCE_EXTERNAL) {
         return MDF_ERROR_INVALID;
     }
-    if (regular_uri == NULL) {
-        regular_uri = MDF_JETBRAINS_MONO_REGULAR_URL;
-        italic_uri = MDF_JETBRAINS_MONO_ITALIC_URL;
+    regular_uri = impl->opts.html_font_regular_uri;
+    italic_uri = impl->opts.html_font_italic_uri;
+    if ((regular_uri != NULL && regular_uri[0] == '\0') ||
+        (italic_uri != NULL && italic_uri[0] == '\0') ||
+        (impl->opts.html_font_uri != NULL && impl->opts.html_font_uri[0] == '\0')) {
+        return MDF_ERROR_INVALID;
     }
-    impl->html_font_regular_uri = regular_uri;
-    impl->html_font_italic_uri = italic_uri;
+    if (regular_uri != NULL || italic_uri != NULL || impl->opts.html_font_uri != NULL) {
+        source = MDF_HTML_FONT_SOURCE_EXTERNAL;
+    }
+    if (source == MDF_HTML_FONT_SOURCE_EMBEDDED) {
+        return MDF_OK;
+    }
     mdf_html_jetbrains_mono_font(&impl->opts.html_font);
+    if (regular_uri != NULL) {
+        st = mdf_html_font_uri_copy(impl, &impl->html_font_regular_uri,
+                                    &impl->html_font_regular_uri_cap, regular_uri);
+    } else if (impl->opts.html_font_uri != NULL) {
+        st = mdf_html_font_uri_join(impl, &impl->html_font_regular_uri,
+                                    &impl->html_font_regular_uri_cap, impl->opts.html_font_uri,
+                                    "JetBrainsMono-Regular.woff2");
+    } else {
+        st = mdf_html_font_uri_copy(impl, &impl->html_font_regular_uri,
+                                    &impl->html_font_regular_uri_cap,
+                                    MDF_JETBRAINS_MONO_REGULAR_URL);
+    }
+    if (st != MDF_OK) {
+        return st;
+    }
+    if (italic_uri != NULL) {
+        st = mdf_html_font_uri_copy(impl, &impl->html_font_italic_uri,
+                                    &impl->html_font_italic_uri_cap, italic_uri);
+    } else if (impl->opts.html_font_uri != NULL) {
+        st = mdf_html_font_uri_join(impl, &impl->html_font_italic_uri,
+                                    &impl->html_font_italic_uri_cap, impl->opts.html_font_uri,
+                                    "JetBrainsMono-Italic.woff2");
+    } else {
+        st = mdf_html_font_uri_copy(impl, &impl->html_font_italic_uri,
+                                    &impl->html_font_italic_uri_cap,
+                                    MDF_JETBRAINS_MONO_ITALIC_URL);
+    }
+    if (st != MDF_OK) {
+        mdf_free_mem(&impl->allocator, impl->html_font_regular_uri,
+                     impl->html_font_regular_uri_cap);
+        impl->html_font_regular_uri = NULL;
+        impl->html_font_regular_uri_cap = 0;
+        return st;
+    }
     return MDF_OK;
 }

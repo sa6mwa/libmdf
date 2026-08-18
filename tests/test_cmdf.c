@@ -908,7 +908,7 @@ int main(int argc, char **argv)
     char *margin_args[10];
     char *bad_delay_args[6];
     char *external_font_args[6];
-    char *dump_font_args[10];
+    char *dump_font_args[12];
     char *first_chunk;
     long first_ms;
     char *trace_args[8];
@@ -970,6 +970,7 @@ int main(int argc, char **argv)
                     "cmdf help lists deck flags");
     fails += expect(result.buf != NULL &&
                     strstr(result.buf, "--html-disable-embedded-font") != NULL &&
+                    strstr(result.buf, "--html-font-regular-uri") != NULL &&
                     strstr(result.buf, "--html-font-italic-uri") != NULL &&
                     strstr(result.buf, "--html-dump-font-regular-path") != NULL &&
                     strstr(result.buf, "--html-dump-font-italic-path") != NULL,
@@ -996,12 +997,14 @@ int main(int argc, char **argv)
 
     dump_font_args[0] = argv[1];
     dump_font_args[1] = "--html";
-    dump_font_args[2] = "--html-dump-font-regular-path";
-    dump_font_args[3] = regular_font_path;
-    dump_font_args[4] = "--html-dump-font-italic-path";
-    dump_font_args[5] = italic_font_path;
-    dump_font_args[6] = input_path;
-    dump_font_args[7] = NULL;
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = "web-fonts";
+    dump_font_args[4] = "--html-dump-font-regular-path";
+    dump_font_args[5] = regular_font_path;
+    dump_font_args[6] = "--html-dump-font-italic-path";
+    dump_font_args[7] = italic_font_path;
+    dump_font_args[8] = input_path;
+    dump_font_args[9] = NULL;
     if (run_cmdf(dump_font_args, &result) != 0) {
         unlink(input_path);
         unlink(deck_input_path);
@@ -1010,9 +1013,9 @@ int main(int argc, char **argv)
         return 1;
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
-                    result.buf != NULL && strstr(result.buf, regular_font_path) != NULL &&
-                    strstr(result.buf, italic_font_path) != NULL,
-                    "cmdf dump paths replace paired font URIs in HTML");
+                    result.buf != NULL && strstr(result.buf, "web-fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "web-fonts/JetBrainsMono-Italic.woff2") != NULL,
+                    "cmdf dump destinations and HTML font URIs stay independent");
     free(result.buf);
     font_fp = fopen(regular_font_path, "rb");
     first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
@@ -1080,10 +1083,17 @@ int main(int argc, char **argv)
         return 1;
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
-                    result.buf != NULL && strstr(result.buf, directory_regular_font_path) != NULL &&
-                    strstr(result.buf, directory_italic_font_path) != NULL,
+                    result.buf != NULL,
                     "cmdf font directory derives paired font destinations");
     free(result.buf);
+    font_fp = fopen(directory_regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf font directory writes regular WOFF2 destination");
+    font_fp = fopen(directory_italic_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf font directory writes italic WOFF2 destination");
     unlink(directory_regular_font_path);
     unlink(directory_italic_font_path);
     rmdir(font_dir);

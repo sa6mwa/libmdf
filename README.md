@@ -204,7 +204,7 @@ Important options:
 - `allocator`, `emission_buffer`, `memory`: custom memory and emission-buffer
   control.
 
-The shared library uses SONAME ABI version `1`. Lua facade and `cmdf.lua`
+The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.
@@ -357,6 +357,7 @@ Flags:
     --html-content-width N
     --html-disable-embedded-font
     --html-font-uri URI
+    --html-font-regular-uri URI
     --html-font-italic-uri URI
     --html-dump-font
     --html-dump-font-force
@@ -381,19 +382,18 @@ compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono WOFF2 data by default.
-`--html-disable-embedded-font` instead references version-pinned JetBrains
-hosted regular and italic font files. `--html-font-uri` and
-`--html-font-italic-uri` replace those paired external URIs and also disable
-embedding. `--html-dump-font` writes the built-in faces to paired local or
-`file://` URI paths. `--html-dump-font-path` is a directory and derives the
-regular and italic filenames; `--html-dump-font-regular-path` and
-`--html-dump-font-italic-path` independently override those destinations.
-Existing files are preserved unless `--html-dump-font-force` is used. Dump
-destinations become the output URIs. Applications can provide a different embedded family through
-`mdf_options.html_font`, obtain the built-in family through
-`mdf_html_jetbrains_mono_font`, dump it through
-`mdf_dump_html_jetbrains_mono_font`, or select paired external JetBrains URIs
-before rendering through `mdf_set_html_jetbrains_mono_font_uris`. `cmdf` infers HTML output from
+`--html-disable-embedded-font` instead references the version-pinned JetBrains
+hosted regular and italic files. `--html-font-uri` is an external URI base and
+derives both standard filenames; `--html-font-regular-uri` and
+`--html-font-italic-uri` override either output URI independently. Dumping is
+an explicit pre-operation: `--html-dump-font` writes the built-in faces through
+libmdf before rendering, while `--html-dump-font-path` selects a directory and
+the paired path flags override either destination. Existing files are preserved
+unless `--html-dump-font-force` is used. C callers can use the same flow via
+`mdf_options` or call `mdf_dump_html_jetbrains_mono_font_to_paths` directly.
+Output URIs and dump destinations are intentionally separate. Applications can
+provide a different embedded family through `mdf_options.html_font` or obtain
+the built-in family through `mdf_html_jetbrains_mono_font`. `cmdf` infers HTML output from
 `.html` and `.htm` output paths when `--html` is omitted, warning before it
 renders. libmdf sets the HTML document title from the first ATX heading before
 any paragraph, falls back to `mdf`, and lets `cmdf` override it with `--title`
@@ -505,7 +505,8 @@ html_font = {
   italic_data = bytes,
 }
 disable_embedded_font = true
-font_uri = REGULAR_URI
+font_uri = URI_BASE
+font_regular_uri = REGULAR_URI
 font_italic_uri = ITALIC_URI
 dump_font = true
 dump_font_force = true
