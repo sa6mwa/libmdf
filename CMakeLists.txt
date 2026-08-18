@@ -313,7 +313,7 @@ if(LIBMDF_INSTALL)
     install(TARGETS cmdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/cmdf)
   endif()
-  install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/libmdf)
+  install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/libmdf)
   configure_package_config_file(cmake/libmdfConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/libmdfConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmdf)

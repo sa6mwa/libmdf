@@ -54,6 +54,8 @@ typedef struct owned_buffer_probe {
 } owned_buffer_probe;
 
 typedef struct tracking_allocator {
+    size_t alloc_calls;
+    size_t fail_after;
     size_t blocks;
     size_t bytes;
 } tracking_allocator;
@@ -156,6 +158,10 @@ static void *tracking_alloc(void *userdata, size_t size)
     tracking_header *header;
 
     tracker = (tracking_allocator *)userdata;
+    tracker->alloc_calls++;
+    if (tracker->fail_after != 0 && tracker->alloc_calls == tracker->fail_after) {
+        return NULL;
+    }
     header = (tracking_header *)malloc(sizeof(*header) + size);
     if (header == NULL) {
         return NULL;
@@ -642,6 +648,28 @@ int main(void)
     fails += expect(first_font_byte == 'w', "HTML font dump pre-operation writes regular WOFF2 data");
     remove(regular_font_path);
     remove(italic_font_path);
+
+    {
+        tracking_allocator tracker;
+        mdf_options tracked_opts;
+        mdf *tracked_inst;
+
+        memset(&tracker, 0, sizeof(tracker));
+        tracker.fail_after = 5;
+        mdf_options_init(&tracked_opts);
+        tracked_opts.allocator.userdata = &tracker;
+        tracked_opts.allocator.alloc = tracking_alloc;
+        tracked_opts.allocator.realloc = tracking_realloc;
+        tracked_opts.allocator.free = tracking_free;
+        tracked_opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
+        tracked_opts.html_font_uri = "fonts";
+        tracked_inst = NULL;
+        st = mdf_create(MDF_FORMAT_HTML, &tracked_opts, &tracked_inst);
+        fails += expect(st == MDF_ERROR_NOMEM && tracked_inst == NULL,
+                        "external font setup reports emission-buffer allocation failure");
+        fails += expect(tracker.blocks == 0 && tracker.bytes == 0,
+                        "external font setup releases URI allocations after create failure");
+    }
 
     st = mdf_create(MDF_FORMAT_ANSI, NULL, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "ansi create succeeds with default options");

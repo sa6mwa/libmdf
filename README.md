@@ -62,9 +62,9 @@ share/doc/cmdf/README.md
 share/doc/cmdf/OFL.txt
 ```
 
-The CLI archives embed JetBrains Mono for HTML output and therefore include the
-JetBrains Mono `OFL.txt`. The library SDK archives do not embed the font and do
-not ship `OFL.txt`.
+Both CLI archives and library SDK archives include JetBrains Mono and its
+`OFL.txt` attribution. The font is embedded by libmdf for self-contained HTML
+and deck output.
 
 Lua release artifacts are named:
 
@@ -626,6 +626,6 @@ are verified with target-correct `otool` against the final extracted artifacts.
 
 ## License
 
-`libmdf`, `cmdf`, and the Lua bindings are MIT licensed. CLI artifacts that
-embed JetBrains Mono also include the JetBrains Mono SIL Open Font License in
-`share/doc/cmdf/OFL.txt`.
+`libmdf`, `cmdf`, and the Lua bindings are MIT licensed. SDK and CLI artifacts
+include the JetBrains Mono SIL Open Font License under their respective
+`share/doc/*/OFL.txt` paths.

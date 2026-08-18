@@ -2642,6 +2642,7 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
         mdf_allocator user_allocator;
 
         user_allocator = impl->user_allocator;
+        mdf_impl_release_heap_state(impl);
         mdf_memory_destroy(&impl->memory);
         mdf_free_mem(&user_allocator, impl, sizeof(*impl));
         mdf_free_mem(&user_allocator, r, sizeof(*r));
