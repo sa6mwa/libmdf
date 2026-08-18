@@ -287,6 +287,17 @@ local lua_deck_auto_title = mdf.render(deck_sample, { format = "deck" })
 assert(lua_deck_auto_title:match("<title>Front</title>"),
        "lua deck render auto-title is owned by libmdf")
 
+local lua_deck_external_font = mdf.render(deck_sample, {
+  format = "deck",
+  font_uri = "deck-fonts",
+})
+assert(lua_deck_external_font:match("deck%-fonts/JetBrainsMono%-Regular%.woff2"),
+       "lua deck external font URI renders regular reference")
+assert(lua_deck_external_font:match("deck%-fonts/JetBrainsMono%-Italic%.woff2"),
+       "lua deck external font URI renders italic reference")
+assert(not lua_deck_external_font:match("data:font/woff2;base64,"),
+       "lua deck external font URI omits embedded faces")
+
 local stream_deck = collect_stream(deck_sample, {
   deck = true,
   html_title = "Stream Deck",

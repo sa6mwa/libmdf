@@ -1434,6 +1434,25 @@ int main(int argc, char **argv)
                     "cmdf deck slide numbers use resolved theme heading color");
     free(result.buf);
 
+    deck_args[0] = argv[1];
+    deck_args[1] = "--deck";
+    deck_args[2] = "--html-font-uri";
+    deck_args[3] = "deck-fonts";
+    deck_args[4] = deck_input_path;
+    deck_args[5] = NULL;
+    if (run_cmdf(deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "deck-fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "deck-fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf deck external font URI omits embedded faces");
+    free(result.buf);
+
     deck_boring_args[0] = argv[1];
     deck_boring_args[1] = "--deck";
     deck_boring_args[2] = "--boring";
