@@ -61,7 +61,10 @@ OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$BASE/path:$PATH" expect_path "$BASE/pat
 
 rm -f "$BASE/path/arm64-apple-darwin25-otool"
 make_tool "$BASE/path/otool"
-if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$BASE/path:$PATH" "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset otool >/dev/null 2>&1; then
+# Keep the negative case independent of a developer's ambient osxcross PATH.
+# It must prove an unprefixed host otool is rejected only when no target tool
+# can be discovered from the configured compiler, osxcross root, or PATH.
+if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$BASE/path:/usr/bin:/bin" "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset otool >/dev/null 2>&1; then
   printf '%s\n' 'unprefixed host otool was selected for cross-Darwin target' >&2
   exit 1
 fi
