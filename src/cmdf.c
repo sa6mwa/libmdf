@@ -223,9 +223,9 @@ static void usage(FILE *fp)
     fprintf(fp, "      --html-font-uri URI    External JetBrains Mono font URI base\n");
     fprintf(fp, "      --html-font-regular-uri URI Override external regular font URI\n");
     fprintf(fp, "      --html-font-italic-uri URI External italic JetBrains Mono font URI\n");
-    fprintf(fp, "      --html-dump-font       Write external local font URIs to their paths\n");
+    fprintf(fp, "      --html-dump-font       Dump built-in fonts to local URI or configured paths\n");
     fprintf(fp, "      --html-dump-font-force Replace existing font files while dumping\n");
-    fprintf(fp, "      --html-dump-font-path DIR Write and reference paired fonts in DIR\n");
+    fprintf(fp, "      --html-dump-font-path DIR Dump paired fonts in DIR\n");
     fprintf(fp, "      --html-dump-font-regular-path PATH Override regular font destination\n");
     fprintf(fp, "      --html-dump-font-italic-path PATH Override italic font destination\n");
     fprintf(fp, "  -x, --transition MODE      Deck transition: fade|cross|hard\n");

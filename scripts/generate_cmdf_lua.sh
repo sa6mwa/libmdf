@@ -48,11 +48,12 @@ local function usage()
   io.stderr:write("      --list-themes          List available themes\\n")
   io.stderr:write("      --html-content-width N HTML content max width in ch\\n")
   io.stderr:write("      --html-disable-embedded-font Use external JetBrains Mono web fonts\\n")
-  io.stderr:write("      --html-font-uri URI    External regular JetBrains Mono font URI\\n")
+  io.stderr:write("      --html-font-uri URI    External JetBrains Mono font URI base\\n")
+  io.stderr:write("      --html-font-regular-uri URI Override external regular font URI\\n")
   io.stderr:write("      --html-font-italic-uri URI External italic JetBrains Mono font URI\\n")
-  io.stderr:write("      --html-dump-font       Write external local font URIs to their paths\\n")
+  io.stderr:write("      --html-dump-font       Dump built-in fonts to local URI or configured paths\\n")
   io.stderr:write("      --html-dump-font-force Replace existing font files while dumping\\n")
-  io.stderr:write("      --html-dump-font-path DIR Write and reference paired fonts in DIR\\n")
+  io.stderr:write("      --html-dump-font-path DIR Dump paired fonts in DIR\\n")
   io.stderr:write("      --html-dump-font-regular-path PATH Override regular font destination\\n")
   io.stderr:write("      --html-dump-font-italic-path PATH Override italic font destination\\n")
   io.stderr:write("  -x, --transition MODE      Deck transition: fade|cross|hard\\n")
@@ -195,14 +196,17 @@ while i <= #arg do
     i = i + 1
     opts.font_path = arg[i]
     if not opts.font_path then error("cmdf.lua: missing HTML dump font path", 0) end
+    opts.dump_font = true
   elseif a == "--html-dump-font-regular-path" then
     i = i + 1
     opts.font_regular_path = arg[i]
     if not opts.font_regular_path then error("cmdf.lua: missing HTML regular dump font path", 0) end
+    opts.dump_font = true
   elseif a == "--html-dump-font-italic-path" then
     i = i + 1
     opts.font_italic_path = arg[i]
     if not opts.font_italic_path then error("cmdf.lua: missing HTML italic dump font path", 0) end
+    opts.dump_font = true
   elseif a == "-x" or a == "--transition" then
     i = i + 1
     opts.deck_transition = arg[i]

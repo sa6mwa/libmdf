@@ -871,6 +871,7 @@ int main(int argc, char **argv)
     char regular_font_path[96];
     char italic_font_path[96];
     char font_dir[64];
+    char font_dir_uri[96];
     char directory_regular_font_path[128];
     char directory_italic_font_path[128];
     char *ascii_html_args[8];
@@ -950,6 +951,7 @@ int main(int argc, char **argv)
              "%s/JetBrainsMono-Regular.woff2", font_dir);
     snprintf(directory_italic_font_path, sizeof(directory_italic_font_path),
              "%s/JetBrainsMono-Italic.woff2", font_dir);
+    snprintf(font_dir_uri, sizeof(font_dir_uri), "file://%s", font_dir);
 
     help_args[0] = argv[1];
     help_args[1] = "--help";
@@ -1014,8 +1016,9 @@ int main(int argc, char **argv)
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
                     result.buf != NULL && strstr(result.buf, "web-fonts/JetBrainsMono-Regular.woff2") != NULL &&
-                    strstr(result.buf, "web-fonts/JetBrainsMono-Italic.woff2") != NULL,
-                    "cmdf dump destinations and HTML font URIs stay independent");
+                    strstr(result.buf, "web-fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf explicit dump destinations preserve HTML font references");
     free(result.buf);
     font_fp = fopen(regular_font_path, "rb");
     first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
@@ -1070,10 +1073,11 @@ int main(int argc, char **argv)
 
     dump_font_args[0] = argv[1];
     dump_font_args[1] = "--html";
-    dump_font_args[2] = "--html-dump-font-path";
-    dump_font_args[3] = font_dir;
-    dump_font_args[4] = input_path;
-    dump_font_args[5] = NULL;
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = font_dir_uri;
+    dump_font_args[4] = "--html-dump-font";
+    dump_font_args[5] = input_path;
+    dump_font_args[6] = NULL;
     if (run_cmdf(dump_font_args, &result) != 0) {
         unlink(input_path);
         unlink(deck_input_path);
@@ -1083,8 +1087,11 @@ int main(int argc, char **argv)
         return 1;
     }
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
-                    result.buf != NULL,
-                    "cmdf font directory derives paired font destinations");
+                    result.buf != NULL &&
+                    strstr(result.buf, "file://") != NULL &&
+                    strstr(result.buf, directory_regular_font_path) != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf file URI derives paired destinations and references");
     free(result.buf);
     font_fp = fopen(directory_regular_font_path, "rb");
     first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
@@ -1094,6 +1101,32 @@ int main(int argc, char **argv)
     first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
     if (font_fp != NULL) fclose(font_fp);
     fails += expect(first_font_byte == 'w', "cmdf font directory writes italic WOFF2 destination");
+    unlink(directory_regular_font_path);
+    unlink(directory_italic_font_path);
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = "https://example.invalid/fonts";
+    dump_font_args[4] = "--html-dump-font-path";
+    dump_font_args[5] = font_dir;
+    dump_font_args[6] = input_path;
+    dump_font_args[7] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(directory_regular_font_path);
+        unlink(directory_italic_font_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "https://example.invalid/fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "https://example.invalid/fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf dump path preserves remote font URI references");
+    free(result.buf);
     unlink(directory_regular_font_path);
     unlink(directory_italic_font_path);
     rmdir(font_dir);

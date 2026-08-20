@@ -450,7 +450,8 @@ static const char *html_font_css_format(int format)
 static int html_write_css_quoted(mdf_sink *sink, const char *s)
 {
     const char *p;
-    char esc[2];
+    char esc[4];
+    static const char hex[] = "0123456789abcdef";
 
     if (mdf_write_cstr(sink, "\"") != 0) return -1;
     p = s;
@@ -459,6 +460,12 @@ static int html_write_css_quoted(mdf_sink *sink, const char *s)
             esc[0] = '\\';
             esc[1] = *p;
             if (mdf_write_all(sink, esc, 2) != 0) return -1;
+        } else if ((unsigned char)*p < 0x20 || (unsigned char)*p == 0x7f || *p == '<') {
+            esc[0] = '\\';
+            esc[1] = hex[((unsigned char)*p >> 4) & 15];
+            esc[2] = hex[(unsigned char)*p & 15];
+            esc[3] = ' ';
+            if (mdf_write_all(sink, esc, 4) != 0) return -1;
         } else {
             if (mdf_write_all(sink, p, 1) != 0) return -1;
         }

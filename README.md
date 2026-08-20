@@ -191,6 +191,17 @@ Important options:
   `96`.
 - `html_font`: optional user-supplied HTML font data. HTML and deck output use
   the built-in JetBrains Mono regular and italic WOFF2 faces when this is unset.
+- `html_font_source`: `MDF_HTML_FONT_SOURCE_EMBEDDED` (default) or
+  `MDF_HTML_FONT_SOURCE_EXTERNAL`. Any configured HTML font URI also selects
+  the external built-in JetBrains Mono faces.
+- `html_font_uri`: a base URI for the standard regular and italic WOFF2 names;
+  `html_font_regular_uri` and `html_font_italic_uri` override either face.
+- `html_dump_font` and `html_font_dump_*`: dump built-in faces before renderer
+  creation. A local path or `file://` `html_font_uri` supplies destinations
+  when no explicit dump path is set. `html_font_dump_path` instead selects the
+  local destination while `html_font_uri` remains the HTML reference base. C
+  and Lua callers must set `html_dump_font`/`dump_font`; dump paths alone are
+  passive configuration.
 - `deck_transition`: `MDF_DECK_TRANSITION_FADE`,
   `MDF_DECK_TRANSITION_CROSS`, or `MDF_DECK_TRANSITION_HARD`. Default is
   `MDF_DECK_TRANSITION_FADE`.
@@ -382,18 +393,24 @@ compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono WOFF2 data by default.
-`--html-disable-embedded-font` instead references the version-pinned JetBrains
-hosted regular and italic files. `--html-font-uri` is an external URI base and
-derives both standard filenames; `--html-font-regular-uri` and
-`--html-font-italic-uri` override either output URI independently. Dumping is
-an explicit pre-operation: `--html-dump-font` writes the built-in faces through
-libmdf before rendering, while `--html-dump-font-path` selects a directory and
-the paired path flags override either destination. Existing files are preserved
-unless `--html-dump-font-force` is used. C callers can use the same flow via
-`mdf_options` or call `mdf_dump_html_jetbrains_mono_font_to_paths` directly.
-Output URIs and dump destinations are intentionally separate. Applications can
-provide a different embedded family through `mdf_options.html_font` or obtain
-the built-in family through `mdf_html_jetbrains_mono_font`. `cmdf` infers HTML output from
+`--html-disable-embedded-font` instead references version-pinned files from
+the JetBrains Mono project on GitHub. `--html-font-uri` is an external URI base
+and derives both standard filenames; `--html-font-regular-uri` and
+`--html-font-italic-uri` override either output URI independently. A URI also
+automatically selects external output.
+
+Dumping is an explicit pre-operation. With `--html-dump-font`, a local path or
+`file://` `--html-font-uri` is both the output reference base and the dump
+directory. HTTP(S) URIs require `--html-dump-font-path` or both paired dump
+paths. Dump paths select only where the bundled files are written; configured
+base and per-face URIs always remain the HTML references. When no URI is set,
+the dump paths become the local references. Existing files are preserved unless
+`--html-dump-font-force` is used. In `cmdf`, providing any dump path is a
+convenience shortcut that enables dumping. C callers use the same behavior through
+`mdf_options`, or may call `mdf_dump_html_jetbrains_mono_font_to_paths`
+directly. Applications can provide a different embedded family through
+`mdf_options.html_font` or obtain the built-in borrowed descriptor through
+`mdf_html_jetbrains_mono_font`. `cmdf` infers HTML output from
 `.html` and `.htm` output paths when `--html` is omitted, warning before it
 renders. libmdf sets the HTML document title from the first ATX heading before
 any paragraph, falls back to `mdf`, and lets `cmdf` override it with `--title`
@@ -514,6 +531,11 @@ font_path = DIRECTORY
 font_regular_path = REGULAR_PATH
 font_italic_path = ITALIC_PATH
 ```
+
+Lua follows the CLI behavior: `font_uri` selects external output, local paths
+and `file://` URIs become dump destinations when `dump_font` is true, and
+`font_path` selects a separate local dump destination without changing the URI.
+Unlike `cmdf`, Lua and C API dump paths do not imply `dump_font`.
 
 The generated `cmdf.lua` shipped in CLI archives uses the streaming Lua API and
 the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.

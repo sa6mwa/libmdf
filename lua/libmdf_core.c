@@ -348,8 +348,7 @@ static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_f
     opts->html_font_uri = font_uri;
     opts->html_font_regular_uri = regular_uri;
     opts->html_font_italic_uri = italic_uri;
-    opts->html_dump_font = dump_font || opts->html_font_dump_path != NULL ||
-        opts->html_font_dump_regular_path != NULL || opts->html_font_dump_italic_path != NULL;
+    opts->html_dump_font = dump_font;
     opts->html_dump_font_force = dump_font_force;
     return MDF_OK;
 }

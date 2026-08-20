@@ -1820,6 +1820,12 @@ static mdf_status deck_render(mdf_renderer *self, mdf_source *source, mdf_sink *
     html_renderer = NULL;
     status = MDF_OK;
     html_opts = impl->opts;
+    /* Font URI option strings are caller-owned.  The outer renderer resolved
+     * and copied the effective face URIs during mdf_create(), so pass those
+     * stable copies to the lazily-created HTML slide renderer instead. */
+    html_opts.html_font_uri = NULL;
+    html_opts.html_font_regular_uri = impl->html_font_regular_uri;
+    html_opts.html_font_italic_uri = impl->html_font_italic_uri;
     html_opts.allocator = impl->user_allocator;
     memset(&html_opts.emission_buffer, 0, sizeof(html_opts.emission_buffer));
     line_no = 0;

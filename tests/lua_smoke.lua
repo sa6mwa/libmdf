@@ -238,6 +238,40 @@ assert(default_external_font_html:match("JetBrainsMono%-Italic%.woff2"),
 assert(not default_external_font_html:match("data:font/woff2;base64,"),
   "lua disable_embedded_font omits embedded font data")
 
+local lua_regular_font_path = os.tmpname()
+local lua_italic_font_path = os.tmpname()
+os.remove(lua_regular_font_path)
+os.remove(lua_italic_font_path)
+local lua_regular_font_uri = "file://" .. lua_regular_font_path
+local lua_italic_font_uri = "file://" .. lua_italic_font_path
+local lua_dumped_font_html = mdf.render("# Lua Local Font\n", {
+  html = true,
+  font_regular_uri = lua_regular_font_uri,
+  font_italic_uri = lua_italic_font_uri,
+  dump_font = true,
+})
+assert(lua_dumped_font_html:find(lua_regular_font_uri, 1, true),
+  "lua local regular file URI remains the HTML reference")
+assert(lua_dumped_font_html:find(lua_italic_font_uri, 1, true),
+  "lua local italic file URI remains the HTML reference")
+assert(not lua_dumped_font_html:match("data:font/woff2;base64,"),
+  "lua local file URI dumping omits embedded font data")
+local lua_regular_font_file = assert(io.open(lua_regular_font_path, "rb"))
+assert(lua_regular_font_file:read(1) == "w", "lua local file URI dump writes regular WOFF2 data")
+lua_regular_font_file:close()
+os.remove(lua_regular_font_path)
+os.remove(lua_italic_font_path)
+
+local lua_passive_dump_path_html = mdf.render("# Lua Passive Dump Paths\n", {
+  html = true,
+  font_regular_path = lua_regular_font_path,
+  font_italic_path = lua_italic_font_path,
+})
+assert(lua_passive_dump_path_html:match("data:font/woff2;base64,"),
+  "lua dump paths do not disable embedded fonts without dump_font")
+assert(io.open(lua_regular_font_path, "rb") == nil and io.open(lua_italic_font_path, "rb") == nil,
+  "lua dump paths do not write files without dump_font")
+
 local token_out = {}
 local token_handle = mdf.new({ boring = true })
 token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" }, function(chunk) token_out[#token_out + 1] = chunk end)
@@ -336,6 +370,24 @@ local cmdf_html = run_capture(shell_quote(cmdf) .. " --html", sample)
 local cmdf_lua_html = run_capture(shell_quote(cmdf_lua) .. " --html", sample)
 assert(cmdf_lua_html:match("JetBrains Mono"), "cmdf.lua html embeds JetBrains Mono")
 assert_equal(cmdf_lua_html, cmdf_html, "cmdf.lua html parity")
+
+local cmdf_lua_regular_font_path = os.tmpname()
+local cmdf_lua_italic_font_path = os.tmpname()
+os.remove(cmdf_lua_regular_font_path)
+os.remove(cmdf_lua_italic_font_path)
+local cmdf_lua_dumped_font_html = run_capture(
+  shell_quote(cmdf_lua) .. " --html --html-dump-font-regular-path " ..
+  shell_quote(cmdf_lua_regular_font_path) .. " --html-dump-font-italic-path " ..
+  shell_quote(cmdf_lua_italic_font_path), sample)
+assert(cmdf_lua_dumped_font_html:find(cmdf_lua_regular_font_path, 1, true),
+  "cmdf.lua dump path references dumped regular font")
+assert(not cmdf_lua_dumped_font_html:match("data:font/woff2;base64,"),
+  "cmdf.lua dump paths disable embedded fonts")
+local cmdf_lua_regular_font = assert(io.open(cmdf_lua_regular_font_path, "rb"))
+assert(cmdf_lua_regular_font:read(1) == "w", "cmdf.lua dump paths write the regular WOFF2 font")
+cmdf_lua_regular_font:close()
+os.remove(cmdf_lua_regular_font_path)
+os.remove(cmdf_lua_italic_font_path)
 
 local cmdf_html_width = run_capture(shell_quote(cmdf) .. " --html -w 42", sample)
 local cmdf_lua_html_width = run_capture(shell_quote(cmdf_lua) .. " --html -w 42", sample)
