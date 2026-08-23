@@ -31,10 +31,16 @@ run_case() {
   diff -u "$expected" "$actual"
 }
 
-run_case comprehensive.ansi.styled.w80 -w 80
-run_case comprehensive.ansi.boring.w80 --boring -w 80
-run_case comprehensive.ansi.boring.w80.margin-l4-r6 --boring -w 80 --margin-left 4 --margin-right 6
-run_case comprehensive.ansi.styled.w40.margin-l2-r3 -w 40 --margin-left 2 --margin-right 3
+run_ansi_case() {
+  name=$1
+  shift
+  run_case "$name" --osc8 on "$@"
+}
+
+run_ansi_case comprehensive.ansi.styled.w80 -w 80
+run_ansi_case comprehensive.ansi.boring.w80 --boring -w 80
+run_ansi_case comprehensive.ansi.boring.w80.margin-l4-r6 --boring -w 80 --margin-left 4 --margin-right 6
+run_ansi_case comprehensive.ansi.styled.w40.margin-l2-r3 -w 40 --margin-left 2 --margin-right 3
 run_case comprehensive.html.default --html
 run_case comprehensive.html.w42 --html -w 42
 run_case comprehensive.deck.default --deck

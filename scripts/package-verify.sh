@@ -74,7 +74,7 @@ for artifact in "$DIST"/libmdf-"$VERSION"-*.tar.gz; do
   test -f "$root/share/libmdf/package-metadata.txt"
   test -f "$root/share/doc/libmdf/LICENSE"
   test ! -e "$root/bin/cmdf"
-  test ! -f "$root/share/doc/libmdf/OFL.txt"
+  test -f "$root/share/doc/libmdf/OFL.txt"
   grep -q "^Name: libmdf$" "$root/lib/pkgconfig/libmdf.pc"
   grep -q "^Version: $VERSION$" "$root/lib/pkgconfig/libmdf.pc"
   grep -q '^prefix=${pcfiledir}/../..' "$root/lib/pkgconfig/libmdf.pc"
@@ -101,8 +101,8 @@ for artifact in "$DIST"/libmdf-"$VERSION"-*.tar.gz; do
     printf '%s\n' "$artifact contains old Hack font files" >&2
     exit 1
   fi
-  if find "$root/lib" -type f \( -name '*.a' -o -name '*.so*' \) -exec grep -a -l -e 'JetBrains Mono' -e 'libmdf_html_jetbrains' {} + | grep -q .; then
-    printf '%s\n' "$artifact embeds cmdf font data in libmdf" >&2
+  if ! find "$root/lib" -type f \( -name '*.a' -o -name '*.so*' \) -exec grep -a -l -e 'JetBrains Mono' -e 'libmdf_html_jetbrains' {} + | grep -q .; then
+    printf '%s\n' "$artifact does not embed JetBrains Mono font data in libmdf" >&2
     exit 1
   fi
 done
@@ -127,7 +127,11 @@ for artifact in "$DIST"/cmdf-"$VERSION"-*.tar.gz; do
   test -f "$root/share/doc/cmdf/OFL.txt"
   grep -a -q 'JetBrains Mono' "$root/bin/cmdf"
   grep -a -q 'JetBrains Mono' "$root/bin/cmdf.lua"
-  grep -a -q 'regular_b64 = "' "$root/bin/cmdf.lua"
+  grep -a -q 'require("libmdf")' "$root/bin/cmdf.lua"
+  if grep -a -q 'regular_b64 = "' "$root/bin/cmdf.lua"; then
+    printf '%s\n' "$artifact cmdf.lua embeds font data instead of using libmdf" >&2
+    exit 1
+  fi
   if find "$root" \( -name '*.rockspec' -o -name 'libmdf_core.c' \) -print -quit | grep -q .; then
     printf '%s\n' "$artifact contains LuaRocks source or rockspec files" >&2
     exit 1

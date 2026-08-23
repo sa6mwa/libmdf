@@ -23,6 +23,16 @@ type chunkReader struct {
 	chunk int
 }
 
+// commandInput centralizes the command's stdin contract. Suite comparisons
+// receive their markdown from --suite and therefore have no stdin payload to
+// read; all other command modes consume stdin exactly once.
+func commandInput(stdin io.Reader, compareLibmdf bool, suite string) ([]byte, error) {
+	if compareLibmdf && suite != "" {
+		return nil, nil
+	}
+	return io.ReadAll(stdin)
+}
+
 func (r *chunkReader) Read(p []byte) (int, error) {
 	if r.off >= len(r.data) {
 		return 0, io.EOF
@@ -78,13 +88,13 @@ func (d tokenDump) Width() int           { return 80 }
 func (d tokenDump) SetWidth(int)         {}
 func (d tokenDump) SetWrapIndent(string) {}
 
-func openTraceEncoder(path string) (mdf.WriteTraceEncoder, io.Closer, error) {
+func openTraceEncoder(path string, stderr io.Writer) (mdf.WriteTraceEncoder, io.Closer, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, nil, nil
 	}
 	if path == "-" {
-		return mdf.NewNDJSONWriteTraceEncoder(os.Stderr), nil, nil
+		return mdf.NewNDJSONWriteTraceEncoder(stderr), nil, nil
 	}
 	f, err := os.Create(path)
 	if err != nil {
@@ -163,10 +173,10 @@ func normalizeHTMLTitleForCompare(out []byte) []byte {
 	return next
 }
 
-func render(mode string, data []byte, chunk int, width int, opts parityOptions, tracePath string) ([]byte, error) {
+func render(mode string, data []byte, chunk int, width int, opts parityOptions, tracePath string, stderr io.Writer) ([]byte, error) {
 	var out bytes.Buffer
 	var writer io.Writer
-	traceEncoder, traceCloser, err := openTraceEncoder(tracePath)
+	traceEncoder, traceCloser, err := openTraceEncoder(tracePath, stderr)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +823,7 @@ func main() {
 	tableWiresRaw := flag.String("table-wires", "", "table wire modes for --suite, separated by spaces or commas")
 	jobsRaw := flag.String("jobs", "", "parallel suite jobs for --compare-libmdf --suite; defaults to LIBMDF_PARITY_JOBS or GOMAXPROCS")
 	flag.Parse()
-	data, err := io.ReadAll(os.Stdin)
+	data, err := commandInput(os.Stdin, *compareLibmdf, *suite)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "read stdin: %v\n", err)
 		os.Exit(1)
@@ -913,7 +923,7 @@ func main() {
 	opts.osc8 = *osc8
 	opts.tableBuffer = tableBuffers[0]
 	opts.tableWire = tableWires[0]
-	out, err := render(*mode, data, *chunk, *width, opts, *traceWrites)
+	out, err := render(*mode, data, *chunk, *width, opts, *traceWrites, os.Stderr)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "render: %v\n", err)
 		os.Exit(1)

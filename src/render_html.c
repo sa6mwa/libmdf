@@ -343,9 +343,11 @@ static const char *html_heading_span_size(int level)
 static int html_write_base64(mdf_sink *sink, const unsigned char *src, size_t len)
 {
     static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    char out[4];
+    char out[4096];
+    size_t out_len;
     size_t i;
 
+    out_len = 0;
     for (i = 0; i < len; i += 3) {
         unsigned int v;
         size_t remain;
@@ -358,13 +360,19 @@ static int html_write_base64(mdf_sink *sink, const unsigned char *src, size_t le
         if (remain > 2) {
             v |= (unsigned int)src[i + 2];
         }
-        out[0] = table[(v >> 18) & 0x3f];
-        out[1] = table[(v >> 12) & 0x3f];
-        out[2] = remain > 1 ? table[(v >> 6) & 0x3f] : '=';
-        out[3] = remain > 2 ? table[v & 0x3f] : '=';
-        if (mdf_write_all(sink, out, sizeof(out)) != 0) {
-            return -1;
+        out[out_len++] = table[(v >> 18) & 0x3f];
+        out[out_len++] = table[(v >> 12) & 0x3f];
+        out[out_len++] = remain > 1 ? table[(v >> 6) & 0x3f] : '=';
+        out[out_len++] = remain > 2 ? table[v & 0x3f] : '=';
+        if (out_len == sizeof(out)) {
+            if (mdf_write_all(sink, out, out_len) != 0) {
+                return -1;
+            }
+            out_len = 0;
         }
+    }
+    if (out_len > 0 && mdf_write_all(sink, out, out_len) != 0) {
+        return -1;
     }
     return 0;
 }
@@ -442,7 +450,8 @@ static const char *html_font_css_format(int format)
 static int html_write_css_quoted(mdf_sink *sink, const char *s)
 {
     const char *p;
-    char esc[2];
+    char esc[4];
+    static const char hex[] = "0123456789abcdef";
 
     if (mdf_write_cstr(sink, "\"") != 0) return -1;
     p = s;
@@ -451,6 +460,12 @@ static int html_write_css_quoted(mdf_sink *sink, const char *s)
             esc[0] = '\\';
             esc[1] = *p;
             if (mdf_write_all(sink, esc, 2) != 0) return -1;
+        } else if ((unsigned char)*p < 0x20 || (unsigned char)*p == 0x7f || *p == '<') {
+            esc[0] = '\\';
+            esc[1] = hex[((unsigned char)*p >> 4) & 15];
+            esc[2] = hex[(unsigned char)*p & 15];
+            esc[3] = ' ';
+            if (mdf_write_all(sink, esc, 4) != 0) return -1;
         } else {
             if (mdf_write_all(sink, p, 1) != 0) return -1;
         }
@@ -462,6 +477,7 @@ static int html_write_css_quoted(mdf_sink *sink, const char *s)
 static int html_write_font_face(mdf_sink *sink,
                                 const char *family,
                                 const mdf_html_font_face *face,
+                                const char *uri,
                                 const char *weight,
                                 const char *style)
 {
@@ -473,18 +489,23 @@ static int html_write_font_face(mdf_sink *sink,
     if (mime == NULL || css_format == NULL) {
         return 0;
     }
-    if ((face->data == NULL || face->data_len == 0) && face->read == NULL) {
+    if (uri == NULL && (face->data == NULL || face->data_len == 0) && face->read == NULL) {
         return 0;
     }
     if (mdf_write_cstr(sink, "@font-face{font-family:") != 0) return -1;
     if (html_write_css_quoted(sink, family) != 0) return -1;
-    if (mdf_write_cstr(sink, ";src:url(data:") != 0) return -1;
-    if (mdf_write_cstr(sink, mime) != 0) return -1;
-    if (mdf_write_cstr(sink, ";base64,") != 0) return -1;
-    if (face->data != NULL && face->data_len > 0) {
-        if (html_write_base64(sink, face->data, face->data_len) != 0) return -1;
-    } else if (face->read != NULL) {
-        if (html_write_base64_reader(sink, face) != 0) return -1;
+    if (mdf_write_cstr(sink, ";src:url(") != 0) return -1;
+    if (uri != NULL) {
+        if (html_write_css_quoted(sink, uri) != 0) return -1;
+    } else {
+        if (mdf_write_cstr(sink, "data:") != 0) return -1;
+        if (mdf_write_cstr(sink, mime) != 0) return -1;
+        if (mdf_write_cstr(sink, ";base64,") != 0) return -1;
+        if (face->data != NULL && face->data_len > 0) {
+            if (html_write_base64(sink, face->data, face->data_len) != 0) return -1;
+        } else if (face->read != NULL) {
+            if (html_write_base64_reader(sink, face) != 0) return -1;
+        }
     }
     if (mdf_write_cstr(sink, ") format('") != 0) return -1;
     if (mdf_write_cstr(sink, css_format) != 0) return -1;
@@ -505,11 +526,15 @@ static int html_write_default_font_faces(mdf_impl *impl, mdf_sink *sink)
         font->regular.format == MDF_HTML_FONT_FORMAT_NONE) {
         return 0;
     }
-    if (html_write_font_face(sink, font->family, &font->regular, "400", "normal") != 0) return -1;
-    if (html_write_font_face(sink, font->family, &font->regular, "700", "normal") != 0) return -1;
+    if (html_write_font_face(sink, font->family, &font->regular,
+                             impl->html_font_regular_uri, "400", "normal") != 0) return -1;
+    if (html_write_font_face(sink, font->family, &font->regular,
+                             impl->html_font_regular_uri, "700", "normal") != 0) return -1;
     if (font->italic.format != MDF_HTML_FONT_FORMAT_NONE) {
-        if (html_write_font_face(sink, font->family, &font->italic, "400", "italic") != 0) return -1;
-        if (html_write_font_face(sink, font->family, &font->italic, "700", "italic") != 0) return -1;
+        if (html_write_font_face(sink, font->family, &font->italic,
+                                 impl->html_font_italic_uri, "400", "italic") != 0) return -1;
+        if (html_write_font_face(sink, font->family, &font->italic,
+                                 impl->html_font_italic_uri, "700", "italic") != 0) return -1;
     }
     return 0;
 }
@@ -574,9 +599,7 @@ int html_write_default_css(mdf_renderer *self, mdf_sink *sink)
 int html_start(mdf_renderer *self, mdf_sink *sink)
 {
     mdf_impl *impl;
-    html_buf_sink shell;
-    mdf_sink shell_sink;
-    int build_rc;
+    const char *title;
 
     impl = (mdf_impl *)self->impl;
     if (impl->html_open) {
@@ -586,33 +609,17 @@ int html_start(mdf_renderer *self, mdf_sink *sink)
     if (impl->html_fragment) {
         return 0;
     }
-    memset(&shell, 0, sizeof(shell));
-    shell.allocator = &impl->allocator;
-    shell_sink.userdata = &shell;
-    shell_sink.write = html_buf_sink_write;
-    build_rc = 0;
-    if (mdf_write_cstr(&shell_sink, "<!doctype html>\n<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n") != 0) build_rc = -1;
-    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n") != 0) build_rc = -1;
-    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "<title>") != 0) build_rc = -1;
-    if (build_rc == 0) {
-        const char *title;
-
-        title = impl->html_title != NULL ? impl->html_title : "mdf";
-        if (html_escape(&shell_sink, title, strlen(title)) != 0) build_rc = -1;
-    }
-    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "</title>\n<style>\n") != 0) build_rc = -1;
-    if (build_rc == 0 && html_write_default_css(self, &shell_sink) != 0) build_rc = -1;
-    if (build_rc == 0 && mdf_write_cstr(&shell_sink, "</style>\n</head>\n<body>\n<main class=\"mdf-document\">") != 0) build_rc = -1;
-    if (build_rc != 0) {
-        mdf_impl_mark_oom(impl);
-        mdf_free_mem(&impl->allocator, shell.buf, shell.cap);
+    if (mdf_write_cstr(sink, "<!doctype html>\n<!-- Generated by libmdf (C) 2026 Michel Blomgren https://pkt.systems/c/libmdf -->\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n") != 0 ||
+        mdf_write_cstr(sink, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>") != 0) {
         return -1;
     }
-    if (mdf_write_all(sink, shell.buf, shell.len) != 0) {
-        mdf_free_mem(&impl->allocator, shell.buf, shell.cap);
+    title = impl->html_title != NULL ? impl->html_title : "mdf";
+    if (html_escape(sink, title, strlen(title)) != 0 ||
+        mdf_write_cstr(sink, "</title>\n<style>\n") != 0 ||
+        html_write_default_css(self, sink) != 0 ||
+        mdf_write_cstr(sink, "</style>\n</head>\n<body>\n<main class=\"mdf-document\">") != 0) {
         return -1;
     }
-    mdf_free_mem(&impl->allocator, shell.buf, shell.cap);
     return 0;
 }
 

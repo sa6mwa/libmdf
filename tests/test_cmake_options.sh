@@ -84,9 +84,10 @@ verify_install_tree() {
   test -f "$install/$cmakedir/libmdfConfig.cmake"
   test -f "$install/$cmakedir/libmdfTargets.cmake"
   test -f "$install/$pcdir/libmdf.pc"
+  test -f "$install/share/doc/libmdf/OFL.txt"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.1"
+    test -f "$libdir/libmdf.so.2"
   fi
 
   write_consumer_sources "$consumer/src"

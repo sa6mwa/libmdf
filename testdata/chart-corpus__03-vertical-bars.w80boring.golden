@@ -16,7 +16,7 @@ Small vertical bar chart.
                 │   █████     █████     █████     █████     █████   
                 │   █████     █████     █████     █████     █████   
               0 └───────────────────────────────────────────────────
-                      n         e         d         u         i     
+                     Mon       Tue       Wed       Thu       Fri
 
 Descending vertical sort.
 
@@ -34,7 +34,7 @@ Descending vertical sort.
                 │   █████     █████     █████     █████             
                 │   █████     █████     █████     █████     █████   
               0 └───────────────────────────────────────────────────
-                      D         B         C         A         E     
+                      D         B         C         A         E
 
 Ascending vertical sort.
 
@@ -52,7 +52,7 @@ Ascending vertical sort.
                 │             █████     █████     █████     █████   
                 │   █████     █████     █████     █████     █████   
               0 └───────────────────────────────────────────────────
-                      E         A         C         B         D     
+                      E         A         C         B         D
 
 Dense vertical set that must reduce x-axis resolution on narrow widths.
 

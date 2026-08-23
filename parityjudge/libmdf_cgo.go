@@ -2,6 +2,7 @@ package main
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/../src -D_POSIX_C_SOURCE=200809L
+#cgo darwin CFLAGS: -D_DARWIN_C_SOURCE
 #include <stddef.h>
 #include <stdlib.h>
 #include "libmdf/mdf.h"

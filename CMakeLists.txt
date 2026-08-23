@@ -22,7 +22,7 @@ project(libmdf VERSION "${LIBMDF_VERSION}" LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-set(LIBMDF_ABI_VERSION 1)
+set(LIBMDF_ABI_VERSION 2)
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
@@ -81,6 +81,8 @@ set(LIBMDF_SOURCES
   src/render.c
   src/render_ansi.c
   src/render_ansi_blocks.c
+  src/html_fonts.c
+  src/path.c
   src/render_html.c
   src/render_parse.c)
 
@@ -92,6 +94,12 @@ function(libmdf_target_defaults target)
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
   target_compile_features(${target} PUBLIC c_std_90)
   target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
+  # macOS keeps O_NOFOLLOW behind its extension feature macro even when the
+  # POSIX interface level is selected. The forced font-dump path relies on it
+  # to reject a final-component symlink before opening the target for writing.
+  if(APPLE)
+    target_compile_definitions(${target} PRIVATE _DARWIN_C_SOURCE)
+  endif()
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
@@ -127,7 +135,7 @@ if(LIBMDF_BUILD_SHARED)
 endif()
 
 if(LIBMDF_BUILD_BINARY)
-  add_executable(cmdf src/cmdf.c src/cmdf_fonts.c)
+  add_executable(cmdf src/cmdf.c)
   target_include_directories(cmdf PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(cmdf PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   target_compile_features(cmdf PRIVATE c_std_90)
@@ -158,6 +166,11 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_executable(test_public_api tests/test_public_api.c)
+  target_compile_features(test_public_api PRIVATE c_std_90)
+  target_compile_definitions(test_public_api PRIVATE _POSIX_C_SOURCE=200809L)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(test_public_api PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
   target_include_directories(test_public_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_public_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   add_test(NAME test_public_api COMMAND test_public_api)
@@ -264,6 +277,13 @@ if(LIBMDF_BUILD_TESTS)
     TIMEOUT 30
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+  add_test(NAME parityjudge_suite_stdin
+    COMMAND go test .)
+  set_tests_properties(parityjudge_suite_stdin PROPERTIES
+    LABELS "integration;parity"
+    TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/parityjudge)
+
   foreach(case_name
       ansi_table_wire
       ansi_table_boring
@@ -312,7 +332,7 @@ if(LIBMDF_INSTALL)
     install(TARGETS cmdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/cmdf)
   endif()
-  install(FILES LICENSE README.md DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/libmdf)
+  install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/libmdf)
   configure_package_config_file(cmake/libmdfConfig.cmake.in
     ${CMAKE_CURRENT_BINARY_DIR}/libmdfConfig.cmake
     INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmdf)

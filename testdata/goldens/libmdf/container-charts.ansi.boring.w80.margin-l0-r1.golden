@@ -26,7 +26,7 @@ common source of width, margin, and wrapping regressions.
 >                 │   ██████     ██████     ██████     ██████   
 >                 │   ██████     ██████     ██████     ██████   
 >               0 └─────────────────────────────────────────────
->                       n          e          d          u      
+>                       Mon        Tue        Wed        Thu
 
 # List Charts
 
@@ -62,7 +62,7 @@ common source of width, margin, and wrapping regressions.
                 │         ██████                ██████        
                 │         ██████                ██████        
               0 └─────────────────────────────────────────────
-                            A                     B           
+                            A                     B
 
 
 The paragraphs around these charts should remain separate and should not absorb

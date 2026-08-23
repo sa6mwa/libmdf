@@ -95,7 +95,13 @@ typedef struct mdf_emission_buffer {
 #define MDF_HTML_FONT_FORMAT_WOFF2 1
 #define MDF_HTML_FONT_FORMAT_TTF 2
 
-/** One HTML font face supplied as memory bytes or a streaming read callback. */
+/**
+ * One HTML font face supplied as memory bytes or a streaming read callback.
+ * Provide either data/data_len or read/userdata. Data, callback, and userdata
+ * are borrowed and must remain valid until the renderer is destroyed. The read
+ * callback fills up to cap bytes at offset, returns the byte count, and sets
+ * *err on failure.
+ */
 typedef struct mdf_html_font_face {
     int format;
     const unsigned char *data;
@@ -104,12 +110,23 @@ typedef struct mdf_html_font_face {
     size_t (*read)(void *userdata, size_t offset, unsigned char *dst, size_t cap, int *err);
 } mdf_html_font_face;
 
-/** Optional HTML font family used by MDF_FORMAT_HTML and MDF_FORMAT_HTML_DECK. */
+/**
+ * Optional HTML font family used by MDF_FORMAT_HTML and MDF_FORMAT_HTML_DECK.
+ * Family and face fields are borrowed for the renderer lifetime.
+ */
 typedef struct mdf_html_font {
     const char *family;
     mdf_html_font_face regular;
     mdf_html_font_face italic;
 } mdf_html_font;
+
+/** Source for the JetBrains Mono faces used by HTML and HTML deck output. */
+typedef enum mdf_html_font_source {
+    /** Embed the configured font data; this is the default. */
+    MDF_HTML_FONT_SOURCE_EMBEDDED = 0,
+    /** Reference paired external font URIs instead of embedding data. */
+    MDF_HTML_FONT_SOURCE_EXTERNAL = 1
+} mdf_html_font_source;
 
 /**
  * Renderer options.
@@ -142,8 +159,52 @@ typedef struct mdf_options {
     const char *theme_name;
     /** HTML document width in ch. HTML charts are centered inside this content width. */
     double html_content_width_ch;
-    /** Optional HTML font. cmdf supplies JetBrains Mono; the library does not. */
+    /**
+     * Optional HTML font data. When unset, HTML defaults to built-in JetBrains
+     * Mono. External font configuration always selects built-in JetBrains Mono
+     * and ignores this value.
+     */
     mdf_html_font html_font;
+    /**
+     * Embedded or external JetBrains Mono font source. Default is embedded.
+     * Any non-NULL external URI also selects MDF_HTML_FONT_SOURCE_EXTERNAL.
+     */
+    mdf_html_font_source html_font_source;
+    /**
+     * Base external font URI; standard regular and italic WOFF2 names are
+     * appended before any query or fragment suffix. The base must name a path;
+     * query- or fragment-only bases are invalid. A local path or file:// URI
+     * is also the implicit dump directory when html_dump_font is enabled and no
+     * dump path is supplied; URI suffixes are not filesystem path components.
+     */
+    const char *html_font_uri;
+    /** External regular font URI; overrides html_font_uri and cannot be query- or fragment-only. */
+    const char *html_font_regular_uri;
+    /** External italic font URI; overrides html_font_uri and cannot be query- or fragment-only. */
+    const char *html_font_italic_uri;
+    /**
+     * Local directory or file:// URI used to derive dump destinations when
+     * html_dump_font or html_dump_font_force is nonzero.
+     */
+    const char *html_font_dump_path;
+    /**
+     * Optional local regular dump destination. It overrides html_font_dump_path
+     * when html_dump_font or html_dump_font_force is nonzero.
+     */
+    const char *html_font_dump_regular_path;
+    /**
+     * Optional local italic dump destination. It overrides html_font_dump_path
+     * when html_dump_font or html_dump_font_force is nonzero.
+     */
+    const char *html_font_dump_italic_path;
+    /**
+     * Dump built-in JetBrains Mono before renderer creation. Only local paths
+     * and file:// URI bases can derive dump paths; all other bases require
+     * explicit local dump paths.
+     */
+    int html_dump_font;
+    /** Replace existing regular and italic files while dumping; otherwise existing files are preserved. */
+    int html_dump_font_force;
     /** HTML deck transition behavior. Default is MDF_DECK_TRANSITION_FADE. */
     mdf_deck_transition deck_transition;
     /** Show slide numbers on deck slides after the first slide. */
@@ -248,6 +309,58 @@ void mdf_options_init(mdf_options *opts);
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
 /** Set or clear the HTML document/deck title before rendering starts. */
 mdf_status mdf_set_html_title(mdf *self, const char *title);
+/**
+ * Fill out with libmdf's built-in JetBrains Mono regular and italic WOFF2 faces.
+ * The returned data pointers are borrowed immutable storage valid for the
+ * lifetime of the library and must not be freed or modified by the caller.
+ */
+void mdf_html_jetbrains_mono_font(mdf_html_font *out);
+/**
+ * Write the built-in JetBrains Mono regular and italic WOFF2 files to explicit
+ * local destination paths. Both paths are required and must resolve to
+ * separate filesystem objects; equivalent paths and aliases are rejected.
+ * Parent directories are not created. Existing files are preserved. Returns
+ * MDF_ERROR_INVALID for invalid paths and MDF_ERROR_IO for filesystem failures.
+ */
+mdf_status mdf_dump_html_jetbrains_mono_font(const char *regular_path,
+                                             const char *italic_path);
+/** Write the built-in faces to explicit local paths, replacing existing regular
+ * and italic files. Symlinks and special files are refused. */
+mdf_status mdf_dump_html_jetbrains_mono_font_force(const char *regular_path,
+                                                   const char *italic_path);
+/**
+ * Resolve a local directory and optional paired path overrides, then dump the
+ * built-in faces. The directory supplies any omitted path; without it, both
+ * explicit paths are required. Parent directories are not created and existing
+ * files are preserved. Returns MDF_ERROR_INVALID or MDF_ERROR_IO as above.
+ */
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths(const char *font_path,
+                                                      const char *regular_path,
+                                                      const char *italic_path);
+/** Same as mdf_dump_html_jetbrains_mono_font_to_paths, replacing existing
+ * regular and italic files while refusing symlinks and special files. */
+mdf_status mdf_dump_html_jetbrains_mono_font_to_paths_force(const char *font_path,
+                                                            const char *regular_path,
+                                                            const char *italic_path);
+/**
+ * Resolve the local regular and italic destinations selected by enabled HTML
+ * font-dump options without writing either file. Each output buffer must be
+ * non-NULL and have nonzero capacity. Returns MDF_ERROR_INVALID when dumping
+ * is not enabled or the configured URI/path combination is not local and
+ * resolvable.
+ */
+mdf_status mdf_html_font_resolve_dump_paths(const mdf_options *opts,
+                                            char *regular_path,
+                                            size_t regular_path_cap,
+                                            char *italic_path,
+                                            size_t italic_path_cap);
+/**
+ * Return nonzero when two non-empty paths name the same existing filesystem
+ * object or the same currently absent destination. Identical non-empty path
+ * strings are aliases even when their parent directory does not exist. A zero
+ * result means no alias could be established; it is not a path validity check.
+ */
+int mdf_paths_alias(const char *first_path, const char *second_path);
 /** Stable string for a status code. */
 const char *mdf_status_string(mdf_status status);
 /** Number of built-in themes. */

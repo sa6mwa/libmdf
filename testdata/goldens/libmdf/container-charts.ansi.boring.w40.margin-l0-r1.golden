@@ -24,7 +24,7 @@ and wrapping regressions.
 >         │  ███  ███  ███  ███ 
 >         │  ███  ███  ███  ███ 
 >       0 └─────────────────────
->             n    e    d    u  
+>            Mon  Tue  Wed  Thu
 
 # List Charts
 
@@ -55,7 +55,7 @@ and wrapping regressions.
         │   █████     █████   
         │   █████     █████   
       0 └─────────────────────
-              A         B     
+              A         B
 
 
 The paragraphs around these charts

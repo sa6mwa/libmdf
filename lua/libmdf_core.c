@@ -5,6 +5,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct lua_mdf_source_ctx {
     lua_State *L;
@@ -290,6 +292,272 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_pop(L, 1);
 }
 
+static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_format format, mdf_options *opts)
+{
+    const char *font_uri;
+    const char *regular_uri;
+    const char *italic_uri;
+    int disable_embedded_font;
+    int dump_font;
+    int dump_font_force;
+
+    if (!lua_istable(L, index) || opts == NULL) {
+        return MDF_OK;
+    }
+    disable_embedded_font = lua_mdf_get_boolean_field(L, index, "disable_embedded_font");
+    dump_font = lua_mdf_get_boolean_field(L, index, "dump_font");
+    dump_font_force = lua_mdf_get_boolean_field(L, index, "dump_font_force");
+    font_uri = NULL;
+    regular_uri = NULL;
+    italic_uri = NULL;
+    lua_getfield(L, index, "font_uri");
+    if (!lua_isnil(L, -1)) {
+        font_uri = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_regular_uri");
+    if (!lua_isnil(L, -1)) {
+        regular_uri = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_italic_uri");
+    if (!lua_isnil(L, -1)) {
+        italic_uri = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_path");
+    if (!lua_isnil(L, -1)) {
+        opts->html_font_dump_path = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_regular_path");
+    if (!lua_isnil(L, -1)) {
+        opts->html_font_dump_regular_path = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "font_italic_path");
+    if (!lua_isnil(L, -1)) {
+        opts->html_font_dump_italic_path = luaL_checkstring(L, -1);
+    }
+    lua_pop(L, 1);
+    if ((disable_embedded_font || dump_font || dump_font_force || font_uri != NULL || regular_uri != NULL || italic_uri != NULL ||
+         opts->html_font_dump_path != NULL || opts->html_font_dump_regular_path != NULL || opts->html_font_dump_italic_path != NULL) &&
+        format != MDF_FORMAT_HTML && format != MDF_FORMAT_HTML_DECK) {
+        return MDF_ERROR_INVALID;
+    }
+    opts->html_font_source = disable_embedded_font ?
+        MDF_HTML_FONT_SOURCE_EXTERNAL : MDF_HTML_FONT_SOURCE_EMBEDDED;
+    opts->html_font_uri = font_uri;
+    opts->html_font_regular_uri = regular_uri;
+    opts->html_font_italic_uri = italic_uri;
+    opts->html_dump_font = dump_font;
+    opts->html_dump_font_force = dump_font_force;
+    return MDF_OK;
+}
+
+/* Expose the library's path resolution and identity rules so cmdf.lua can
+ * reject destructive dump aliases before opening either user file. */
+static int lua_mdf_html_font_dump_paths(lua_State *L)
+{
+    mdf_options opts;
+    mdf_status st;
+    char regular_path[4096];
+    char italic_path[4096];
+
+    luaL_checktype(L, 1, LUA_TTABLE);
+    mdf_options_init(&opts);
+    st = lua_mdf_apply_html_font_options(L, 1, MDF_FORMAT_HTML, &opts);
+    if (st != MDF_OK) {
+        return luaL_error(L, "html font dump paths: %s", mdf_status_string(st));
+    }
+    st = mdf_html_font_resolve_dump_paths(&opts,
+                                          regular_path, sizeof(regular_path),
+                                          italic_path, sizeof(italic_path));
+    if (st != MDF_OK) {
+        return luaL_error(L, "html font dump paths: %s", mdf_status_string(st));
+    }
+    lua_pushstring(L, regular_path);
+    lua_pushstring(L, italic_path);
+    return 2;
+}
+
+static int lua_mdf_paths_alias(lua_State *L)
+{
+    const char *first_path;
+    const char *second_path;
+
+    first_path = luaL_checkstring(L, 1);
+    second_path = luaL_checkstring(L, 2);
+    lua_pushboolean(L, mdf_paths_alias(first_path, second_path));
+    return 1;
+}
+
+/* Match a candidate path to the real stdout destination, including descriptor
+ * aliases such as /dev/stdout and /proc/self/fd/1. */
+static int lua_mdf_path_aliases_stdout(lua_State *L)
+{
+    const char *path;
+    struct stat path_st;
+    struct stat stdout_st;
+    int aliases;
+
+    path = luaL_checkstring(L, 1);
+    aliases = stat(path, &path_st) == 0 && fstat(STDOUT_FILENO, &stdout_st) == 0 &&
+        path_st.st_dev == stdout_st.st_dev && path_st.st_ino == stdout_st.st_ino;
+    lua_pushboolean(L, aliases);
+    return 1;
+}
+
+/* Keep cmdf.lua's implicit local font references on the same lexical path
+ * model as native cmdf, without using a shell or resolving symlinks. This
+ * module is built against libmdf's installed public headers, so the small
+ * helper stays self-contained instead of expanding the public C API. */
+static int lua_mdf_normalize_absolute_path(char *dst, size_t cap, const char *path)
+{
+    char source[4096];
+    char cwd[4096];
+    const char *p;
+    size_t len;
+    size_t out_len;
+
+    if (dst == NULL || cap < 2 || path == NULL || path[0] == '\0') {
+        return -1;
+    }
+    if (path[0] == '/') {
+        if (strlen(path) >= sizeof(source)) {
+            return -1;
+        }
+        strcpy(source, path);
+    } else {
+        if (getcwd(cwd, sizeof(cwd)) == NULL ||
+            strlen(cwd) + 1 + strlen(path) + 1 > sizeof(source)) {
+            return -1;
+        }
+        strcpy(source, cwd);
+        strcat(source, "/");
+        strcat(source, path);
+    }
+    dst[0] = '/';
+    out_len = 1;
+    p = source;
+    while (*p != '\0') {
+        const char *component;
+
+        while (*p == '/') p++;
+        component = p;
+        while (*p != '\0' && *p != '/') p++;
+        len = (size_t)(p - component);
+        if (len == 0 || (len == 1 && component[0] == '.')) {
+            continue;
+        }
+        if (len == 2 && component[0] == '.' && component[1] == '.') {
+            while (out_len > 1 && dst[out_len - 1] != '/') out_len--;
+            if (out_len > 1) out_len--;
+            continue;
+        }
+        if (out_len + (out_len > 1 ? 1 : 0) + len + 1 > cap) {
+            return -1;
+        }
+        if (out_len > 1) dst[out_len++] = '/';
+        memcpy(dst + out_len, component, len);
+        out_len += len;
+    }
+    dst[out_len] = '\0';
+    return 0;
+}
+
+static int lua_mdf_path_relative_to(lua_State *L)
+{
+    const char *from_dir;
+    const char *target_path;
+    char from[4096];
+    char target[4096];
+    char relative_path[4096];
+    const char *from_part;
+    const char *target_part;
+    size_t out_len;
+
+    from_dir = luaL_checkstring(L, 1);
+    target_path = luaL_checkstring(L, 2);
+    if (lua_mdf_normalize_absolute_path(from, sizeof(from), from_dir) != 0 ||
+        lua_mdf_normalize_absolute_path(target, sizeof(target), target_path) != 0) {
+        return luaL_error(L, "relative path: invalid path");
+    }
+    from_part = from + 1;
+    target_part = target + 1;
+    while (*from_part != '\0' && *target_part != '\0') {
+        const char *from_end;
+        const char *target_end;
+        size_t from_len;
+        size_t target_len;
+
+        from_end = strchr(from_part, '/');
+        target_end = strchr(target_part, '/');
+        if (from_end == NULL) from_end = from_part + strlen(from_part);
+        if (target_end == NULL) target_end = target_part + strlen(target_part);
+        from_len = (size_t)(from_end - from_part);
+        target_len = (size_t)(target_end - target_part);
+        if (from_len != target_len || strncmp(from_part, target_part, from_len) != 0) {
+            break;
+        }
+        from_part = *from_end == '\0' ? from_end : from_end + 1;
+        target_part = *target_end == '\0' ? target_end : target_end + 1;
+    }
+    out_len = 0;
+    while (*from_part != '\0') {
+        const char *from_end;
+
+        from_end = strchr(from_part, '/');
+        if (from_end == NULL) from_end = from_part + strlen(from_part);
+        if (out_len + 3 + 1 > sizeof(relative_path)) {
+            return luaL_error(L, "relative path: invalid path");
+        }
+        memcpy(relative_path + out_len, "../", 3);
+        out_len += 3;
+        from_part = *from_end == '\0' ? from_end : from_end + 1;
+    }
+    if (*target_part != '\0') {
+        size_t target_len;
+
+        target_len = strlen(target_part);
+        if (out_len + target_len + 1 > sizeof(relative_path)) {
+            return luaL_error(L, "relative path: invalid path");
+        }
+        memcpy(relative_path + out_len, target_part, target_len);
+        out_len += target_len;
+    }
+    if (out_len == 0) relative_path[out_len++] = '.';
+    relative_path[out_len] = '\0';
+    {
+        char uri_path[4096];
+        size_t i;
+        size_t uri_len;
+
+        uri_len = 0;
+        for (i = 0; relative_path[i] != '\0'; i++) {
+            unsigned char c;
+
+            c = (unsigned char)relative_path[i];
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
+                c == '~' || c == '/') {
+                if (uri_len + 2 > sizeof(uri_path)) return luaL_error(L, "relative path: invalid path");
+                uri_path[uri_len++] = (char)c;
+            } else {
+                static const char hex[] = "0123456789ABCDEF";
+
+                if (uri_len + 4 > sizeof(uri_path)) return luaL_error(L, "relative path: invalid path");
+                uri_path[uri_len++] = '%';
+                uri_path[uri_len++] = hex[c >> 4];
+                uri_path[uri_len++] = hex[c & 0x0f];
+            }
+        }
+        uri_path[uri_len] = '\0';
+        lua_pushstring(L, uri_path);
+    }
+    return 1;
+}
+
 static size_t lua_mdf_source_read(void *userdata, char *dst, size_t cap, int *err)
 {
     lua_mdf_source_ctx *ctx;
@@ -426,8 +694,14 @@ static int lua_mdf_render(lua_State *L)
         lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
     }
     inst = NULL;
-    st = mdf_create(format, &opts, &inst);
+    st = lua_istable(L, 2) ? lua_mdf_apply_html_font_options(L, 2, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &inst);
+    }
     if (st != MDF_OK) {
+        if (inst != NULL) {
+            inst->destroy(inst);
+        }
         if (trace_ctx.ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
         }
@@ -502,7 +776,10 @@ static int lua_mdf_render_stream(lua_State *L)
     sink.userdata = &sink_ctx;
     sink.write = lua_mdf_sink_write;
     inst = NULL;
-    st = mdf_create(format, &opts, &inst);
+    st = lua_istable(L, 3) ? lua_mdf_apply_html_font_options(L, 3, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &inst);
+    }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(inst, html_title);
     }
@@ -547,7 +824,10 @@ static int lua_mdf_new(lua_State *L)
         lua_pushvalue(L, 1);
         handle->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     }
-    st = mdf_create(format, &opts, &handle->mdf);
+    st = lua_istable(L, 1) ? lua_mdf_apply_html_font_options(L, 1, format, &opts) : MDF_OK;
+    if (st == MDF_OK) {
+        st = mdf_create(format, &opts, &handle->mdf);
+    }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(handle->mdf, html_title);
     }
@@ -771,6 +1051,10 @@ static const luaL_Reg lua_mdf_funcs[] = {
     {"create", lua_mdf_new},
     {"render", lua_mdf_render},
     {"render_stream", lua_mdf_render_stream},
+    {"html_font_dump_paths", lua_mdf_html_font_dump_paths},
+    {"paths_alias", lua_mdf_paths_alias},
+    {"path_aliases_stdout", lua_mdf_path_aliases_stdout},
+    {"path_relative_to", lua_mdf_path_relative_to},
     {"theme_names", lua_mdf_theme_names},
     {"theme_exists", lua_mdf_theme_exists},
     {"status_string", lua_mdf_status_string},

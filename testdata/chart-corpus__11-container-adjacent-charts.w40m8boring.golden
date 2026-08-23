@@ -46,7 +46,7 @@
         >     │  ███   ███  
         >     │  ███   ███  
         >   0 └─────────────
-        >         A     B   
+        >         A     B
 
         Blockquote vertical
         chart after blank quote
@@ -61,7 +61,7 @@
         >     │  ███   ███  
         >     │  ███   ███  
         >   0 └─────────────
-        >         A     B   
+        >         A     B
 
         List vertical chart
         immediately after text.
@@ -74,7 +74,7 @@
               │  ███   ███  
               │  ███   ███  
             0 └─────────────
-                  A     B   
+                  A     B
 
 
         List vertical chart
@@ -89,7 +89,7 @@
               │  ███   ███  
               │  ███   ███  
             0 └─────────────
-                  A     B   
+                  A     B
 
         Blockquote tile chart
         immediately after text.

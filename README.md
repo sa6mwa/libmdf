@@ -62,9 +62,9 @@ share/doc/cmdf/README.md
 share/doc/cmdf/OFL.txt
 ```
 
-The CLI archives embed JetBrains Mono for HTML output and therefore include the
-JetBrains Mono `OFL.txt`. The library SDK archives do not embed the font and do
-not ship `OFL.txt`.
+Both CLI archives and library SDK archives include JetBrains Mono and its
+`OFL.txt` attribution. The font is embedded by libmdf for self-contained HTML
+and deck output.
 
 Lua release artifacts are named:
 
@@ -189,8 +189,23 @@ Important options:
 - `theme_name`: theme name. `default` is used when unset.
 - `html_content_width_ch`: HTML document content width in `ch`. Default is
   `96`.
-- `html_font`: optional user-supplied HTML font data. The library does not
-  embed a default font.
+- `html_font`: optional user-supplied HTML font data. HTML and deck output use
+  the built-in JetBrains Mono regular and italic WOFF2 faces when this is unset.
+- `html_font_source`: `MDF_HTML_FONT_SOURCE_EMBEDDED` (default) or
+  `MDF_HTML_FONT_SOURCE_EXTERNAL`. Any configured HTML font URI also selects
+  the external built-in JetBrains Mono faces.
+- `html_font_uri`: a base URI for the standard regular and italic WOFF2 names;
+  `html_font_regular_uri` and `html_font_italic_uri` override either face.
+  Query and fragment suffixes remain on the generated CSS references but are
+  not filesystem path components when deriving local dump destinations. A base
+  or per-face URI must name a font path; query- and fragment-only values are
+  invalid.
+- `html_dump_font` and `html_font_dump_*`: dump built-in faces before renderer
+  creation. A local path or `file://` `html_font_uri` supplies destinations
+  when no explicit dump path is set. `html_font_dump_path` instead selects the
+  local destination while `html_font_uri` remains the HTML reference base. C
+  and Lua callers must set `html_dump_font`/`dump_font`; dump paths alone are
+  passive configuration.
 - `deck_transition`: `MDF_DECK_TRANSITION_FADE`,
   `MDF_DECK_TRANSITION_CROSS`, or `MDF_DECK_TRANSITION_HARD`. Default is
   `MDF_DECK_TRANSITION_FADE`.
@@ -204,7 +219,7 @@ Important options:
 - `allocator`, `emission_buffer`, `memory`: custom memory and emission-buffer
   control.
 
-The shared library uses SONAME ABI version `1`. Lua facade and `cmdf.lua`
+The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.
@@ -298,8 +313,10 @@ padded with terminal spaces. `cmdf -w` sets ANSI width and also sets HTML
 content width unless `--html-content-width` is provided.
 
 Vertical charts expand small datasets toward the content width, reduce plotted
-point resolution when the x axis would overflow, and suppress unreadable dense
-x-axis labels. Tile charts render a single 100% stacked bar with each value as a
+point resolution when the x axis would overflow, and center complete x-axis
+labels when they fit their bar slots; dense labels fall back to compact ticks or
+are suppressed rather than overlapping. Tile charts render a single 100% stacked
+bar with each value as a
 colored segment, write centered labels on the first bar row, centered
 percentages on the second bar row, and follow with a raw-value legend. Chart
 labels, values, and percentages use the same theme color as their bar or tile
@@ -355,6 +372,15 @@ Flags:
 -8, --osc8 auto|on|off
     --list-themes
     --html-content-width N
+    --html-disable-embedded-font
+    --html-font-uri URI
+    --html-font-regular-uri URI
+    --html-font-italic-uri URI
+    --html-dump-font
+    --html-dump-font-force
+    --html-dump-font-path DIR
+    --html-dump-font-regular-path PATH
+    --html-dump-font-italic-path PATH
     --transition fade|cross|hard
     --slide-numbers
     --deck-center-front-text
@@ -372,9 +398,43 @@ visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
 
-For HTML, `cmdf` embeds JetBrains Mono woff2 data by default. The library API
-does not hardcode this font; applications can provide their own font bytes or
-callbacks through `mdf_options.html_font`. `cmdf` infers HTML output from
+For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
+default. `--html-disable-embedded-font` instead references byte-identical,
+weight-variable upstream files at the immutable JetBrains Mono commit
+`02bb50b082dad9ef8a0f33ac393839202b760223`; this preserves real 700-weight
+headings without embedding the bytes in the document. `--html-font-uri` is an
+external URI base and derives both standard filenames;
+`--html-font-regular-uri` and `--html-font-italic-uri` override either output
+URI independently. Query and fragment suffixes remain after each derived font
+filename. A URI also automatically selects external output. Custom
+external files must provide the weight variation needed by the document when
+typography parity with the built-in faces matters.
+
+Dumping is an explicit pre-operation. A bare `cmdf --html-dump-font` (or
+`--html-dump-font-force`) writes `JetBrainsMono-Regular.woff2` and
+`JetBrainsMono-Italic.woff2` beside an explicit HTML output, or to the current
+directory when writing HTML to stdout, and references them relatively from the
+generated HTML. With a local path or `file://`
+`--html-font-uri`, that URI is both the output reference base and the dump
+directory; with `--output`, a relative local URI is dumped beneath that output
+directory so its literal HTML reference resolves correctly. Only local paths
+and `file://` URI bases can derive dump paths; all other URI bases require
+`--html-dump-font-path` or both paired dump paths. Dump paths select
+only where the bundled files are written; configured
+base and per-face URIs always remain the HTML references. When no URI is set
+and `--output` is used, `cmdf` derives each local reference relative to the
+HTML file while preserving dump paths as filesystem paths relative to the
+invocation directory. Existing files are preserved unless
+`--html-dump-font-force` is used; force mode replaces both face files and
+refuses symlinks and special files. In `cmdf`, providing any dump path is a
+convenience shortcut that enables dumping. `cmdf` rejects a resolved dump
+destination that aliases its input, `--output` path, or the active stdout
+destination (including `/dev/stdout` and descriptor aliases). C callers use the same
+behavior through `mdf_options`, or may call
+`mdf_dump_html_jetbrains_mono_font_to_paths`
+directly. Applications can provide a different embedded family through
+`mdf_options.html_font` or obtain the built-in borrowed descriptor through
+`mdf_html_jetbrains_mono_font`. `cmdf` infers HTML output from
 `.html` and `.htm` output paths when `--html` is omitted, warning before it
 renders. libmdf sets the HTML document title from the first ATX heading before
 any paragraph, falls back to `mdf`, and lets `cmdf` override it with `--title`
@@ -485,10 +545,31 @@ html_font = {
   italic_format = "woff2" | "ttf",
   italic_data = bytes,
 }
+disable_embedded_font = true
+font_uri = URI_BASE
+font_regular_uri = REGULAR_URI
+font_italic_uri = ITALIC_URI
+dump_font = true
+dump_font_force = true
+font_path = DIRECTORY
+font_regular_path = REGULAR_PATH
+font_italic_path = ITALIC_PATH
 ```
 
+Lua follows the CLI behavior: `font_uri` selects external output, local paths
+and `file://` URIs become dump destinations when `dump_font` is true, and
+`font_path` selects a separate local dump destination without changing the URI.
+Unlike `cmdf`, Lua and C API dump paths do not imply `dump_font`.
+
+`mdf.html_font_dump_paths(opts)` returns the paired local destinations selected
+by enabled `dump_font` options without writing files. `mdf.paths_alias(a, b)`
+reports whether two non-empty paths name the same existing object or the same
+absent destination; `mdf.path_aliases_stdout(path)` reports whether a path
+names the process's current stdout destination. These helpers let CLI wrappers
+reject destructive dump aliases before creating a renderer.
+
 The generated `cmdf.lua` shipped in CLI archives uses the streaming Lua API and
-embeds JetBrains Mono for HTML and deck parity with `cmdf`.
+the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.
 
 The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 `mdf.version_minor`, `mdf.version_patch`, `mdf.status`, `mdf.status_string`,
@@ -598,6 +679,6 @@ are verified with target-correct `otool` against the final extracted artifacts.
 
 ## License
 
-`libmdf`, `cmdf`, and the Lua bindings are MIT licensed. CLI artifacts that
-embed JetBrains Mono also include the JetBrains Mono SIL Open Font License in
-`share/doc/cmdf/OFL.txt`.
+`libmdf`, `cmdf`, and the Lua bindings are MIT licensed. SDK and CLI artifacts
+include the JetBrains Mono SIL Open Font License under their respective
+`share/doc/*/OFL.txt` paths.

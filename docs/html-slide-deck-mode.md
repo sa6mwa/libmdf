@@ -63,8 +63,9 @@ based on the total slide count. The first slide never shows an indicator. The
 visual style uses the same theme family as lower ATX headings.
 
 Existing HTML-related CLI options continue to apply in deck mode, including
-theme selection, boring mode where meaningful, title handling, embedded
-JetBrains Mono in `cmdf`, and HTML content/font settings.
+theme selection, boring mode where meaningful, title handling, built-in
+JetBrains Mono embedding in libmdf and `cmdf`, external or dumped font
+references, and HTML content/font settings.
 
 When both front matter `theme:` and `cmdf --theme` are present, `--theme` wins.
 
@@ -80,6 +81,11 @@ Public ABI additions:
     `MDF_DECK_TRANSITION_CROSS`, and `MDF_DECK_TRANSITION_HARD`.
   - `slide_numbers`, boolean integer.
   - `deck_center_front_text`, boolean integer.
+- HTML font options in `mdf_options`, including `html_font_source`, base and
+  per-face external URIs, and paired dump destinations and force behavior.
+- Built-in font helpers: `mdf_html_jetbrains_mono_font`, the paired
+  `mdf_dump_html_jetbrains_mono_font*` functions,
+  `mdf_html_font_resolve_dump_paths`, and `mdf_paths_alias`.
 
 The feature intentionally uses a direct public API rather than hiding deck
 controls behind CLI-only behavior.

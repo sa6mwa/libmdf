@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/select.h>
 #include <sys/wait.h>
@@ -56,6 +57,25 @@ static int write_all(int fd, const char *src, size_t len)
     return 0;
 }
 
+static int join_path(char *dst, size_t dst_cap, const char *dir, const char *name)
+{
+    size_t dir_len;
+    size_t name_len;
+
+    if (dst_cap == 0) {
+        return -1;
+    }
+    dir_len = strlen(dir);
+    name_len = strlen(name);
+    if (dir_len >= dst_cap || name_len >= dst_cap - dir_len - 1) {
+        return -1;
+    }
+    memcpy(dst, dir, dir_len);
+    dst[dir_len] = '/';
+    memcpy(dst + dir_len + 1, name, name_len + 1);
+    return 0;
+}
+
 static int make_input_file(char *path, size_t path_cap)
 {
     int fd;
@@ -77,6 +97,28 @@ static int make_input_file(char *path, size_t path_cap)
         return -1;
     }
     (void)path_cap;
+    return 0;
+}
+
+static int make_temp_dir(char *path, size_t path_cap)
+{
+    int fd;
+
+    (void)path_cap;
+    fd = mkstemp(path);
+    if (fd < 0) {
+        return -1;
+    }
+    if (close(fd) != 0) {
+        unlink(path);
+        return -1;
+    }
+    if (unlink(path) != 0) {
+        return -1;
+    }
+    if (mkdir(path, 0700) != 0) {
+        return -1;
+    }
     return 0;
 }
 
@@ -151,7 +193,7 @@ static int grow_buf(char **buf, size_t *len, size_t *cap, const char *src, size_
     return 0;
 }
 
-static int run_cmdf(char *const argv[], run_result *out)
+static int run_cmdf_in_dir(char *const argv[], const char *dir, run_result *out)
 {
     int pipefd[2];
     pid_t pid;
@@ -179,6 +221,9 @@ static int run_cmdf(char *const argv[], run_result *out)
             _exit(127);
         }
         close(pipefd[1]);
+        if (dir != NULL && chdir(dir) != 0) {
+            _exit(127);
+        }
         execv(argv[0], argv);
         _exit(127);
     }
@@ -205,6 +250,11 @@ static int run_cmdf(char *const argv[], run_result *out)
     out->status = status;
     out->elapsed_ms = finished - started;
     return 0;
+}
+
+static int run_cmdf(char *const argv[], run_result *out)
+{
+    return run_cmdf_in_dir(argv, NULL, out);
 }
 
 static int run_cmdf_stderr(char *const argv[], run_result *out)
@@ -868,6 +918,24 @@ int main(int argc, char **argv)
     char deck_input_path[64];
     char output_path[96];
     char output_path_2[96];
+    char regular_font_path[96];
+    char italic_font_path[96];
+    char font_dir[64];
+    char bare_dump_dir[64];
+    char font_dir_uri[96];
+    char directory_regular_font_path[128];
+    char directory_italic_font_path[128];
+    char bare_dump_regular_font_path[128];
+    char bare_dump_italic_font_path[128];
+    char relative_font_output_dir[128];
+    char relative_font_output_path[160];
+    char relative_font_assets_dir[128];
+    char relative_font_output_assets_dir[160];
+    char relative_font_regular_path[160];
+    char relative_font_italic_path[160];
+    char stdout_font_assets_dir[128];
+    char stdout_font_regular_path[160];
+    char stdout_font_italic_path[160];
     char *ascii_html_args[8];
     char *help_args[3];
     char *chunk_args[8];
@@ -902,6 +970,9 @@ int main(int argc, char **argv)
     char *ascii_deck_args[8];
     char *margin_args[10];
     char *bad_delay_args[6];
+    char *external_font_args[6];
+    char *dump_font_args[12];
+    char *font_collision_args[12];
     char *first_chunk;
     long first_ms;
     char *trace_args[8];
@@ -909,6 +980,8 @@ int main(int argc, char **argv)
     char *html_text;
     run_result result;
     int fails;
+    FILE *font_fp;
+    int first_font_byte;
 
     if (argc != 2) {
         fprintf(stderr, "usage: test_cmdf CMDf_PATH\n");
@@ -925,6 +998,34 @@ int main(int argc, char **argv)
     }
 
     fails = 0;
+    snprintf(regular_font_path, sizeof(regular_font_path),
+             "/tmp/libmdf-cmdf-regular-%ld.woff2", (long)getpid());
+    snprintf(italic_font_path, sizeof(italic_font_path),
+             "/tmp/libmdf-cmdf-italic-%ld.woff2", (long)getpid());
+    unlink(regular_font_path);
+    unlink(italic_font_path);
+    strcpy(font_dir, "/tmp/libmdf-cmdf-font-dir-XXXXXX");
+    if (make_temp_dir(font_dir, sizeof(font_dir)) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    snprintf(directory_regular_font_path, sizeof(directory_regular_font_path),
+             "%s/JetBrainsMono-Regular.woff2", font_dir);
+    snprintf(directory_italic_font_path, sizeof(directory_italic_font_path),
+             "%s/JetBrainsMono-Italic.woff2", font_dir);
+    snprintf(font_dir_uri, sizeof(font_dir_uri), "file://%s", font_dir);
+    strcpy(bare_dump_dir, "/tmp/libmdf-cmdf-bare-dump-XXXXXX");
+    if (make_temp_dir(bare_dump_dir, sizeof(bare_dump_dir)) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    snprintf(bare_dump_regular_font_path, sizeof(bare_dump_regular_font_path),
+             "%s/JetBrainsMono-Regular.woff2", bare_dump_dir);
+    snprintf(bare_dump_italic_font_path, sizeof(bare_dump_italic_font_path),
+             "%s/JetBrainsMono-Italic.woff2", bare_dump_dir);
 
     help_args[0] = argv[1];
     help_args[1] = "--help";
@@ -943,7 +1044,449 @@ int main(int argc, char **argv)
                     strstr(result.buf, "--slide-numbers") != NULL &&
                     strstr(result.buf, "--deck-center-front-text") != NULL,
                     "cmdf help lists deck flags");
+    fails += expect(result.buf != NULL &&
+                    strstr(result.buf, "--html-disable-embedded-font") != NULL &&
+                    strstr(result.buf, "--html-font-regular-uri") != NULL &&
+                    strstr(result.buf, "--html-font-italic-uri") != NULL &&
+                    strstr(result.buf, "--html-dump-font-regular-path") != NULL &&
+                    strstr(result.buf, "--html-dump-font-italic-path") != NULL,
+                    "cmdf help lists paired HTML font flags");
     free(result.buf);
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-dump-font";
+    dump_font_args[3] = input_path;
+    dump_font_args[4] = NULL;
+    if (run_cmdf_in_dir(dump_font_args, bare_dump_dir, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(bare_dump_regular_font_path);
+        unlink(bare_dump_italic_font_path);
+        rmdir(bare_dump_dir);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf bare font dump uses current directory relative references");
+    free(result.buf);
+    font_fp = fopen(bare_dump_regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w',
+                    "cmdf bare font dump writes the regular WOFF2 file in its current directory");
+    font_fp = fopen(bare_dump_italic_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w',
+                    "cmdf bare font dump writes the italic WOFF2 file in its current directory");
+    unlink(bare_dump_regular_font_path);
+    unlink(bare_dump_italic_font_path);
+    rmdir(bare_dump_dir);
+
+    snprintf(output_path, sizeof(output_path), "%s/index.html", font_dir);
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-dump-font";
+    dump_font_args[3] = "-o";
+    dump_font_args[4] = output_path;
+    dump_font_args[5] = input_path;
+    dump_font_args[6] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(directory_regular_font_path);
+        unlink(directory_italic_font_path);
+        unlink(output_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf bare font dump accepts an explicit HTML output");
+    free(result.buf);
+    if (read_file_text(output_path, &html_text) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(directory_regular_font_path);
+        unlink(directory_italic_font_path);
+        unlink(output_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(strstr(html_text, "src:url(\"./JetBrainsMono-Regular.woff2\")") != NULL &&
+                    strstr(html_text, "data:font/woff2;base64,") == NULL,
+                    "cmdf bare font dump writes relative references beside explicit HTML output");
+    free(html_text);
+    font_fp = fopen(directory_regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w',
+                    "cmdf bare font dump writes the regular WOFF2 beside explicit HTML output");
+    unlink(directory_regular_font_path);
+    unlink(directory_italic_font_path);
+    unlink(output_path);
+
+    snprintf(relative_font_output_dir, sizeof(relative_font_output_dir), "%s/out", font_dir);
+    snprintf(relative_font_output_path, sizeof(relative_font_output_path), "%s/index.html", relative_font_output_dir);
+    snprintf(relative_font_assets_dir, sizeof(relative_font_assets_dir), "%s/assets#v1?%%", font_dir);
+    snprintf(relative_font_regular_path, sizeof(relative_font_regular_path),
+             "%s/JetBrainsMono-Regular.woff2", relative_font_assets_dir);
+    snprintf(relative_font_italic_path, sizeof(relative_font_italic_path),
+             "%s/JetBrainsMono-Italic.woff2", relative_font_assets_dir);
+    fails += expect(mkdir(relative_font_output_dir, 0700) == 0 &&
+                    mkdir(relative_font_assets_dir, 0700) == 0,
+                    "cmdf relative font dump destination setup succeeds");
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-dump-font-path";
+    dump_font_args[3] = "assets#v1?%";
+    dump_font_args[4] = "-o";
+    dump_font_args[5] = "out/index.html";
+    dump_font_args[6] = input_path;
+    dump_font_args[7] = NULL;
+    if (run_cmdf_in_dir(dump_font_args, font_dir, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(relative_font_regular_path);
+        unlink(relative_font_italic_path);
+        unlink(relative_font_output_path);
+        rmdir(relative_font_assets_dir);
+        rmdir(relative_font_output_dir);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf accepts a relative font dump path with a separate output directory");
+    free(result.buf);
+    if (read_file_text(relative_font_output_path, &html_text) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(relative_font_regular_path);
+        unlink(relative_font_italic_path);
+        unlink(relative_font_output_path);
+        rmdir(relative_font_assets_dir);
+        rmdir(relative_font_output_dir);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(strstr(html_text, "src:url(\"../assets%23v1%3F%25/JetBrainsMono-Regular.woff2\")") != NULL &&
+                    strstr(html_text, "src:url(\"../assets%23v1%3F%25/JetBrainsMono-Italic.woff2\")") != NULL,
+                    "cmdf URI-encodes relative dump paths from the HTML output directory");
+    free(html_text);
+    font_fp = fopen(relative_font_regular_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w',
+                    "cmdf writes the relative regular dump path from its working directory");
+    unlink(relative_font_regular_path);
+    unlink(relative_font_italic_path);
+    unlink(relative_font_output_path);
+    rmdir(relative_font_assets_dir);
+    rmdir(relative_font_output_dir);
+
+    snprintf(stdout_font_assets_dir, sizeof(stdout_font_assets_dir), "%s/assets#stdout?%%", font_dir);
+    snprintf(stdout_font_regular_path, sizeof(stdout_font_regular_path),
+             "%s/JetBrainsMono-Regular.woff2", stdout_font_assets_dir);
+    snprintf(stdout_font_italic_path, sizeof(stdout_font_italic_path),
+             "%s/JetBrainsMono-Italic.woff2", stdout_font_assets_dir);
+    fails += expect(mkdir(stdout_font_assets_dir, 0700) == 0,
+                    "cmdf stdout font dump destination setup succeeds");
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-dump-font-path";
+    dump_font_args[3] = "assets#stdout?%";
+    dump_font_args[4] = input_path;
+    dump_font_args[5] = NULL;
+    if (run_cmdf_in_dir(dump_font_args, font_dir, &result) != 0) return 1;
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 && result.buf != NULL &&
+                    strstr(result.buf, "src:url(\"assets%23stdout%3F%25/JetBrainsMono-Regular.woff2\")") != NULL &&
+                    strstr(result.buf, "src:url(\"assets%23stdout%3F%25/JetBrainsMono-Italic.woff2\")") != NULL,
+                    "cmdf URI-encodes local dump paths when HTML is written to stdout");
+    free(result.buf);
+    font_fp = fopen(stdout_font_regular_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w',
+                    "cmdf writes the stdout regular font dump at its local filesystem path");
+    unlink(stdout_font_regular_path);
+    unlink(stdout_font_italic_path);
+    rmdir(stdout_font_assets_dir);
+
+    snprintf(relative_font_output_assets_dir, sizeof(relative_font_output_assets_dir),
+             "%s/assets", relative_font_output_dir);
+    fails += expect(mkdir(relative_font_output_dir, 0700) == 0 &&
+                    mkdir(relative_font_output_assets_dir, 0700) == 0,
+                    "cmdf explicit relative URI dump destination setup succeeds");
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = "assets";
+    dump_font_args[4] = "--html-dump-font";
+    dump_font_args[5] = "-o";
+    dump_font_args[6] = "out/index.html";
+    dump_font_args[7] = input_path;
+    dump_font_args[8] = NULL;
+    if (run_cmdf_in_dir(dump_font_args, font_dir, &result) != 0) return 1;
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0,
+                    "cmdf dumps a relative explicit URI beneath its output directory");
+    free(result.buf);
+    if (read_file_text(relative_font_output_path, &html_text) != 0) return 1;
+    fails += expect(strstr(html_text, "src:url(\"assets/JetBrainsMono-Regular.woff2\")") != NULL,
+                    "cmdf preserves explicit relative URI text in HTML");
+    free(html_text);
+    if (join_path(relative_font_regular_path, sizeof(relative_font_regular_path),
+                  relative_font_output_assets_dir, "JetBrainsMono-Regular.woff2") != 0) {
+        return 1;
+    }
+    font_fp = fopen(relative_font_regular_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf writes the explicit URI regular font beside output");
+    unlink(relative_font_regular_path);
+    if (join_path(relative_font_italic_path, sizeof(relative_font_italic_path),
+                  relative_font_output_assets_dir, "JetBrainsMono-Italic.woff2") != 0) {
+        return 1;
+    }
+    unlink(relative_font_italic_path);
+    unlink(relative_font_output_path);
+    rmdir(relative_font_output_assets_dir);
+    rmdir(relative_font_output_dir);
+
+    snprintf(output_path, sizeof(output_path), "/tmp/libmdf-cmdf-font-output-%ld.html", (long)getpid());
+    unlink(output_path);
+    font_collision_args[0] = argv[1];
+    font_collision_args[1] = "--html";
+    font_collision_args[2] = "--html-dump-font-regular-path";
+    font_collision_args[3] = output_path;
+    font_collision_args[4] = "--html-dump-font-italic-path";
+    font_collision_args[5] = italic_font_path;
+    font_collision_args[6] = "-o";
+    font_collision_args[7] = output_path;
+    font_collision_args[8] = input_path;
+    font_collision_args[9] = NULL;
+    if (run_cmdf_stderr(font_collision_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "font dump destination aliases input, output, or stdout") != NULL,
+                    "cmdf rejects a font dump destination that aliases output");
+    free(result.buf);
+    fails += expect(access(output_path, F_OK) != 0,
+                    "cmdf alias rejection leaves a new output path untouched");
+
+    font_collision_args[3] = input_path;
+    font_collision_args[6] = input_path;
+    font_collision_args[7] = NULL;
+    if (run_cmdf_stderr(font_collision_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "font dump destination aliases input, output, or stdout") != NULL,
+                    "cmdf rejects a font dump destination that aliases input");
+    free(result.buf);
+    font_fp = fopen(input_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'a',
+                    "cmdf alias rejection preserves the input file");
+
+    font_collision_args[0] = argv[1];
+    font_collision_args[1] = "--html";
+    font_collision_args[2] = "--html-dump-font-force";
+    font_collision_args[3] = "--html-dump-font-regular-path";
+    font_collision_args[4] = "/dev/stdout";
+    font_collision_args[5] = "--html-dump-font-italic-path";
+    font_collision_args[6] = italic_font_path;
+    font_collision_args[7] = input_path;
+    font_collision_args[8] = NULL;
+    if (run_cmdf_stderr(font_collision_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 2 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "font dump destination aliases input, output, or stdout") != NULL,
+                    "cmdf rejects a font dump destination that aliases stdout");
+    free(result.buf);
+
+    external_font_args[0] = argv[1];
+    external_font_args[1] = "--html";
+    external_font_args[2] = "--html-disable-embedded-font";
+    external_font_args[3] = input_path;
+    external_font_args[4] = NULL;
+    if (run_cmdf(external_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "JetBrainsMono%5Bwght%5D.woff2") != NULL &&
+                    strstr(result.buf, "JetBrainsMono-Italic%5Bwght%5D.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf disabled embedded font uses byte-identical external JetBrains variable URIs");
+    free(result.buf);
+
+    external_font_args[0] = argv[1];
+    external_font_args[1] = "--html";
+    external_font_args[2] = "--html-font-uri";
+    external_font_args[3] = "?v=1";
+    external_font_args[4] = input_path;
+    external_font_args[5] = NULL;
+    if (run_cmdf_stderr(external_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 1 &&
+                    result.buf != NULL && strstr(result.buf, "create renderer: invalid argument") != NULL,
+                    "cmdf rejects query-only HTML font URI bases");
+    free(result.buf);
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = "web-fonts";
+    dump_font_args[4] = "--html-dump-font-regular-path";
+    dump_font_args[5] = regular_font_path;
+    dump_font_args[6] = "--html-dump-font-italic-path";
+    dump_font_args[7] = italic_font_path;
+    dump_font_args[8] = input_path;
+    dump_font_args[9] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(regular_font_path);
+        unlink(italic_font_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL && strstr(result.buf, "web-fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "web-fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf explicit dump destinations preserve HTML font references");
+    free(result.buf);
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf writes regular WOFF2 font at dump path");
+    font_fp = fopen(italic_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf writes italic WOFF2 font at dump path");
+
+    font_fp = fopen(regular_font_path, "wb");
+    if (font_fp != NULL) {
+        fputs("preserve", font_fp);
+        fclose(font_fp);
+    }
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(regular_font_path);
+        unlink(italic_font_path);
+        return 1;
+    }
+    free(result.buf);
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'p', "cmdf preserves an existing dumped font by default");
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-dump-font-force";
+    dump_font_args[3] = "--html-dump-font-regular-path";
+    dump_font_args[4] = regular_font_path;
+    dump_font_args[5] = "--html-dump-font-italic-path";
+    dump_font_args[6] = italic_font_path;
+    dump_font_args[7] = input_path;
+    dump_font_args[8] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(regular_font_path);
+        unlink(italic_font_path);
+        return 1;
+    }
+    free(result.buf);
+    font_fp = fopen(regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf force dump overwrites an existing font");
+    unlink(regular_font_path);
+    unlink(italic_font_path);
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = font_dir_uri;
+    dump_font_args[4] = "--html-dump-font";
+    dump_font_args[5] = input_path;
+    dump_font_args[6] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(directory_regular_font_path);
+        unlink(directory_italic_font_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "file://") != NULL &&
+                    strstr(result.buf, directory_regular_font_path) != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf file URI derives paired destinations and references");
+    free(result.buf);
+    font_fp = fopen(directory_regular_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf font directory writes regular WOFF2 destination");
+    font_fp = fopen(directory_italic_font_path, "rb");
+    first_font_byte = font_fp == NULL ? EOF : fgetc(font_fp);
+    if (font_fp != NULL) fclose(font_fp);
+    fails += expect(first_font_byte == 'w', "cmdf font directory writes italic WOFF2 destination");
+    unlink(directory_regular_font_path);
+    unlink(directory_italic_font_path);
+
+    dump_font_args[0] = argv[1];
+    dump_font_args[1] = "--html";
+    dump_font_args[2] = "--html-font-uri";
+    dump_font_args[3] = "https://example.invalid/fonts";
+    dump_font_args[4] = "--html-dump-font-path";
+    dump_font_args[5] = font_dir;
+    dump_font_args[6] = input_path;
+    dump_font_args[7] = NULL;
+    if (run_cmdf(dump_font_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        unlink(directory_regular_font_path);
+        unlink(directory_italic_font_path);
+        rmdir(font_dir);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "https://example.invalid/fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "https://example.invalid/fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf dump path preserves remote font URI references");
+    free(result.buf);
+    unlink(directory_regular_font_path);
+    unlink(directory_italic_font_path);
+    rmdir(font_dir);
 
     chunk_args[0] = argv[1];
     chunk_args[1] = "-b";
@@ -1279,6 +1822,25 @@ int main(int argc, char **argv)
     fails += expect(result.buf != NULL &&
                     strstr(result.buf, ".mdf-slide-number{font-weight:700;opacity:.72;font-size:clamp(.8rem,1.6vw,1.1rem);color:rgb(135,175,215);}") != NULL,
                     "cmdf deck slide numbers use resolved theme heading color");
+    free(result.buf);
+
+    deck_args[0] = argv[1];
+    deck_args[1] = "--deck";
+    deck_args[2] = "--html-font-uri";
+    deck_args[3] = "deck-fonts";
+    deck_args[4] = deck_input_path;
+    deck_args[5] = NULL;
+    if (run_cmdf(deck_args, &result) != 0) {
+        unlink(input_path);
+        unlink(deck_input_path);
+        return 1;
+    }
+    fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) == 0 &&
+                    result.buf != NULL &&
+                    strstr(result.buf, "deck-fonts/JetBrainsMono-Regular.woff2") != NULL &&
+                    strstr(result.buf, "deck-fonts/JetBrainsMono-Italic.woff2") != NULL &&
+                    strstr(result.buf, "data:font/woff2;base64,") == NULL,
+                    "cmdf deck external font URI omits embedded faces");
     free(result.buf);
 
     deck_boring_args[0] = argv[1];

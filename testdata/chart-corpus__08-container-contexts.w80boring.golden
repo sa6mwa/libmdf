@@ -21,7 +21,7 @@ Blockquote vertical chart.
 >                │      ██████          ██████          ██████     
 >                │      ██████          ██████          ██████     
 >              0 └─────────────────────────────────────────────────
->                         n               e               d        
+>                     Quote Mon       Quote Tue       Quote Wed
 
 Blockquote tile chart.
 
@@ -55,7 +55,7 @@ Unordered-list vertical chart.
                  │      ██████          ██████          ██████     
                  │      ██████          ██████          ██████     
                0 └─────────────────────────────────────────────────
-                          n               e               d        
+                       List Mon        List Tue        List Wed
 
 Unordered-list tile chart.
 
@@ -91,7 +91,7 @@ Ordered-list vertical chart.
                  │      ██████          ██████          ██████     
                  │      ██████          ██████          ██████     
                0 └─────────────────────────────────────────────────
-                          n               e               d        
+                     Ordered Mon     Ordered Tue     Ordered Wed
 
 Ordered-list tile chart.
 
@@ -127,7 +127,7 @@ Blockquoted-list vertical chart.
 >                │      ██████          ██████          ██████     
 >                │      ██████          ██████          ██████     
 >              0 └─────────────────────────────────────────────────
->                         n               e               d        
+>                  Quoted List Mon Quoted List Tue Quoted List Wed
 
 Blockquoted-list tile chart.
 

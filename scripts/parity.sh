@@ -40,7 +40,7 @@ OSC8S=${LIBMDF_PARITY_OSC8S:-$DEFAULT_OSC8S}
 TABLE_BUFFERS=${LIBMDF_PARITY_TABLE_BUFFERS:-$DEFAULT_TABLE_BUFFERS}
 TABLE_WIRES=${LIBMDF_PARITY_TABLE_WIRES:-$DEFAULT_TABLE_WIRES}
 EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus"}
-STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/cmdf_fonts.c" "$ROOT/src/cmdf_fonts.h" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
+STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
 child_pid=
 
 cleanup_child() {

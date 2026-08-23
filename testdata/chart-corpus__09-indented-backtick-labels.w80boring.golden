@@ -22,7 +22,7 @@ closing fences.
                  │         ██████                 ██████         
                  │         ██████                 ██████         
                0 └───────────────────────────────────────────────
-                             `                      s            
+                             ```              After Backticks
 
 Four-space-indented tile chart rows that begin with backticks are data, not
 closing fences.

@@ -8307,9 +8307,28 @@ static int ansi_chart_append_centered_tick_slot(mdf_impl *impl, const ansi_chart
 {
     int mark_left;
     int label_col;
+    size_t label_bytes;
+    size_t label_cols;
+    size_t left;
+    size_t right;
 
     if (step <= 1) {
         return ansi_chart_append_tick_label(impl, row);
+    }
+    label_bytes = ansi_chart_label_bytes_for_cols(row->label,
+                                                   row->label_len,
+                                                   (size_t)step,
+                                                   &label_cols);
+    /* A vertical label is useful only when it fits within its own bar slot:
+     * print and center the whole label in that case. Dense charts retain the
+     * one-grapheme tick below so adjacent labels cannot overlap. */
+    if (label_bytes == row->label_len && label_cols > 0 && label_cols <= (size_t)step) {
+        left = ((size_t)step - label_cols) / 2;
+        right = (size_t)step - label_cols - left;
+        if (left > 0 && ansi_chart_append_spaces(impl, left) != 0) return -1;
+        if (ansi_chart_append_styled(impl, "", row->label, label_bytes) != 0) return -1;
+        if (right > 0 && ansi_chart_append_spaces(impl, right) != 0) return -1;
+        return 0;
     }
     if (mark_width < 1) {
         mark_width = 1;
@@ -8333,6 +8352,13 @@ static int ansi_chart_commit_line(mdf_impl *impl, mdf_sink *sink)
     impl->ansi_col = 0;
     impl->ansi_prev_char = '\n';
     return 0;
+}
+
+static void ansi_chart_trim_trailing_spaces(mdf_impl *impl)
+{
+    while (impl->emit_len > 0 && impl->emit_buf[impl->emit_len - 1] == ' ') {
+        impl->emit_len--;
+    }
 }
 
 static int ansi_chart_emit_empty(mdf_impl *impl, mdf_sink *sink)
@@ -8527,6 +8553,7 @@ static int ansi_chart_emit_vertical(mdf_impl *impl, mdf_sink *sink, const ansi_c
             source_i = ansi_chart_bucket_label_index(chart, i, layout.points);
             if (ansi_chart_append_centered_tick_slot(impl, &chart->rows[source_i], layout.step, layout.bar_width) != 0) return -1;
         }
+        ansi_chart_trim_trailing_spaces(impl);
         return ansi_chart_commit_line(impl, sink);
     }
     return 0;

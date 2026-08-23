@@ -24,6 +24,18 @@ function mdf.render_stream(read, write, opts)
   return core.render_stream(read, write, opts or {})
 end
 
+function mdf.html_font_dump_paths(opts)
+  return core.html_font_dump_paths(opts or {})
+end
+
+function mdf.paths_alias(first_path, second_path)
+  return core.paths_alias(first_path, second_path)
+end
+
+function mdf.path_aliases_stdout(path)
+  return core.path_aliases_stdout(path)
+end
+
 function mdf.theme_names()
   return core.theme_names()
 end

@@ -1,9 +1,9 @@
 #include "libmdf/mdf.h"
-#include "cmdf_fonts.h"
 #include "mdf_internal.h"
 
 #include <errno.h>
 #include <getopt.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -89,6 +89,84 @@ typedef struct trace_output {
 } trace_output;
 
 #define CMDF_DEFAULT_SIMULATE_DELAY_SECONDS 0.02
+
+/* Dumping happens during renderer creation, before cmdf opens its output file.
+ * Compare against stdout directly so an alias such as /dev/stdout cannot inject
+ * WOFF2 bytes into HTML emitted on the default output stream. */
+static int path_aliases_stdout(const char *path)
+{
+    struct stat path_st;
+    struct stat stdout_st;
+
+    if (path == NULL || path[0] == '\0') {
+        return 0;
+    }
+    if (stat(path, &path_st) != 0 || fstat(STDOUT_FILENO, &stdout_st) != 0) {
+        return 0;
+    }
+    return path_st.st_dev == stdout_st.st_dev && path_st.st_ino == stdout_st.st_ino;
+}
+
+/* Return the lexical directory containing an output path.  The font URI is
+ * relative to the generated HTML, so bare dumps must be placed beside an
+ * explicit --output rather than in cmdf's unrelated working directory. */
+static int output_parent_dir(char *dst, size_t cap, const char *path)
+{
+    const char *slash;
+    size_t len;
+
+    if (dst == NULL || cap == 0) {
+        return -1;
+    }
+    if (path == NULL || path[0] == '\0') {
+        if (cap < 2) return -1;
+        dst[0] = '.';
+        dst[1] = '\0';
+        return 0;
+    }
+    slash = strrchr(path, '/');
+    if (slash == NULL) {
+        if (cap < 2) return -1;
+        dst[0] = '.';
+        dst[1] = '\0';
+        return 0;
+    }
+    if (slash == path) {
+        if (cap < 2) return -1;
+        dst[0] = '/';
+        dst[1] = '\0';
+        return 0;
+    }
+    len = (size_t)(slash - path);
+    if (len + 1 > cap) {
+        return -1;
+    }
+    memcpy(dst, path, len);
+    dst[len] = '\0';
+    return 0;
+}
+
+static int output_relative_path(char *dst, size_t cap, const char *output_dir, const char *path)
+{
+    if (dst == NULL || cap == 0 || output_dir == NULL || path == NULL || path[0] == '\0') {
+        return -1;
+    }
+    if (path[0] == '/') {
+        if (strlen(path) + 1 > cap) return -1;
+        strcpy(dst, path);
+        return 0;
+    }
+    if (strcmp(output_dir, ".") == 0) {
+        if (strlen(path) + 1 > cap) return -1;
+        strcpy(dst, path);
+        return 0;
+    }
+    if (strlen(output_dir) + 1 + strlen(path) + 1 > cap) return -1;
+    strcpy(dst, output_dir);
+    strcat(dst, "/");
+    strcat(dst, path);
+    return 0;
+}
 
 static int file_write(void *userdata, const char *src, size_t len)
 {
@@ -220,6 +298,15 @@ static void usage(FILE *fp)
     fprintf(fp, "  -8, --osc8 MODE            OSC8 mode: auto|on|off\n");
     fprintf(fp, "      --list-themes          List available themes\n");
     fprintf(fp, "      --html-content-width N HTML content max width in ch\n");
+    fprintf(fp, "      --html-disable-embedded-font Use external JetBrains Mono web fonts\n");
+    fprintf(fp, "      --html-font-uri URI    External JetBrains Mono font URI base\n");
+    fprintf(fp, "      --html-font-regular-uri URI Override external regular font URI\n");
+    fprintf(fp, "      --html-font-italic-uri URI External italic JetBrains Mono font URI\n");
+    fprintf(fp, "      --html-dump-font       Dump built-in fonts beside output, to local URI, or configured paths\n");
+    fprintf(fp, "      --html-dump-font-force Replace existing font files while dumping\n");
+    fprintf(fp, "      --html-dump-font-path DIR Dump paired fonts in DIR\n");
+    fprintf(fp, "      --html-dump-font-regular-path PATH Override regular font destination\n");
+    fprintf(fp, "      --html-dump-font-italic-path PATH Override italic font destination\n");
     fprintf(fp, "  -x, --transition MODE      Deck transition: fade|cross|hard\n");
     fprintf(fp, "      --slide-numbers        Show deck slide numbers after the first slide\n");
     fprintf(fp, "      --deck-center-front-text Center-align first-slide paragraph text\n");
@@ -431,6 +518,24 @@ int main(int argc, char **argv)
     int deck_requested;
     int deck_option_seen;
     int html_content_width_flag;
+    int html_disable_embedded_font;
+    int html_dump_font;
+    int html_dump_font_force;
+    const char *html_font_uri;
+    const char *html_font_regular_uri;
+    const char *html_font_italic_uri;
+    const char *html_font_path;
+    const char *html_font_regular_path;
+    const char *html_font_italic_path;
+    char resolved_regular_font_path[4096];
+    char resolved_italic_font_path[4096];
+    char default_font_dump_path[4096];
+    char output_dir[4096];
+    char relative_regular_font_uri[4096];
+    char relative_italic_font_uri[4096];
+    char output_regular_font_path[4096];
+    char output_italic_font_path[4096];
+    int html_font_dump_requested;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
@@ -446,6 +551,15 @@ int main(int argc, char **argv)
         {"osc8", required_argument, NULL, '8'},
         {"list-themes", no_argument, NULL, 1000},
         {"html-content-width", required_argument, NULL, 1001},
+        {"html-disable-embedded-font", no_argument, NULL, 1012},
+        {"html-font-uri", required_argument, NULL, 1013},
+        {"html-font-regular-uri", required_argument, NULL, 1020},
+        {"html-font-italic-uri", required_argument, NULL, 1014},
+        {"html-dump-font", no_argument, NULL, 1015},
+        {"html-dump-font-force", no_argument, NULL, 1018},
+        {"html-dump-font-path", required_argument, NULL, 1016},
+        {"html-dump-font-regular-path", required_argument, NULL, 1019},
+        {"html-dump-font-italic-path", required_argument, NULL, 1017},
         {"table-buffer", required_argument, NULL, 1002},
         {"table-wire", required_argument, NULL, 1003},
         {"simulate", no_argument, NULL, 1004},
@@ -487,6 +601,15 @@ int main(int argc, char **argv)
     deck_requested = 0;
     deck_option_seen = 0;
     html_content_width_flag = 0;
+    html_disable_embedded_font = 0;
+    html_dump_font = 0;
+    html_dump_font_force = 0;
+    html_font_uri = NULL;
+    html_font_regular_uri = NULL;
+    html_font_italic_uri = NULL;
+    html_font_path = NULL;
+    html_font_regular_path = NULL;
+    html_font_italic_path = NULL;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
     while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:x:", long_options, NULL)) != -1) {
@@ -565,6 +688,34 @@ int main(int argc, char **argv)
                 return 2;
             }
             html_content_width_flag = 1;
+            break;
+        case 1012:
+            html_disable_embedded_font = 1;
+            break;
+        case 1013:
+            html_font_uri = optarg;
+            break;
+        case 1020:
+            html_font_regular_uri = optarg;
+            break;
+        case 1014:
+            html_font_italic_uri = optarg;
+            break;
+        case 1015:
+            html_dump_font = 1;
+            break;
+        case 1018:
+            html_dump_font = 1;
+            html_dump_font_force = 1;
+            break;
+        case 1016:
+            html_font_path = optarg;
+            break;
+        case 1017:
+            html_font_italic_path = optarg;
+            break;
+        case 1019:
+            html_font_regular_path = optarg;
             break;
         case 1002:
             if (parse_table_buffer(optarg, &opts.table_buffer_mode) != 0) {
@@ -647,7 +798,81 @@ int main(int argc, char **argv)
         if (width_flag > 0 && !html_content_width_flag) {
             opts.html_content_width_ch = (double)width_flag;
         }
-        cmdf_enable_embedded_fonts(&opts);
+    }
+    if ((html_disable_embedded_font || html_font_uri != NULL || html_font_regular_uri != NULL || html_font_italic_uri != NULL ||
+         html_dump_font || html_font_path != NULL || html_font_regular_path != NULL || html_font_italic_path != NULL) &&
+        format != MDF_FORMAT_HTML && format != MDF_FORMAT_HTML_DECK) {
+        fprintf(stderr, "cmdf: HTML font options require HTML or deck output\n");
+        return 2;
+    }
+    /* A bare CLI dump is a self-contained operation: write the paired files
+     * beside an explicit HTML output (or in the current directory for stdout)
+     * and reference them relatively.  The C and Lua APIs remain explicit
+     * because they do not have a command output path as part of their contract. */
+    if (html_dump_font && html_font_uri == NULL && html_font_regular_uri == NULL &&
+        html_font_italic_uri == NULL && html_font_path == NULL &&
+        html_font_regular_path == NULL && html_font_italic_path == NULL) {
+        if (output_parent_dir(default_font_dump_path, sizeof(default_font_dump_path), out_path) != 0) {
+            fprintf(stderr, "cmdf: invalid HTML font dump destination\n");
+            return 2;
+        }
+        html_font_path = default_font_dump_path;
+        /* Keep references relative to the HTML, independent of the absolute
+         * filesystem directory selected above for the actual dump targets. */
+        html_font_uri = ".";
+    }
+    opts.html_font_source = html_disable_embedded_font ?
+        MDF_HTML_FONT_SOURCE_EXTERNAL : MDF_HTML_FONT_SOURCE_EMBEDDED;
+    opts.html_font_uri = html_font_uri;
+    opts.html_font_regular_uri = html_font_regular_uri;
+    opts.html_font_italic_uri = html_font_italic_uri;
+    opts.html_font_dump_path = html_font_path;
+    opts.html_font_dump_regular_path = html_font_regular_path;
+    opts.html_font_dump_italic_path = html_font_italic_path;
+    opts.html_dump_font = html_dump_font || html_font_path != NULL ||
+        html_font_regular_path != NULL || html_font_italic_path != NULL;
+    opts.html_dump_font_force = html_dump_font_force;
+    /* A relative explicit URI is resolved by the browser from --output. When
+     * it is also the implicit dump destination, place the files accordingly
+     * while preserving the caller's exact URI text in generated HTML. */
+    if (out_path != NULL && opts.html_dump_font &&
+        (html_font_uri != NULL || html_font_regular_uri != NULL || html_font_italic_uri != NULL) &&
+        html_font_path == NULL && html_font_regular_path == NULL && html_font_italic_path == NULL) {
+        if (output_parent_dir(output_dir, sizeof(output_dir), out_path) != 0 ||
+            mdf_html_font_resolve_dump_paths(&opts,
+                                             resolved_regular_font_path, sizeof(resolved_regular_font_path),
+                                             resolved_italic_font_path, sizeof(resolved_italic_font_path)) != MDF_OK ||
+            output_relative_path(output_regular_font_path, sizeof(output_regular_font_path),
+                                 output_dir, resolved_regular_font_path) != 0 ||
+            output_relative_path(output_italic_font_path, sizeof(output_italic_font_path),
+                                 output_dir, resolved_italic_font_path) != 0) {
+            fprintf(stderr, "cmdf: invalid HTML font dump destination\n");
+            return 2;
+        }
+        opts.html_font_dump_regular_path = output_regular_font_path;
+        opts.html_font_dump_italic_path = output_italic_font_path;
+    }
+    /* Dump paths name filesystem destinations relative to cmdf's working
+     * directory. Turn implicit local references into URI paths relative to
+     * the HTML output (or '.' for stdout) so reserved URI characters in local
+     * filenames are encoded and browsers load the bytes that were written.
+     * Explicit URI options intentionally bypass this. */
+    if (opts.html_dump_font && html_font_uri == NULL &&
+        html_font_regular_uri == NULL && html_font_italic_uri == NULL &&
+        (html_font_path != NULL || html_font_regular_path != NULL || html_font_italic_path != NULL)) {
+        if (output_parent_dir(output_dir, sizeof(output_dir), out_path) != 0 ||
+            mdf_html_font_resolve_dump_paths(&opts,
+                                             resolved_regular_font_path, sizeof(resolved_regular_font_path),
+                                             resolved_italic_font_path, sizeof(resolved_italic_font_path)) != MDF_OK ||
+            mdf_path_relative_uri(relative_regular_font_uri, sizeof(relative_regular_font_uri),
+                                  output_dir, resolved_regular_font_path) != 0 ||
+            mdf_path_relative_uri(relative_italic_font_uri, sizeof(relative_italic_font_uri),
+                                  output_dir, resolved_italic_font_path) != 0) {
+            fprintf(stderr, "cmdf: invalid HTML font dump destination\n");
+            return 2;
+        }
+        opts.html_font_regular_uri = relative_regular_font_uri;
+        opts.html_font_italic_uri = relative_italic_font_uri;
     }
     if (trace_writes_path != NULL && format != MDF_FORMAT_ANSI) {
         fprintf(stderr, "cmdf: --trace-writes is only supported for ANSI output\n");
@@ -664,6 +889,29 @@ int main(int argc, char **argv)
         return 2;
     }
     in_path = argc - optind == 1 ? argv[optind] : NULL;
+    html_font_dump_requested = opts.html_dump_font || opts.html_dump_font_force;
+    if (html_font_dump_requested) {
+        st = mdf_html_font_resolve_dump_paths(&opts,
+                                              resolved_regular_font_path,
+                                              sizeof(resolved_regular_font_path),
+                                              resolved_italic_font_path,
+                                              sizeof(resolved_italic_font_path));
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: invalid HTML font dump destination\n");
+            return 2;
+        }
+        if ((in_path != NULL &&
+             (mdf_paths_alias(resolved_regular_font_path, in_path) ||
+              mdf_paths_alias(resolved_italic_font_path, in_path))) ||
+            (out_path != NULL &&
+             (mdf_paths_alias(resolved_regular_font_path, out_path) ||
+              mdf_paths_alias(resolved_italic_font_path, out_path))) ||
+            path_aliases_stdout(resolved_regular_font_path) ||
+            path_aliases_stdout(resolved_italic_font_path)) {
+            fprintf(stderr, "cmdf: HTML font dump destination aliases input, output, or stdout\n");
+            return 2;
+        }
+    }
     in_fp = stdin;
     out_fp = stdout;
     trace_fp = NULL;
@@ -671,14 +919,6 @@ int main(int argc, char **argv)
         in_fp = fopen(in_path, "rb");
         if (in_fp == NULL) {
             fprintf(stderr, "cmdf: open input %s: %s\n", in_path, strerror(errno));
-            return 1;
-        }
-    }
-    if (out_path != NULL) {
-        out_fp = fopen(out_path, "wb");
-        if (out_fp == NULL) {
-            fprintf(stderr, "cmdf: open output %s: %s\n", out_path, strerror(errno));
-            if (in_fp != stdin) fclose(in_fp);
             return 1;
         }
     }
@@ -708,6 +948,19 @@ int main(int argc, char **argv)
         if (in_fp != stdin) fclose(in_fp);
         return 1;
     }
+    /* An absent output name can still resolve to a just-created dump file on
+     * a case-insensitive filesystem. The input was opened and checked before
+     * renderer creation, so only the output can newly collide here. Check it
+     * again before opening it for truncating output. */
+    if (html_font_dump_requested && out_path != NULL &&
+        (mdf_paths_alias(resolved_regular_font_path, out_path) ||
+         mdf_paths_alias(resolved_italic_font_path, out_path))) {
+        fprintf(stderr, "cmdf: HTML font dump destination aliases input, output, or stdout\n");
+        renderer->destroy(renderer);
+        if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
+        if (in_fp != stdin) fclose(in_fp);
+        return 2;
+    }
     if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && title_override != NULL) {
         st = mdf_set_html_title(renderer, title_override);
         if (st != MDF_OK) {
@@ -715,6 +968,16 @@ int main(int argc, char **argv)
             renderer->destroy(renderer);
             if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
             if (out_fp != stdout) fclose(out_fp);
+            if (in_fp != stdin) fclose(in_fp);
+            return 1;
+        }
+    }
+    if (out_path != NULL) {
+        out_fp = fopen(out_path, "wb");
+        if (out_fp == NULL) {
+            fprintf(stderr, "cmdf: open output %s: %s\n", out_path, strerror(errno));
+            renderer->destroy(renderer);
+            if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
             if (in_fp != stdin) fclose(in_fp);
             return 1;
         }

@@ -30,7 +30,7 @@ input because container prefixes are a common source of width, margin, and wrapp
 >                         │      ██████           ██████           ██████           ██████      
 >                         │      ██████           ██████           ██████           ██████      
 >                       0 └─────────────────────────────────────────────────────────────────────
->                                  n                e                d                u         
+>                                  Mon              Tue              Wed              Thu
 
 # List Charts
 
@@ -71,7 +71,7 @@ input because container prefixes are a common source of width, margin, and wrapp
                         │               ██████                            ██████              
                         │               ██████                            ██████              
                       0 └─────────────────────────────────────────────────────────────────────
-                                          A                                 B                 
+                                          A                                 B
 
 
 The paragraphs around these charts should remain separate and should not absorb container prefixes or chart rows.
