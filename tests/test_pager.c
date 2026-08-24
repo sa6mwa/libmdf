@@ -147,10 +147,14 @@ static int write_fixture(char *path, size_t cap, const char *suffix, int markdow
     } else if (write_all(fd, "# raw heading\n", strlen("# raw heading\n")) != 0) {
         return -1;
     }
+    if (write_all(fd, "S\303\244kerhet S\303\204KERHET \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242 \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242\n",
+                  strlen("S\303\244kerhet S\303\204KERHET \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242 \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242\n")) != 0) {
+        return -1;
+    }
     for (i = 1; i <= 60; i++) {
         int len;
 
-        len = snprintf(line, sizeof(line), "line-%02d\n", i);
+        len = snprintf(line, sizeof(line), "line-%02d narrow-resize-anchor-content\n", i);
         if (len < 0 || write_all(fd, line, (size_t)len) != 0) return -1;
     }
     if (close(fd) != 0 || snprintf(path, cap, "%s.%s", temporary, suffix) >= (int)cap ||
@@ -229,6 +233,7 @@ int main(int argc, char **argv)
     int master;
     int rc;
     int i;
+    struct winsize resized;
     const char *stage;
 
     if (argc != 2) return 2;
@@ -263,10 +268,42 @@ int main(int argc, char **argv)
     stage = "half up";
     if (write_all(master, "\025", 1) != 0 || wait_for_output(master, &out, 80) != 0) goto done;
     stage = "end";
-    if (write_all(master, "\033[F", 3) != 0 || wait_for_output(master, &out, 80) != 0 ||
+    if (write_all(master, "\033[F", 3) != 0 || wait_for_marker(master, &out, "line-60") != 0 ||
         require_contains(&out, "line-60") != 0) goto done;
     stage = "home";
     if (write_all(master, "\033[H", 3) != 0 || wait_for_output(master, &out, 80) != 0) goto done;
+    clear_capture(&out);
+    stage = "Swedish case-insensitive search";
+    if (write_all(master, "/S\303\204KERHET\r", strlen("/S\303\204KERHET\r")) != 0 ||
+        wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
+        require_contains(&out, "\033[7mS\303\244kerhet\033[27m") != 0 ||
+        require_contains(&out, "/S\303\204KERHET  1/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "next Swedish search hit";
+    if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/S\303\204KERHET  2/2") != 0 ||
+        require_contains(&out, "\033[7mS\303\204KERHET\033[27m") != 0 ||
+        require_contains(&out, "/S\303\204KERHET  2/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "previous Swedish search hit";
+    if (write_all(master, "p", 1) != 0 || wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
+        require_contains(&out, "/S\303\204KERHET  1/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "exit Swedish search";
+    if (write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0 ||
+        require_contains(&out, "line-01") != 0) goto done;
+    clear_capture(&out);
+    stage = "Japanese UTF-8 search";
+    if (write_all(master, "/\346\227\245\346\234\254\350\252\236\r", strlen("/\346\227\245\346\234\254\350\252\236\r")) != 0 ||
+        wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  1/2") != 0 ||
+        require_contains(&out, "\033[7m\346\227\245\346\234\254\350\252\236\033[27m") != 0 ||
+        require_contains(&out, "/\346\227\245\346\234\254\350\252\236  1/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "next Japanese search hit";
+    if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0 ||
+        require_contains(&out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "exit Japanese search";
+    if (write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0) goto done;
     stage = "escape";
     if (write_all(master, "\033", 1) != 0 || wait_for_exit(pid) != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
@@ -302,8 +339,14 @@ int main(int argc, char **argv)
     stage = "resize";
     pid = start_pager(argv[1], markdown_path, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
-        wait_for_output(master, &out, 100) != 0) goto done;
+        wait_for_output(master, &out, 100) != 0 ||
+        write_all(master, "\033[F", 3) != 0 || wait_for_output(master, &out, 80) != 0 ||
+        require_contains(&out, "line-52") != 0) goto done;
     clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 20;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0) goto done;
     for (i = 0; i < 3; i++) {
         if (kill(pid, SIGWINCH) != 0) goto done;
         sleep_ms(50);
@@ -313,6 +356,7 @@ int main(int argc, char **argv)
     stage = "resize settled redraw";
     if (wait_for_output(master, &out, 300) != 0 ||
         count_occurrences(out.data, "\033[H\033[2J") != 1 ||
+        require_contains(&out, "line-52") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     rc = 0;
