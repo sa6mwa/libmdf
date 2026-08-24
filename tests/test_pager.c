@@ -22,6 +22,13 @@ typedef struct capture {
     size_t cap;
 } capture;
 
+typedef struct pager_source {
+    const char *data;
+    size_t len;
+    size_t offset;
+    size_t chunk;
+} pager_source;
+
 static int capture_append(capture *out, const char *src, size_t len)
 {
     char *next;
@@ -41,6 +48,20 @@ static int capture_append(capture *out, const char *src, size_t len)
     memcpy(out->data + out->len, src, len);
     out->len += len;
     out->data[out->len] = '\0';
+    return 0;
+}
+
+static int capture_contains(const capture *out, const char *needle)
+{
+    size_t i;
+    size_t needle_len;
+
+    if (out->data == NULL) return 0;
+    needle_len = strlen(needle);
+    if (needle_len > out->len) return 0;
+    for (i = 0; i <= out->len - needle_len; i++) {
+        if (memcmp(out->data + i, needle, needle_len) == 0) return 1;
+    }
     return 0;
 }
 
@@ -77,7 +98,7 @@ static int wait_for_marker(int fd, capture *out, const char *marker)
 
     elapsed = 0;
     while (elapsed < 2000) {
-        if (out->data != NULL && strstr(out->data, marker) != NULL) return 0;
+        if (capture_contains(out, marker)) return 0;
         if (wait_for_output(fd, out, 20) != 0) return -1;
         elapsed += 20;
     }
@@ -109,6 +130,22 @@ static int ignored_trace_emit(void *userdata, mdf_format format, const char *src
     return 0;
 }
 
+static size_t pager_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    pager_source *source;
+    size_t n;
+
+    source = (pager_source *)userdata;
+    if (source->offset >= source->len) return 0;
+    n = source->len - source->offset;
+    if (n > source->chunk) n = source->chunk;
+    if (n > cap) n = cap;
+    memcpy(dst, source->data + source->offset, n);
+    source->offset += n;
+    *err = 0;
+    return n;
+}
+
 static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc8, int traced, int *master)
 {
     struct winsize size;
@@ -129,6 +166,32 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc
     }
     execl(cmdf, cmdf, "-p", path, (char *)NULL);
     _exit(127);
+}
+
+static pid_t start_pager_source(const char *name, const char *data, size_t len, int *master)
+{
+    struct winsize size;
+    pid_t pid;
+
+    memset(&size, 0, sizeof(size));
+    size.ws_col = 40;
+    size.ws_row = 10;
+    pid = forkpty(master, NULL, NULL, &size);
+    if (pid != 0) return pid;
+    {
+        mdf_options opts;
+        mdf_source source;
+        pager_source source_data;
+
+        mdf_options_init(&opts);
+        memset(&source_data, 0, sizeof(source_data));
+        source_data.data = data;
+        source_data.len = len;
+        source_data.chunk = 2;
+        source.userdata = &source_data;
+        source.read = pager_source_read;
+        _exit(mdf_pager_source(name, &source, &opts, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
+    }
 }
 
 static int wait_for_exit(pid_t pid)
@@ -280,9 +343,32 @@ static int write_styled_search_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_nul_markdown_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+    static const char before[] = "# Before NUL\n\n";
+    static const char after[] = "After NUL\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-nul-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, before, sizeof(before) - 1) != 0 || write_all(fd, "\0", 1) != 0 ||
+        write_all(fd, after, sizeof(after) - 1) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int require_contains(const capture *out, const char *needle)
 {
-    return out->data != NULL && strstr(out->data, needle) != NULL ? 0 : -1;
+    return capture_contains(out, needle) ? 0 : -1;
 }
 
 static int require_full_status_bar(const capture *out, const char *path)
@@ -351,6 +437,7 @@ int main(int argc, char **argv)
     char control_path[128];
     char unicode_path[128];
     char styled_path[128];
+    char nul_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -370,7 +457,8 @@ int main(int argc, char **argv)
         write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
                                   "\346\227\245\346\234\254\350\252\236\346\227\245.txt") != 0 ||
-        write_styled_search_fixture(styled_path, sizeof(styled_path)) != 0) goto done;
+        write_styled_search_fixture(styled_path, sizeof(styled_path)) != 0 ||
+        write_nul_markdown_fixture(nul_path, sizeof(nul_path)) != 0) goto done;
 
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
@@ -496,6 +584,26 @@ int main(int argc, char **argv)
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
+
+    stage = "markdown NUL file";
+    pid = start_pager(argv[1], nul_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "Before NUL") != 0 ||
+        wait_for_marker(master, &out, "After NUL") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    {
+        static const char source_markdown[] = "# Before source NUL\n\n\0After source NUL\n";
+
+        stage = "markdown source";
+        pid = start_pager_source("stream.md", source_markdown, sizeof(source_markdown) - 1, &master);
+        if (pid < 0 || wait_for_marker(master, &out, "Before source NUL") != 0 ||
+            wait_for_marker(master, &out, "After source NUL") != 0 ||
+            write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+        close(master);
+        clear_capture(&out);
+    }
 
     stage = "write trace rejected";
     pid = start_pager(argv[1], markdown_path, 1, 0, 1, &master);
@@ -641,6 +749,7 @@ done:
     unlink(control_path);
     unlink(unicode_path);
     unlink(styled_path);
+    unlink(nul_path);
     free(out.data);
     return rc;
 }

@@ -21,7 +21,7 @@ typedef enum mdf_status {
     MDF_ERROR_PARSE = 4
 } mdf_status;
 
-/** Select how mdf_pager_file interprets its named input. */
+/** Select how the pager interprets its named input. */
 typedef enum mdf_pager_format {
     /** Render .md files as Markdown and all other files as text. */
     MDF_PAGER_FORMAT_AUTO = 0,
@@ -398,6 +398,19 @@ int mdf_terminal_width(int fd, int fallback);
 mdf_status mdf_pager_file(const char *path,
                           const mdf_options *render_options,
                           mdf_pager_format format);
+/**
+ * Read all bytes from source through EOF, then interactively page the named
+ * buffered input on the controlling terminal. The source read callback's
+ * zero-byte return is the end-of-stream signal. name supplies the status-bar
+ * label and selects Markdown in AUTO mode when it has a .md extension.
+ * Markdown is rendered through the length-aware renderer source API, so input
+ * bytes after an embedded NUL are preserved. This is a buffered pager API:
+ * it does not display a live unbounded stream before EOF.
+ */
+mdf_status mdf_pager_source(const char *name,
+                            mdf_source *source,
+                            const mdf_options *render_options,
+                            mdf_pager_format format);
 
 #ifdef __cplusplus
 }

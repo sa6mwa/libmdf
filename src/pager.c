@@ -22,6 +22,11 @@ typedef struct mdf_pager_buffer {
     size_t cap;
 } mdf_pager_buffer;
 
+typedef struct mdf_pager_buffer_source {
+    const mdf_pager_buffer *buffer;
+    size_t offset;
+} mdf_pager_buffer_source;
+
 typedef struct mdf_pager_view {
     mdf_pager_buffer bytes;
     mdf_pager_buffer searchable;
@@ -198,6 +203,45 @@ static int mdf_pager_read_file(const char *path, mdf_pager_buffer *out)
     return 0;
 }
 
+static int mdf_pager_read_source(mdf_source *source, mdf_pager_buffer *out)
+{
+    char chunk[4096];
+
+    for (;;) {
+        int err;
+        size_t n;
+
+        err = 0;
+        n = source->read(source->userdata, chunk, sizeof(chunk), &err);
+        if (n > sizeof(chunk) || err != 0) return -1;
+        if (n == 0) return 0;
+        if (mdf_pager_buffer_append(out, chunk, n) != 0) return -1;
+    }
+}
+
+static size_t mdf_pager_buffer_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    mdf_pager_buffer_source *source;
+    size_t n;
+
+    source = (mdf_pager_buffer_source *)userdata;
+    if (source->offset >= source->buffer->len) {
+        *err = 0;
+        return 0;
+    }
+    n = source->buffer->len - source->offset;
+    if (n > cap) n = cap;
+    memcpy(dst, source->buffer->data + source->offset, n);
+    source->offset += n;
+    *err = 0;
+    return n;
+}
+
+static int mdf_pager_buffer_sink_write(void *userdata, const char *src, size_t len)
+{
+    return mdf_pager_buffer_append((mdf_pager_buffer *)userdata, src, len);
+}
+
 static int mdf_pager_is_markdown_path(const char *path)
 {
     const char *dot;
@@ -207,6 +251,16 @@ static int mdf_pager_is_markdown_path(const char *path)
         return 0;
     }
     return (dot[1] == 'm' || dot[1] == 'M') && (dot[2] == 'd' || dot[2] == 'D');
+}
+
+static int mdf_pager_arguments_valid(const char *name, const mdf_options *render_options,
+                                     mdf_pager_format format)
+{
+    return name != NULL && name[0] != '\0' &&
+        (format == MDF_PAGER_FORMAT_AUTO || format == MDF_PAGER_FORMAT_TEXT ||
+         format == MDF_PAGER_FORMAT_MARKDOWN) &&
+        isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
+        (render_options == NULL || render_options->write_trace.emit == NULL);
 }
 
 static int mdf_pager_append_escape(mdf_pager_buffer *out, const char *src, size_t len, size_t *index)
@@ -1066,9 +1120,12 @@ static mdf_pager_key mdf_pager_read_key(unsigned char byte)
 static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buffer *input,
                                       const mdf_options *opts, int markdown, int width)
 {
-    char *rendered;
+    mdf_pager_buffer rendered;
+    mdf_pager_buffer_source source_data;
     mdf *renderer;
     mdf_options render_opts;
+    mdf_source source;
+    mdf_sink sink;
     mdf_status st;
 
     mdf_pager_view_destroy(view);
@@ -1085,27 +1142,32 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &render_opts, &renderer);
     if (st != MDF_OK) return st;
-    rendered = NULL;
-    st = renderer->render_cstr(renderer, input->data == NULL ? "" : input->data, &rendered);
+    memset(&rendered, 0, sizeof(rendered));
+    memset(&source_data, 0, sizeof(source_data));
+    source_data.buffer = input;
+    source.userdata = &source_data;
+    source.read = mdf_pager_buffer_source_read;
+    sink.userdata = &rendered;
+    sink.write = mdf_pager_buffer_sink_write;
+    st = renderer->render(renderer, &source, &sink);
     if (st == MDF_OK &&
-        (mdf_pager_reflow(view, rendered == NULL ? "" : rendered,
-                          rendered == NULL ? 0 : strlen(rendered), width, 1) != 0 ||
+        (mdf_pager_reflow(view, rendered.data == NULL ? "" : rendered.data,
+                          rendered.len, width, 1) != 0 ||
          mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0)) {
         st = MDF_ERROR_NOMEM;
     }
-    renderer->string_free(renderer, rendered);
+    mdf_pager_buffer_destroy(&rendered);
     renderer->destroy(renderer);
     return st;
 }
 
-mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, mdf_pager_format format)
+static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
+                                const mdf_options *render_options, mdf_pager_format format)
 {
-    struct stat st;
     struct termios saved_termios;
     struct sigaction old_winch;
     struct sigaction winch_action;
     mdf_pager_termination_handlers termination_handlers;
-    mdf_pager_buffer input;
     mdf_pager_view view;
     mdf_pager_search search;
     mdf_options opts;
@@ -1122,34 +1184,23 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
     int redraw;
     mdf_status result;
 
-    if (path == NULL || path[0] == '\0' ||
-        (format != MDF_PAGER_FORMAT_AUTO && format != MDF_PAGER_FORMAT_TEXT &&
-         format != MDF_PAGER_FORMAT_MARKDOWN) ||
-        stat(path, &st) != 0 || !S_ISREG(st.st_mode) || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO) ||
-        (render_options != NULL && render_options->write_trace.emit != NULL)) {
+    if (input == NULL || !mdf_pager_arguments_valid(name, render_options, format)) {
         return MDF_ERROR_INVALID;
     }
-    memset(&input, 0, sizeof(input));
     memset(&view, 0, sizeof(view));
     memset(&search, 0, sizeof(search));
     memset(&termination_handlers, 0, sizeof(termination_handlers));
-    if (mdf_pager_read_file(path, &input) != 0) {
-        mdf_pager_buffer_destroy(&input);
-        return MDF_ERROR_IO;
-    }
     mdf_options_init(&opts);
     if (render_options != NULL) opts = *render_options;
     markdown = format == MDF_PAGER_FORMAT_MARKDOWN ||
-        (format == MDF_PAGER_FORMAT_AUTO && mdf_pager_is_markdown_path(path));
+        (format == MDF_PAGER_FORMAT_AUTO && mdf_pager_is_markdown_path(name));
     mdf_pager_termination_signal = 0;
     if (mdf_pager_install_termination_handlers(&termination_handlers) != 0) {
-        mdf_pager_buffer_destroy(&input);
         return MDF_ERROR_IO;
     }
     termination_handlers_installed = 1;
     if (mdf_pager_set_raw_mode(&saved_termios) != 0) {
         mdf_pager_restore_termination_handlers(&termination_handlers);
-        mdf_pager_buffer_destroy(&input);
         return MDF_ERROR_IO;
     }
     entered_terminal = 0;
@@ -1160,7 +1211,6 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
     if (sigaction(SIGWINCH, &winch_action, &old_winch) != 0) {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_termios);
         mdf_pager_restore_termination_handlers(&termination_handlers);
-        mdf_pager_buffer_destroy(&input);
         return MDF_ERROR_IO;
     }
     handler_installed = 1;
@@ -1174,7 +1224,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
         goto done;
     }
     mdf_pager_window_size(&columns, &rows);
-    result = mdf_pager_make_view(&view, &input, &opts, markdown, columns);
+    result = mdf_pager_make_view(&view, input, &opts, markdown, columns);
     if (result != MDF_OK) goto done;
     top = 0;
     seen_winch = mdf_pager_winch_count;
@@ -1193,7 +1243,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
             goto done;
         }
         if (redraw) {
-            if (mdf_pager_draw(&view, path, &opts, &search, columns, rows, top) != 0) {
+            if (mdf_pager_draw(&view, name, &opts, &search, columns, rows, top) != 0) {
                 result = MDF_ERROR_IO;
                 goto done;
             }
@@ -1243,7 +1293,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
                 goto done;
             }
             mdf_pager_window_size(&columns, &rows);
-            result = mdf_pager_make_view(&view, &input, &opts, markdown, columns);
+            result = mdf_pager_make_view(&view, input, &opts, markdown, columns);
             if (result != MDF_OK) {
                 mdf_pager_buffer_destroy(&anchor_text);
                 goto done;
@@ -1389,9 +1439,48 @@ done:
     if (termination_handlers_installed) mdf_pager_restore_termination_handlers(&termination_handlers);
     mdf_pager_search_destroy(&search);
     mdf_pager_view_destroy(&view);
-    mdf_pager_buffer_destroy(&input);
     if (termination_signal != 0) {
         (void)kill(getpid(), (int)termination_signal);
     }
+    return result;
+}
+
+mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, mdf_pager_format format)
+{
+    struct stat st;
+    mdf_pager_buffer input;
+    mdf_status result;
+
+    if (!mdf_pager_arguments_valid(path, render_options, format) ||
+        stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+        return MDF_ERROR_INVALID;
+    }
+    memset(&input, 0, sizeof(input));
+    if (mdf_pager_read_file(path, &input) != 0) {
+        mdf_pager_buffer_destroy(&input);
+        return MDF_ERROR_IO;
+    }
+    result = mdf_pager_run(path, &input, render_options, format);
+    mdf_pager_buffer_destroy(&input);
+    return result;
+}
+
+mdf_status mdf_pager_source(const char *name, mdf_source *source,
+                            const mdf_options *render_options, mdf_pager_format format)
+{
+    mdf_pager_buffer input;
+    mdf_status result;
+
+    if (source == NULL || source->read == NULL ||
+        !mdf_pager_arguments_valid(name, render_options, format)) {
+        return MDF_ERROR_INVALID;
+    }
+    memset(&input, 0, sizeof(input));
+    if (mdf_pager_read_source(source, &input) != 0) {
+        mdf_pager_buffer_destroy(&input);
+        return MDF_ERROR_IO;
+    }
+    result = mdf_pager_run(name, &input, render_options, format);
+    mdf_pager_buffer_destroy(&input);
     return result;
 }
