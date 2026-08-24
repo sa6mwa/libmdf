@@ -4850,6 +4850,8 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         size_t inner_len;
         size_t rest_len;
         char style_buf[160];
+        const char *span_style;
+        int code_span;
         int found;
 
         if (text[offset] == '\\' && offset + 1 < text_len && markdown_escapable_char(text[offset + 1])) {
@@ -4858,6 +4860,7 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         }
         found = inline_code_span_prefix(text + offset, text_len - offset,
                                         &inner, &inner_len, &rest, &rest_len);
+        code_span = found;
         inline_style = mdf_theme_code_inline(impl);
         if (!found) {
             found = inline_emphasis_span_at(impl, text, text_len, offset,
@@ -4871,10 +4874,12 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             ansi_emit_link_label_input(impl, sink, text + plain_start, offset - plain_start, link_style) != 0) {
             return -1;
         }
-        if (ansi_emit_link_label_input(impl, sink, inner, inner_len,
-                                       impl->opts.boring ? "" :
-                                       ansi_join_styles(link_style, inline_style, style_buf, sizeof(style_buf))) != 0) {
-            return -1;
+        span_style = impl->opts.boring ? "" :
+            ansi_join_styles(link_style, inline_style, style_buf, sizeof(style_buf));
+        if (code_span) {
+            if (ansi_emit_link_label_input(impl, sink, inner, inner_len, span_style) != 0) return -1;
+        } else {
+            if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, span_style) != 0) return -1;
         }
         offset = (size_t)(rest - text);
         plain_start = offset;

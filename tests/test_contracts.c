@@ -1229,6 +1229,16 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nested emphasis link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;https://x\033\\", "ansi nested emphasis link label retains its destination");
+    fails += expect_not_contains(cap.out, "**b *c* d**", "ansi nested emphasis link label consumes nested delimiters");
+    fails += expect_not_contains(cap.out, "*c*", "ansi nested emphasis link label consumes inner delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
