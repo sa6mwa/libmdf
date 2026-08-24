@@ -1200,6 +1200,17 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[plain `code` and *em*](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi osc8 plain-prefixed mixed link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi osc8 plain-prefixed mixed link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;http://link.example\033\\", "ansi osc8 plain-prefixed mixed link label retains its destination");
+    fails += expect_not_contains(cap.out, "`code`", "ansi plain-prefixed mixed link label consumes code delimiters");
+    fails += expect_not_contains(cap.out, "*em*", "ansi plain-prefixed mixed link label consumes emphasis delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");

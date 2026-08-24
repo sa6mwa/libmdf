@@ -4889,9 +4889,10 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
             return 0;
         }
     }
-    return ansi_emit_link_label_input(impl, sink, text, text_len,
-                                      impl->opts.boring ? "" :
-                                      ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)));
+    return ansi_emit_link_label_remainder(impl, sink, text, text_len,
+                                          impl->opts.boring ? "" :
+                                          ansi_join_styles(prefix_style, mdf_theme_link_text(impl),
+                                                           style_buf, sizeof(style_buf)));
 }
 
 static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
