@@ -4546,11 +4546,14 @@ static int inline_full_emphasis(mdf_impl *impl, const char *text, size_t text_le
 static int inline_full_code(const char *text, size_t text_len, const char **inner, size_t *inner_len)
 {
     size_t delim_len;
+    size_t trailing_len;
 
     if (text_len < 3 || text[0] != '`') return 0;
     delim_len = 0;
     while (delim_len < text_len && text[delim_len] == '`') delim_len++;
-    if (delim_len * 2 >= text_len || memcmp(text + text_len - delim_len, text, delim_len) != 0) return 0;
+    trailing_len = 0;
+    while (trailing_len < text_len && text[text_len - trailing_len - 1] == '`') trailing_len++;
+    if (delim_len * 2 >= text_len || trailing_len != delim_len) return 0;
     *inner = text + delim_len;
     *inner_len = text_len - delim_len * 2;
     return *inner_len > 0;
