@@ -760,10 +760,14 @@ static mdf_pager_key mdf_pager_read_key(unsigned char byte)
     int result;
 
     if (byte == 'q') return MDF_PAGER_KEY_QUIT;
-    if (byte == 'j' || byte == 14) return MDF_PAGER_KEY_DOWN;
+    if (byte == 'j' || byte == '\r' || byte == '\n' || byte == 14) return MDF_PAGER_KEY_DOWN;
     if (byte == 'k' || byte == 16) return MDF_PAGER_KEY_UP;
-    if (byte == 4) return MDF_PAGER_KEY_HALF_DOWN;
-    if (byte == 21) return MDF_PAGER_KEY_HALF_UP;
+    if (byte == ' ' || byte == 6) return MDF_PAGER_KEY_PAGE_DOWN;
+    if (byte == 'b' || byte == 2) return MDF_PAGER_KEY_PAGE_UP;
+    if (byte == 'd' || byte == 4) return MDF_PAGER_KEY_HALF_DOWN;
+    if (byte == 'u' || byte == 21) return MDF_PAGER_KEY_HALF_UP;
+    if (byte == 'g') return MDF_PAGER_KEY_HOME;
+    if (byte == 'G') return MDF_PAGER_KEY_END;
     if (byte != 0x1b) return MDF_PAGER_KEY_NONE;
     result = mdf_pager_read_with_timeout(&byte, 25);
     if (result != 1) return MDF_PAGER_KEY_QUIT;
