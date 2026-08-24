@@ -39,6 +39,7 @@ local function usage()
   io.stderr:write("  -H, --html                 Render HTML\\n")
   io.stderr:write("      --deck                 Render HTML slide deck\\n")
   io.stderr:write("  -b, --boring               Boring ANSI output\\n")
+  io.stderr:write("  -p, --pager                Page a named file interactively\\n")
   io.stderr:write("  -o, --output PATH          Output file\\n")
   io.stderr:write("  -t, --theme NAME           Theme name\\n")
   io.stderr:write("  -T, --title TITLE          HTML document title\\n")
@@ -78,6 +79,7 @@ local html_content_width_seen = false
 local simulate_enabled = false
 local simulate_chunk = nil
 local simulate_delay_seconds = 0
+local pager_requested = false
 local i = 1
 
 local function parse_duration_seconds(s)
@@ -144,6 +146,8 @@ while i <= #arg do
     format_explicit = true
   elseif a == "-b" or a == "--boring" then
     opts.boring = true
+  elseif a == "-p" or a == "--pager" then
+    pager_requested = true
   elseif a == "-w" or a == "--width" then
     i = i + 1
     opts.width = tonumber(arg[i])
@@ -357,6 +361,17 @@ if html_like and opts.table_wire_mode == "ascii" then
 end
 if trace_path and html_like then
   error("cmdf.lua: --trace-writes is only supported for ANSI output", 0)
+end
+
+if pager_requested then
+  if not input_path then
+    error("cmdf.lua: --pager requires a named input file", 0)
+  end
+  if output_path or html_like or trace_path or simulate_enabled or simulate_chunk or simulate_delay_seconds > 0 then
+    error("cmdf.lua: --pager is only supported with ANSI file input and no output, trace, or simulation options", 0)
+  end
+  mdf.pager(input_path, opts)
+  os.exit(0)
 end
 
 -- The CLI owns named input files; prove an explicit input is readable before

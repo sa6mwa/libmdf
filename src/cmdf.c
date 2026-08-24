@@ -289,6 +289,7 @@ static void usage(FILE *fp)
     fprintf(fp, "      --html                 Render HTML\n");
     fprintf(fp, "      --deck                 Render HTML slide deck\n");
     fprintf(fp, "  -b, --boring               Boring ANSI output\n");
+    fprintf(fp, "  -p, --pager                Page a named file interactively\n");
     fprintf(fp, "  -o, --output PATH          Output file\n");
     fprintf(fp, "  -t, --theme NAME           Theme name\n");
     fprintf(fp, "  -T, --title TITLE          HTML document title\n");
@@ -536,12 +537,14 @@ int main(int argc, char **argv)
     char output_regular_font_path[4096];
     char output_italic_font_path[4096];
     int html_font_dump_requested;
+    int pager_requested;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {"html", no_argument, NULL, 'H'},
         {"deck", no_argument, NULL, 1009},
         {"boring", no_argument, NULL, 'b'},
+        {"pager", no_argument, NULL, 'p'},
         {"output", required_argument, NULL, 'o'},
         {"theme", required_argument, NULL, 't'},
         {"title", required_argument, NULL, 'T'},
@@ -612,7 +615,8 @@ int main(int argc, char **argv)
     html_font_italic_path = NULL;
     memset(&trace_data, 0, sizeof(trace_data));
     opterr = 0;
-    while ((opt = getopt_long(argc, argv, "hVHbo:t:T:w:8:S:x:", long_options, NULL)) != -1) {
+    pager_requested = 0;
+    while ((opt = getopt_long(argc, argv, "hVHbpo:t:T:w:8:S:x:", long_options, NULL)) != -1) {
         switch (opt) {
         case 'h':
             usage(stdout);
@@ -631,6 +635,9 @@ int main(int argc, char **argv)
             break;
         case 'b':
             opts.boring = 1;
+            break;
+        case 'p':
+            pager_requested = 1;
             break;
         case 'o':
             out_path = optarg;
@@ -889,6 +896,23 @@ int main(int argc, char **argv)
         return 2;
     }
     in_path = argc - optind == 1 ? argv[optind] : NULL;
+    if (pager_requested) {
+        if (in_path == NULL) {
+            fprintf(stderr, "cmdf: --pager requires a named input file\n");
+            return 2;
+        }
+        if (out_path != NULL || format != MDF_FORMAT_ANSI || trace_writes_path != NULL ||
+            simulate_enabled || simulate_chunk != 0 || simulate_delay_seconds > 0.0) {
+            fprintf(stderr, "cmdf: --pager is only supported with ANSI file input and no output, trace, or simulation options\n");
+            return 2;
+        }
+        st = mdf_pager_file(in_path, &opts, MDF_PAGER_FORMAT_AUTO);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
+            return 1;
+        }
+        return 0;
+    }
     html_font_dump_requested = opts.html_dump_font || opts.html_dump_font_force;
     if (html_font_dump_requested) {
         st = mdf_html_font_resolve_dump_paths(&opts,

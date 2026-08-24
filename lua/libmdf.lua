@@ -24,6 +24,10 @@ function mdf.render_stream(read, write, opts)
   return core.render_stream(read, write, opts or {})
 end
 
+function mdf.pager(path, opts)
+  return core.pager(path, opts or {})
+end
+
 function mdf.html_font_dump_paths(opts)
   return core.html_font_dump_paths(opts or {})
 end

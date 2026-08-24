@@ -345,14 +345,18 @@ alignment.
 
 ## cmdf
 
-`cmdf` reads Markdown from a file or stdin and writes ANSI or HTML to stdout or
-`--output`.
+`cmdf` renders Markdown from a file or stdin and writes ANSI or HTML to stdout
+or `--output`. With `--pager`, it instead opens a named regular file in an
+interactive terminal pager: `.md` files render as Markdown and every other
+file is shown as ordinary text.
 
 ```sh
 cmdf README.md
 cmdf --html README.md -o README.html
 cmdf README.md -o README.html
 cmdf -b -w 80 --margin-left 2 --margin-right 2 README.md
+cmdf --pager README.md
+cmdf -p /var/log/messages
 ```
 
 Flags:
@@ -363,6 +367,7 @@ Flags:
     --html
     --deck
 -b, --boring
+-p, --pager
 -o, --output PATH
 -t, --theme NAME
 -T, --title TITLE
@@ -397,6 +402,14 @@ them. `--simulate-delay` is an opt-in demo/probe option for making output timing
 visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
+
+`--pager` requires a named input file and terminal stdin/stdout. It uses the
+alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
+arrow up/down, Page Up/Page Down, Home/End, and Ctrl-U/Ctrl-D navigation. Its
+bottom bar uses the selected ANSI theme and shows the filename plus percentage
+viewed. Markdown views rerender only after SIGWINCH has been quiet for at least
+250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
+HTML/deck output, `--output`, write tracing, or input simulation.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
 default. `--html-disable-embedded-font` instead references byte-identical,
@@ -509,6 +522,12 @@ io.write(h:render("# hello\n"))
 h:close()
 ```
 
+Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
+same terminal controls and navigation as `cmdf --pager`. The default is
+extension-based (`.md` is Markdown; all other files are text); pass
+`{ format = "markdown" }` to render a non-`.md` file as Markdown, or
+`{ format = "text" }` to suppress Markdown rendering for a `.md` file.
+
 HTML and deck handles can set or clear the document/deck title before rendering:
 
 ```lua
@@ -521,7 +540,7 @@ h:close()
 Lua option names mirror the C options where practical:
 
 ```text
-format = "ansi" | "html" | "deck" | "html_deck"
+format = "ansi" | "html" | "deck" | "html_deck" (rendering)
 html = true
 deck = true
 boring = true

@@ -21,6 +21,16 @@ typedef enum mdf_status {
     MDF_ERROR_PARSE = 4
 } mdf_status;
 
+/** Select how mdf_pager_file interprets its named input. */
+typedef enum mdf_pager_format {
+    /** Render .md files as Markdown and all other files as text. */
+    MDF_PAGER_FORMAT_AUTO = 0,
+    /** Display the file as ordinary terminal text. */
+    MDF_PAGER_FORMAT_TEXT = 1,
+    /** Render the file through the ANSI Markdown renderer. */
+    MDF_PAGER_FORMAT_MARKDOWN = 2
+} mdf_pager_format;
+
 /**
  * Output renderer selection.
  *
@@ -373,6 +383,19 @@ int mdf_theme_exists(const char *name);
 int mdf_detect_osc8_support(void);
 /** Return terminal width for fd, or fallback when it cannot be detected. */
 int mdf_terminal_width(int fd, int fallback);
+/**
+ * Interactively page a named regular file on the controlling terminal.
+ *
+ * The pager enters the terminal alternate screen and restores it before
+ * returning. It needs terminal stdin and stdout. In AUTO mode, a case-
+ * insensitive .md extension selects Markdown rendering; all other inputs are
+ * shown as ordinary text. Markdown is rerendered after a settled SIGWINCH
+ * resize (250 ms debounce). render_options selects ANSI renderer options;
+ * the pager always uses the current terminal width for its Markdown view.
+ */
+mdf_status mdf_pager_file(const char *path,
+                          const mdf_options *render_options,
+                          mdf_pager_format format);
 
 #ifdef __cplusplus
 }

@@ -82,6 +82,7 @@ set(LIBMDF_SOURCES
   src/render_ansi.c
   src/render_ansi_blocks.c
   src/html_fonts.c
+  src/pager.c
   src/path.c
   src/render_html.c
   src/render_parse.c)
@@ -206,6 +207,20 @@ if(LIBMDF_BUILD_TESTS)
     endif()
     add_test(NAME test_cmdf COMMAND test_cmdf $<TARGET_FILE:cmdf>)
     set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 30)
+
+    add_executable(test_pager tests/test_pager.c)
+    target_compile_features(test_pager PRIVATE c_std_90)
+    target_compile_definitions(test_pager PRIVATE _POSIX_C_SOURCE=200809L)
+    target_include_directories(test_pager PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(test_pager PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_libraries(test_pager PRIVATE util)
+    endif()
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(test_pager PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME test_pager COMMAND test_pager $<TARGET_FILE:cmdf>)
+    set_tests_properties(test_pager PROPERTIES LABELS "integration;cli;pager" TIMEOUT 30)
 
     add_test(NAME chart_corpus
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chart_corpus.sh
