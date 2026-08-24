@@ -1176,6 +1176,19 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[`link`](http://link.example) [*em*](http://link.example) [**strong**](http://link.example)\n",
+                        1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi osc8 styled link labels render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi osc8 styled link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;http://link.example\033\\", "ansi osc8 styled link labels retain their destination");
+    fails += expect_not_contains(cap.out, "`link`", "ansi osc8 inline-code link label consumes code delimiters");
+    fails += expect_not_contains(cap.out, "*em*", "ansi osc8 emphasized link label consumes emphasis delimiters");
+    fails += expect_not_contains(cap.out, "**strong**", "ansi osc8 strong link label consumes strong delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_***both***_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple nested emphasis render succeeds");

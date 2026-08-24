@@ -4543,12 +4543,28 @@ static int inline_full_emphasis(mdf_impl *impl, const char *text, size_t text_le
     return *inner_len > 0;
 }
 
+static int inline_full_code(const char *text, size_t text_len, const char **inner, size_t *inner_len)
+{
+    size_t delim_len;
+
+    if (text_len < 3 || text[0] != '`') return 0;
+    delim_len = 0;
+    while (delim_len < text_len && text[delim_len] == '`') delim_len++;
+    if (delim_len * 2 >= text_len || memcmp(text + text_len - delim_len, text, delim_len) != 0) return 0;
+    *inner = text + delim_len;
+    *inner_len = text_len - delim_len * 2;
+    return *inner_len > 0;
+}
+
 static size_t inline_link_label_first_word_cols(mdf_impl *impl, const char *text, size_t text_len)
 {
     const char *inner;
     const char *style;
     size_t inner_len;
 
+    if (inline_full_code(text, text_len, &inner, &inner_len)) {
+        return visible_first_word_cols(inner, inner_len);
+    }
     if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {
         (void)style;
         return visible_first_word_cols(inner, inner_len);
@@ -4705,7 +4721,15 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
             } else if (ansi_sim_emit_inputs(impl, sink, &input, 1) != 0) return -1; \
         } while (0)
 
-	    if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {
+    if (inline_full_code(text, text_len, &inner, &inner_len)) {
+        ANSI_EMIT_LINK_LABEL_INPUT(inner,
+                                   inner_len,
+                                   impl->opts.boring ? "" :
+                                   ansi_join_styles(ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)),
+                                                    mdf_theme_code_inline(impl), style_buf2, sizeof(style_buf2)));
+        return 0;
+    }
+    if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {
 	        if (style[2] == '3') {
 	            ANSI_EMIT_LINK_LABEL_INPUT(inner,
 	                                       inner_len,

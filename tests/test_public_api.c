@@ -1293,6 +1293,24 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html styled link labels create succeeds");
+    st = inst->render_cstr(inst,
+                           "[`code`](https://example.com) [*emphasis*](https://example.com) [**strong**](https://example.com)\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html styled link labels render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<a href=\"https://example.com\"") != NULL &&
+                    strstr(out, "`code`") == NULL &&
+                    strstr(out, "*emphasis*") == NULL &&
+                    strstr(out, "**strong**") == NULL,
+                    "html styled link labels consume Markdown delimiters");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck lower heading create succeeds");
     st = inst->render_cstr(inst,
@@ -1331,6 +1349,27 @@ int main(void)
                     strstr(out, "target=\"_blank\"") == NULL &&
                     strstr(out, "rel=\"noopener noreferrer\"") == NULL,
                     "html normal links do not force a new tab");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.theme_name = "horizon";
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "horizon html deck styled link labels create succeeds");
+    st = inst->render_cstr(inst,
+                           "# Horizon\n\nUse `operationId`; [`code`](https://example.com) [*emphasis*](https://example.com) [**strong**](https://example.com)\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizon html deck styled link labels render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "`operationId`") == NULL &&
+                    strstr(out, "*emphasis*") == NULL &&
+                    strstr(out, "**strong**") == NULL,
+                    "horizon html deck styled link labels consume Markdown delimiters");
+    fails += expect(out != NULL &&
+                    strstr(out, "color:rgb(255,135,95);font-size:12pt;font-weight:700;") == NULL,
+                    "horizon html deck inline code is not mistaken for a heading");
     inst->string_free(inst, out);
     out = NULL;
     inst->destroy(inst);

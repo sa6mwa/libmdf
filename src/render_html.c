@@ -293,21 +293,6 @@ static int html_theme_has_code_block_semantics(mdf_impl *impl)
             strcmp(impl->theme->name, "solarized-light") == 0);
 }
 
-static int html_code_heading_style_level(mdf_impl *impl, int fg, int bold, int italic, int underline)
-{
-    html_state code;
-
-    html_parse_style_prefix(&code, mdf_theme_code_inline(impl));
-    if (html_style_attrs_equal(&code, fg, bold, italic, underline)) {
-        return html_style_heading_level(impl, fg, bold, italic, underline);
-    }
-    html_parse_style_prefix(&code, mdf_theme_code_block(impl));
-    if (html_style_attrs_equal(&code, fg, bold, italic, underline)) {
-        return html_style_heading_level(impl, fg, bold, italic, underline);
-    }
-    return 0;
-}
-
 static int html_semantic_heading_level(mdf_impl *impl, int fg, int bold, int italic, int underline, int list_marker)
 {
     if (list_marker) {
@@ -1107,9 +1092,6 @@ int html_write_style(mdf_impl *impl, mdf_sink *sink, const html_segment *seg, in
     heading_level = list_marker ? 0 : html_semantic_heading_level(impl, seg->fg, seg->bold, seg->italic, seg->underline, 0);
     marker_heading_level = list_marker ? html_style_heading_level(impl, seg->fg, seg->bold, seg->italic, seg->underline) : 0;
     body_sized_heading_style = marker_heading_level;
-    if (body_sized_heading_style == 0 && !list_marker) {
-        body_sized_heading_style = html_code_heading_style_level(impl, seg->fg, seg->bold, seg->italic, seg->underline);
-    }
     if (snprintf(buf, sizeof(buf), "color:rgb(%s);", html_fg_rgb(impl, seg, rgb_buf, sizeof(rgb_buf))) < 0) return -1;
     len = strlen(buf);
     if (seg->bg != -1) {
@@ -1166,9 +1148,6 @@ static int html_write_style_effective(mdf_impl *impl, mdf_sink *sink, int fg, in
     heading_level = list_marker ? 0 : html_semantic_heading_level(impl, fg, bold, italic, underline, 0);
     marker_heading_level = list_marker ? html_style_heading_level(impl, fg, bold, italic, underline) : 0;
     body_sized_heading_style = marker_heading_level;
-    if (body_sized_heading_style == 0 && !list_marker) {
-        body_sized_heading_style = html_code_heading_style_level(impl, fg, bold, italic, underline);
-    }
     if (snprintf(buf, sizeof(buf), "color:rgb(%s);", rgb) < 0) return -1;
     len = strlen(buf);
     if (bg != -1) {
