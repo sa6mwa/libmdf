@@ -147,6 +147,22 @@ static int wait_for_failure(pid_t pid)
     return WIFEXITED(status) && WEXITSTATUS(status) != 0 ? 0 : -1;
 }
 
+static int wait_for_signal(pid_t pid, int signal_number)
+{
+    int status;
+
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFSIGNALED(status) && WTERMSIG(status) == signal_number ? 0 : -1;
+}
+
+static int terminal_is_cooked(int fd)
+{
+    struct termios state;
+
+    if (tcgetattr(fd, &state) != 0) return 0;
+    return (state.c_lflag & (ECHO | ICANON | ISIG)) == (ECHO | ICANON | ISIG);
+}
+
 static int write_fixture(char *path, size_t cap, const char *suffix, int markdown)
 {
     int fd;
@@ -224,6 +240,46 @@ static int write_wide_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_status_path_fixture(char *path, size_t cap, const char *suffix)
+{
+    int fd;
+    char temporary[128];
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, "status fixture\n", strlen("status fixture\n")) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s%s", temporary, suffix) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
+static int write_styled_search_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-styled-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, "foo `bar` baz\n", strlen("foo `bar` baz\n")) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int require_contains(const capture *out, const char *needle)
 {
     return out->data != NULL && strstr(out->data, needle) != NULL ? 0 : -1;
@@ -292,6 +348,9 @@ int main(int argc, char **argv)
     char markdown_path[128];
     char osc8_path[128];
     char wide_path[128];
+    char control_path[128];
+    char unicode_path[128];
+    char styled_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -307,7 +366,11 @@ int main(int argc, char **argv)
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
         write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0 ||
         write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0 ||
-        write_wide_fixture(wide_path, sizeof(wide_path)) != 0) goto done;
+        write_wide_fixture(wide_path, sizeof(wide_path)) != 0 ||
+        write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
+        write_status_path_fixture(unicode_path, sizeof(unicode_path),
+                                  "\346\227\245\346\234\254\350\252\236\346\227\245.txt") != 0 ||
+        write_styled_search_fixture(styled_path, sizeof(styled_path)) != 0) goto done;
 
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
@@ -409,6 +472,14 @@ int main(int argc, char **argv)
     if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0 ||
         require_contains(&out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0) goto done;
     clear_capture(&out);
+    stage = "narrow Japanese search status";
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 10;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "  /\346\227\245") != 0 ||
+        require_contains(&out, "  /\346\227\245") != 0) goto done;
+    clear_capture(&out);
     stage = "escape exits Japanese search";
     if (write_all(master, "\033", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0) goto done;
     stage = "escape";
@@ -503,6 +574,62 @@ int main(int argc, char **argv)
                         "\033[K\346\227\245\346\234\254\033[0m\r\n\033[K\350\252\236\346\227\245\033[0m\r\n\033[K\346\234\254\350\252\236") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
+    clear_capture(&out);
+
+    stage = "control filename status";
+    pid = start_pager(argv[1], control_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
+        wait_for_marker(master, &out, "\033[7m\033[1;32m") != 0 ||
+        require_contains(&out, "^[]52;c") != 0 ||
+        strstr(out.data, "\033]52;c;INJECT\a") != NULL ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "unicode filename status";
+    pid = start_pager(argv[1], unicode_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
+        wait_for_marker(master, &out, "\033[7m\033[1;32m") != 0 ||
+        require_contains(&out, "\346\227\245\346\234\254\350\252\236\346\227\245") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "styled search reset";
+    pid = start_pager(argv[1], styled_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "foo ") != 0 ||
+        write_all(master, "/bar baz\r", strlen("/bar baz\r")) != 0 ||
+        wait_for_marker(master, &out, "bar\033[0m\033[7m baz") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "foo ") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "SIGTERM cleanup";
+    pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
+        kill(pid, SIGTERM) != 0 || wait_for_signal(pid, SIGTERM) != 0 ||
+        wait_for_output(master, &out, 80) != 0 || require_contains(&out, "\033[?1049l") != 0 ||
+        !terminal_is_cooked(master)) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "ctrl-c cleanup";
+    pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
+        write_all(master, "\003", 1) != 0 || wait_for_signal(pid, SIGINT) != 0 ||
+        wait_for_output(master, &out, 80) != 0 || require_contains(&out, "\033[?1049l") != 0 ||
+        !terminal_is_cooked(master)) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "SIGTSTP cleanup";
+    pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
+        kill(pid, SIGTSTP) != 0 || wait_for_failure(pid) != 0 ||
+        wait_for_output(master, &out, 80) != 0 || require_contains(&out, "\033[?1049l") != 0 ||
+        !terminal_is_cooked(master)) goto done;
+    close(master);
     rc = 0;
 
 done:
@@ -511,6 +638,9 @@ done:
     unlink(markdown_path);
     unlink(osc8_path);
     unlink(wide_path);
+    unlink(control_path);
+    unlink(unicode_path);
+    unlink(styled_path);
     free(out.data);
     return rc;
 }
