@@ -3187,8 +3187,12 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
     }
     if (next != '\0' && next != ' ' && next != '\n') {
         u = (unsigned char)next;
-        if (!isalnum(u) && !ansi_emphasis_suffix_trailing_only(&next, 1)) {
+        /* Keep a closing parenthesis and its following sentence mark together. */
+        if (!isalnum(u) &&
+            ((next == ')' && impl->ansi_pending_final_emph_word_suffix) ||
+             !ansi_emphasis_suffix_trailing_only(&next, 1))) {
             impl->ansi_pending_final_emph_suffix = 1;
+            impl->ansi_pending_final_emph_word_suffix = 0;
             impl->ansi_pending_final_emph_base_len = impl->ansi_word_len;
             impl->ansi_pending_final_emph_base_cols = impl->ansi_word_cols;
             if (ansi_inline_append(impl, &impl->ansi_word, &impl->ansi_word_len, &impl->ansi_word_cap, &next, 1) != 0) return -1;
@@ -4274,6 +4278,7 @@ int ansi_inline_flush_literal(mdf_impl *impl, mdf_sink *sink)
     impl->inline_emph_close_count = 0;
     impl->inline_emph_pending = 0;
     impl->inline_emph_after_word = 0;
+    impl->inline_emph_parenthesized = 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_nested_delim = 0;
     impl->inline_emph_nested_count = 0;
@@ -6680,9 +6685,10 @@ static int ansi_inline_close_streamed_emphasis(mdf_impl *impl, mdf_sink *sink)
         impl->ansi_pending_style_reset_after_word = 0;
         impl->ansi_pending_final_emph_style = prefix;
         impl->ansi_pending_final_emph_suffix = 0;
-        impl->ansi_pending_final_emph_word_suffix = 0;
+        impl->ansi_pending_final_emph_word_suffix = impl->inline_emph_parenthesized;
         impl->ansi_pending_final_emph_base_len = 0;
         impl->ansi_pending_final_emph_base_cols = 0;
+        impl->inline_emph_parenthesized = 0;
         return 0;
     }
     if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 1) != 0) return -1;
@@ -6940,6 +6946,7 @@ static void ansi_begin_inline_emphasis(mdf_impl *impl, char delim)
     impl->inline_emph_close_count = 0;
     impl->inline_emph_len = 0;
     impl->inline_emph_after_word = impl->ansi_word_len > 0;
+    impl->inline_emph_parenthesized = 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_nested_delim = 0;
     impl->inline_emph_nested_count = 0;
@@ -7114,6 +7121,12 @@ reprocess_inline_char:
                     goto reprocess_inline_char;
                 }
                 if (ansi_write_visible_cstr(impl, sink, "(") != 0) return -1;
+                if (c == '*' || c == '_') {
+                    ansi_begin_inline_emphasis(impl, c);
+                    impl->inline_emph_parenthesized = 1;
+                    impl->inline_outer_paren_candidate = 0;
+                    break;
+                }
                 impl->inline_outer_paren_candidate = 0;
                 goto reprocess_inline_char;
             }

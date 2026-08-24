@@ -182,6 +182,7 @@ typedef struct mdf_impl {
     int inline_emph_close_count;
     int inline_emph_pending;
     int inline_emph_after_word;
+    int inline_emph_parenthesized;
     int inline_emph_streaming;
     int inline_emph_skip_spaces;
     char inline_emph_nested_delim;

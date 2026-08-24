@@ -82,6 +82,7 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_owned_inline_style[0] = '\0';
     impl->inline_emph_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, inline_emph_count, inline_emph_after_word);
+    impl->inline_emph_parenthesized = 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_skip_spaces = 0;
     impl->inline_emph_nested_delim = 0;

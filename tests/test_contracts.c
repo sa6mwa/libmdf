@@ -579,6 +579,37 @@ static int test_margin_contract(void)
     fails += expect_contains(cap.out, "\033]8;;https://agilemanifesto.org/\033\\",
                              "osc8 link remains present inside styled margin render");
     capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 37;
+    opts.margin_left = 10;
+    opts.margin_right = 10;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "1. An invented schedule keeps (*quiet executor mode*).\n",
+                        1,
+                        &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "styled parenthetical emphasis margin render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "styled parenthetical emphasis margin writes match traces");
+    fails += expect_contains(cap.out, "mode\033[0m).",
+                             "styled parenthetical emphasis resets before terminal punctuation");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "styled parenthetical emphasis margin output can be stripped");
+        if (plain != NULL) {
+            fails += expect_contains(plain, "mode).\n",
+                                     "styled parenthetical emphasis keeps terminal punctuation together");
+            fails += expect_not_contains(plain, ")\n             .",
+                                        "styled parenthetical emphasis does not orphan terminal punctuation");
+            free(plain);
+        }
+    }
+    capture_free(&cap);
     return fails;
 }
 
