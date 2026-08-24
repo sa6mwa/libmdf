@@ -1406,7 +1406,10 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     if (opts != NULL) render_opts = *opts;
     render_opts.width = mdf_pager_render_width(&render_opts, width);
     memset(&sanitized, 0, sizeof(sanitized));
-    if (mdf_pager_sanitize_markdown(input, &sanitized) != 0) return MDF_ERROR_NOMEM;
+    if (mdf_pager_sanitize_markdown(input, &sanitized) != 0) {
+        mdf_pager_buffer_destroy(&sanitized);
+        return MDF_ERROR_NOMEM;
+    }
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &render_opts, &renderer);
     if (st != MDF_OK) {

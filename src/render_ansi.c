@@ -4547,6 +4547,15 @@ static int inline_full_emphasis(mdf_impl *impl, const char *text, size_t text_le
     return *inner_len > 0;
 }
 
+static size_t inline_backtick_run_len(const char *text, size_t text_len)
+{
+    size_t len;
+
+    len = 0;
+    while (len < text_len && text[len] == '`') len++;
+    return len;
+}
+
 static int inline_code_span_prefix(const char *text, size_t text_len, const char **inner, size_t *inner_len,
                                    const char **rest, size_t *rest_len)
 {
@@ -4554,8 +4563,7 @@ static int inline_code_span_prefix(const char *text, size_t text_len, const char
     size_t i;
 
     if (text_len < 3 || text[0] != '`') return 0;
-    delim_len = 0;
-    while (delim_len < text_len && text[delim_len] == '`') delim_len++;
+    delim_len = inline_backtick_run_len(text, text_len);
     if (delim_len * 2 >= text_len) return 0;
     i = delim_len;
     while (i < text_len) {
@@ -4565,8 +4573,7 @@ static int inline_code_span_prefix(const char *text, size_t text_len, const char
             i++;
             continue;
         }
-        run_len = 0;
-        while (i + run_len < text_len && text[i + run_len] == '`') run_len++;
+        run_len = inline_backtick_run_len(text + i, text_len - i);
         if (run_len == delim_len) {
             const char *code_inner;
             size_t code_len;
@@ -4841,10 +4848,13 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         size_t code_rest_len;
         size_t run_len;
 
-        if (text[i] == '`' && !inline_delimiter_is_escaped(text, i) &&
-            inline_code_span_prefix(text + i, text_len - i, &code_inner, &code_inner_len,
-                                    &code_rest, &code_rest_len)) {
-            i = (size_t)(code_rest - text);
+        if (text[i] == '`' && !inline_delimiter_is_escaped(text, i)) {
+            if (inline_code_span_prefix(text + i, text_len - i, &code_inner, &code_inner_len,
+                                        &code_rest, &code_rest_len)) {
+                i = (size_t)(code_rest - text);
+                continue;
+            }
+            i += inline_backtick_run_len(text + i, text_len - i);
             continue;
         }
 
@@ -4945,8 +4955,12 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             offset += 2;
             continue;
         }
-        found = inline_code_span_prefix(text + offset, text_len - offset,
-                                        &inner, &inner_len, &rest, &rest_len);
+        if (text[offset] == '`') {
+            found = inline_code_span_prefix(text + offset, text_len - offset,
+                                            &inner, &inner_len, &rest, &rest_len);
+        } else {
+            found = 0;
+        }
         code_span = found;
         inline_style = mdf_theme_code_inline(impl);
         no_closer = 0;
@@ -4965,6 +4979,10 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             }
         }
         if (!found) {
+            if (text[offset] == '`') {
+                offset += inline_backtick_run_len(text + offset, text_len - offset);
+                continue;
+            }
             offset++;
             continue;
         }

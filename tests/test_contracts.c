@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_RECORDS 16384
+#define MAX_RECORDS 65536
 
 typedef struct chunk_source {
     const char *src;
@@ -1350,6 +1350,34 @@ static int test_ansi_nested_emphasis_edge_contract(void)
                                                  "large unmatched link-label emphasis writes match traces");
             fails += expect_contains(cap.out, "*a,*a",
                                      "large unmatched link-label emphasis remains literal");
+            capture_free(&cap);
+            free(source);
+        }
+    }
+
+    {
+        static const char suffix[] = "literal](https://x)\n";
+        const size_t backticks = 30000;
+        size_t source_len;
+        char *source;
+
+        source_len = 1 + backticks + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large unmatched link-label code fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            memset(source + 1, '`', backticks);
+            memcpy(source + 1 + backticks, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large unmatched link-label code render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large unmatched link-label code writes match traces");
+            fails += expect_contains(cap.out, "````",
+                                     "large unmatched link-label code delimiters remain literal");
             capture_free(&cap);
             free(source);
         }
