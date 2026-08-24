@@ -4931,10 +4931,13 @@ static int ansi_link_label_append_styles(mdf_impl *impl, const ansi_link_label_s
     return 0;
 }
 
-static const char *ansi_link_label_style_cstr(mdf_impl *impl, const ansi_link_label_style *style)
+static const char *ansi_link_label_style_cstr(mdf_impl *impl, const ansi_link_label_style *style,
+                                              int reset_styles)
 {
     if (impl->opts.boring || style == NULL) return "";
-    if (mdf_emit_buffer_reset(impl) != 0 || ansi_link_label_append_styles(impl, style) != 0 ||
+    if (mdf_emit_buffer_reset(impl) != 0 ||
+        (reset_styles && mdf_emit_buffer_append_cstr(impl, "\033[0m") != 0) ||
+        ansi_link_label_append_styles(impl, style) != 0 ||
         impl->emit_len >= sizeof(impl->ansi_link_label_style)) {
         mdf_impl_mark_oom(impl);
         return NULL;
@@ -4950,18 +4953,20 @@ static const char *ansi_link_label_style_cstr(mdf_impl *impl, const ansi_link_la
 
 static int ansi_emit_link_label_input_styled(mdf_impl *impl, mdf_sink *sink,
                                               const char *text, size_t text_len,
-                                              const ansi_link_label_style *style)
+                                              const ansi_link_label_style *style,
+                                              int reset_styles)
 {
     const char *style_cstr;
 
-    style_cstr = ansi_link_label_style_cstr(impl, style);
+    style_cstr = ansi_link_label_style_cstr(impl, style, reset_styles);
     if (style_cstr == NULL) return -1;
     return ansi_emit_link_label_input(impl, sink, text, text_len, style_cstr);
 }
 
 static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
                                           const char *text, size_t text_len,
-                                          const ansi_link_label_style *link_style)
+                                          const ansi_link_label_style *link_style,
+                                          int *emitted_segment)
 {
     size_t offset;
     size_t plain_start;
@@ -5019,23 +5024,34 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             continue;
         }
         if (offset > plain_start &&
-            ansi_emit_link_label_input_styled(impl, sink, text + plain_start, offset - plain_start, link_style) != 0) {
+            ansi_emit_link_label_input_styled(impl, sink, text + plain_start, offset - plain_start,
+                                               link_style, *emitted_segment) != 0) {
             return -1;
+        }
+        if (offset > plain_start) {
+            *emitted_segment = 1;
         }
         span_style.parent = link_style;
         span_style.style = inline_style;
         if (code_span) {
-            if (ansi_emit_link_label_input_styled(impl, sink, inner, inner_len, &span_style) != 0) return -1;
+            if (ansi_emit_link_label_input_styled(impl, sink, inner, inner_len,
+                                                   &span_style, *emitted_segment) != 0) return -1;
+            *emitted_segment = 1;
         } else {
-            if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, &span_style) != 0) return -1;
+            if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, &span_style,
+                                               emitted_segment) != 0) return -1;
         }
         offset = (size_t)(rest - text);
         plain_start = offset;
         (void)rest_len;
     }
     if (plain_start < text_len &&
-        ansi_emit_link_label_input_styled(impl, sink, text + plain_start, text_len - plain_start, link_style) != 0) {
+        ansi_emit_link_label_input_styled(impl, sink, text + plain_start, text_len - plain_start,
+                                           link_style, *emitted_segment) != 0) {
         return -1;
+    }
+    if (plain_start < text_len) {
+        *emitted_segment = 1;
     }
     return 0;
 }
@@ -5044,15 +5060,17 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
 {
     ansi_link_label_style prefix;
     ansi_link_label_style link;
+    int emitted_segment;
 
+    emitted_segment = 0;
     if (impl->opts.boring) {
-        return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL);
+        return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL, &emitted_segment);
     }
     prefix.parent = NULL;
     prefix.style = prefix_style;
     link.parent = &prefix;
     link.style = mdf_theme_link_text(impl);
-    return ansi_emit_link_label_remainder(impl, sink, text, text_len, &link);
+    return ansi_emit_link_label_remainder(impl, sink, text, text_len, &link, &emitted_segment);
 }
 
 static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,

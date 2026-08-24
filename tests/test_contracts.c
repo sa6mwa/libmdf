@@ -1271,6 +1271,18 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[plain *em* tail](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi styled link label tail render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi styled link label tail writes match traces");
+    fails += expect_contains(cap.out, "em \033[0m\033[4m\033[1;34mtail",
+                             "ansi styled link label resets emphasis before its plain tail");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[foo_bar_baz](http://link.example) [escaped \\*stars\\*](http://link.example)\n", 1, &cap);
