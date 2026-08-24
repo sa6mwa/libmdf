@@ -1,4 +1,5 @@
 #include "mdf_internal.h"
+#include "render_internal.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -490,6 +491,7 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
     while (i < len) {
         unsigned char byte;
         size_t unit_len;
+        int unit_width;
 
         byte = (unsigned char)src[i];
         if (byte == '\r') {
@@ -521,19 +523,17 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
             i++;
             continue;
         }
-        if (col == width) {
+        {
+            unsigned long codepoint;
+
+            unit_len = utf8_decode_codepoint(src + i, len - i, &codepoint);
+            if (unit_len == 0) return -1;
+            unit_width = (int)utf8_display_width(codepoint);
+            if (!styled && (byte < 32 || byte == 127)) unit_width = 2;
+        }
+        if (unit_width > 0 && col > 0 && (col >= width || col + unit_width > width)) {
             if (mdf_pager_buffer_append_byte(&view->bytes, '\n') != 0) return -1;
             col = 0;
-        }
-        unit_len = 1;
-        if (byte >= 0xc2 && byte <= 0xf4) {
-            size_t expected;
-
-            expected = byte < 0xe0 ? 2 : (byte < 0xf0 ? 3 : 4);
-            while (unit_len < expected && i + unit_len < len &&
-                   ((unsigned char)src[i + unit_len] & 0xc0) == 0x80) {
-                unit_len++;
-            }
         }
         if (styled) {
             if (mdf_pager_buffer_append(&view->bytes, src + i, unit_len) != 0) return -1;
@@ -544,7 +544,7 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
                 if (mdf_pager_append_text_byte(&view->bytes, (unsigned char)src[i + j]) != 0) return -1;
             }
         }
-        col++;
+        col += unit_width;
         i += unit_len;
     }
     return 0;
@@ -761,6 +761,7 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     if (percent_status_len < 0) return -1;
     if (percent_status_len >= (int)sizeof(percent_status)) percent_status_len = (int)sizeof(percent_status) - 1;
     percent_len = (size_t)percent_status_len;
+    if (percent_len > (size_t)columns) percent_len = (size_t)columns;
     right_margin = (size_t)columns > percent_len ? 1 : 0;
     available = (size_t)columns - percent_len - right_margin;
     search_len = 0;
@@ -779,7 +780,7 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     if (opts == NULL || !opts->boring) {
         if (mdf_pager_write(theme->heading[0], strlen(theme->heading[0])) != 0) return -1;
     }
-    if (mdf_pager_write(" ", 1) != 0 ||
+    if ((available > 0 && mdf_pager_write(" ", 1) != 0) ||
         (path_len > 0 && mdf_pager_write(path, path_len) != 0) ||
         (search_len > 0 && mdf_pager_write(search_status, search_len) != 0) ||
         mdf_pager_write_spaces(padding) != 0 ||
@@ -921,7 +922,8 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
     if (path == NULL || path[0] == '\0' ||
         (format != MDF_PAGER_FORMAT_AUTO && format != MDF_PAGER_FORMAT_TEXT &&
          format != MDF_PAGER_FORMAT_MARKDOWN) ||
-        stat(path, &st) != 0 || !S_ISREG(st.st_mode) || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        stat(path, &st) != 0 || !S_ISREG(st.st_mode) || !isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO) ||
+        (render_options != NULL && render_options->write_trace.emit != NULL)) {
         return MDF_ERROR_INVALID;
     }
     memset(&input, 0, sizeof(input));

@@ -390,7 +390,9 @@ int mdf_terminal_width(int fd, int fallback);
  * returning. It needs terminal stdin and stdout. In AUTO mode, a case-
  * insensitive .md extension selects Markdown rendering; all other inputs are
  * shown as ordinary text. Markdown is rerendered after a settled SIGWINCH
- * resize (250 ms debounce). render_options selects ANSI renderer options;
+ * resize (250 ms debounce). render_options selects ANSI renderer options,
+ * except write_trace, which is rejected because pager terminal writes cannot
+ * participate in renderer emission tracing;
  * the pager always uses the current terminal width for its Markdown view.
  */
 mdf_status mdf_pager_file(const char *path,

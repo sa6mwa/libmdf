@@ -100,7 +100,16 @@ static int write_all(int fd, const char *src, size_t len)
     return 0;
 }
 
-static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc8, int *master)
+static int ignored_trace_emit(void *userdata, mdf_format format, const char *src, size_t len)
+{
+    (void)userdata;
+    (void)format;
+    (void)src;
+    (void)len;
+    return 0;
+}
+
+static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc8, int traced, int *master)
 {
     struct winsize size;
     pid_t pid;
@@ -111,14 +120,12 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc
     pid = forkpty(master, NULL, NULL, &size);
     if (pid != 0) return pid;
     if (direct) {
-        if (osc8) {
-            mdf_options opts;
+        mdf_options opts;
 
-            mdf_options_init(&opts);
-            opts.osc8 = 1;
-            _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
-        }
-        _exit(mdf_pager_file(path, NULL, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
+        mdf_options_init(&opts);
+        opts.osc8 = osc8;
+        if (traced) opts.write_trace.emit = ignored_trace_emit;
+        _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
     }
     execl(cmdf, cmdf, "-p", path, (char *)NULL);
     _exit(127);
@@ -130,6 +137,14 @@ static int wait_for_exit(pid_t pid)
 
     if (waitpid(pid, &status, 0) < 0) return -1;
     return WIFEXITED(status) && WEXITSTATUS(status) == 0 ? 0 : -1;
+}
+
+static int wait_for_failure(pid_t pid)
+{
+    int status;
+
+    if (waitpid(pid, &status, 0) < 0) return -1;
+    return WIFEXITED(status) && WEXITSTATUS(status) != 0 ? 0 : -1;
 }
 
 static int write_fixture(char *path, size_t cap, const char *suffix, int markdown)
@@ -181,6 +196,28 @@ static int write_osc8_fixture(char *path, size_t cap)
         return -1;
     }
     if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
+static int write_wide_fixture(char *path, size_t cap)
+{
+    int fd;
+    const char *source;
+    char temporary[128];
+
+    source = "\346\227\245\346\234\254\350\252\236\346\227\245\346\234\254\350\252\236\n";
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-wide-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, strlen(source)) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.txt", temporary) >= (int)cap || rename(temporary, path) != 0) {
         unlink(temporary);
         return -1;
     }
@@ -254,6 +291,7 @@ int main(int argc, char **argv)
     char text_path[128];
     char markdown_path[128];
     char osc8_path[128];
+    char wide_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -268,10 +306,11 @@ int main(int argc, char **argv)
     stage = "fixtures";
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
         write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0 ||
-        write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0) goto done;
+        write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0 ||
+        write_wide_fixture(wide_path, sizeof(wide_path)) != 0) goto done;
 
     stage = "text startup";
-    pid = start_pager(argv[1], text_path, 1, 0, &master);
+    pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
         wait_for_marker(master, &out, "\033[K\033[0m") != 0 ||
         require_contains(&out, "# raw heading") != 0 ||
@@ -380,15 +419,21 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "markdown direct";
-    pid = start_pager(argv[1], markdown_path, 1, 0, &master);
+    pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
 
+    stage = "write trace rejected";
+    pid = start_pager(argv[1], markdown_path, 1, 0, 1, &master);
+    if (pid < 0 || wait_for_failure(pid) != 0 || wait_for_output(master, &out, 40) != 0 || out.len != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "markdown cmdf";
-    pid = start_pager(argv[1], markdown_path, 0, 0, &master);
+    pid = start_pager(argv[1], markdown_path, 0, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
@@ -396,7 +441,7 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "osc8 long URL";
-    pid = start_pager(argv[1], osc8_path, 1, 1, &master);
+    pid = start_pager(argv[1], osc8_path, 1, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "molnpolicy") != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "\033]8;;https://www.regeringen.se/contentassets/112463c2b5404f84826545ba01967f28/en-molnpolicy-for-sverige--for-okad-sakerhet-effektivitet-och-innovation-i-den-offentliga-forvaltningen1.pdf\033\\") != 0 ||
@@ -405,7 +450,7 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "resize";
-    pid = start_pager(argv[1], markdown_path, 1, 0, &master);
+    pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         wait_for_output(master, &out, 100) != 0 ||
         write_all(master, "\033[F", 3) != 0 || wait_for_output(master, &out, 80) != 0 ||
@@ -429,6 +474,35 @@ int main(int argc, char **argv)
         require_contains(&out, "line-52") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
+    clear_capture(&out);
+
+    stage = "narrow status bar";
+    pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
+        wait_for_output(master, &out, 80) != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 1;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "\033[H\033[2J") != 0 || out.len > 16384 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "wide utf8 reflow";
+    pid = start_pager(argv[1], wide_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "\346\227\245\346\234\254\350\252\236\346\227\245\346\234\254\350\252\236") != 0 ||
+        wait_for_output(master, &out, 80) != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 4;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out,
+                        "\033[K\346\227\245\346\234\254\033[0m\r\n\033[K\350\252\236\346\227\245\033[0m\r\n\033[K\346\234\254\350\252\236") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
     rc = 0;
 
 done:
@@ -436,6 +510,7 @@ done:
     unlink(text_path);
     unlink(markdown_path);
     unlink(osc8_path);
+    unlink(wide_path);
     free(out.data);
     return rc;
 }
