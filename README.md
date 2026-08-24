@@ -407,7 +407,9 @@ containing sequence number, format, byte length, and base64 data.
 alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
 arrow up/down, Page Up/Page Down, Home/End, and Ctrl-U/Ctrl-D navigation. Its
 bottom bar uses inverted video with the selected ANSI theme and shows the filename plus percentage
-viewed. Markdown views rerender only after SIGWINCH has been quiet for at least
+viewed. Press `/` to search case-insensitively; matching text is highlighted as
+the query is entered, and `n`/`N` move to the next/previous match. `q` or `Esc`
+leaves search mode without leaving the pager. Markdown views rerender only after SIGWINCH has been quiet for at least
 250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
 HTML/deck output, `--output`, write tracing, or input simulation.
 
