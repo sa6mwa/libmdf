@@ -327,8 +327,12 @@ int main(int argc, char **argv)
     stage = "home";
     if (write_all(master, "\033[H", 3) != 0 || wait_for_output(master, &out, 80) != 0) goto done;
     clear_capture(&out);
+    stage = "live Swedish search";
+    if (write_all(master, "/S\303\204K", strlen("/S\303\204K")) != 0 ||
+        wait_for_marker(master, &out, "\033[7mS\303\244k\033[27m") != 0) goto done;
+    clear_capture(&out);
     stage = "Swedish case-insensitive search";
-    if (write_all(master, "/S\303\204KERHET\r", strlen("/S\303\204KERHET\r")) != 0 ||
+    if (write_all(master, "ERHET\r", strlen("ERHET\r")) != 0 ||
         wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
         require_contains(&out, "\033[7mS\303\244kerhet\033[27m") != 0 ||
         require_contains(&out, "/S\303\204KERHET  1/2") != 0) goto done;
@@ -338,9 +342,13 @@ int main(int argc, char **argv)
         require_contains(&out, "\033[7mS\303\204KERHET\033[27m") != 0 ||
         require_contains(&out, "/S\303\204KERHET  2/2") != 0) goto done;
     clear_capture(&out);
-    stage = "previous Swedish search hit";
-    if (write_all(master, "p", 1) != 0 || wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
+    stage = "previous Swedish search hit with N";
+    if (write_all(master, "N", 1) != 0 || wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
         require_contains(&out, "/S\303\204KERHET  1/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "previous Swedish search hit with p";
+    if (write_all(master, "p", 1) != 0 || wait_for_marker(master, &out, "/S\303\204KERHET  2/2") != 0 ||
+        require_contains(&out, "/S\303\204KERHET  2/2") != 0) goto done;
     clear_capture(&out);
     stage = "exit Swedish search";
     if (write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0 ||
@@ -396,6 +404,8 @@ int main(int argc, char **argv)
         wait_for_output(master, &out, 100) != 0 ||
         write_all(master, "\033[F", 3) != 0 || wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "line-52") != 0) goto done;
+    clear_capture(&out);
+    if (wait_for_output(master, &out, 20) != 0) goto done;
     clear_capture(&out);
     memset(&resized, 0, sizeof(resized));
     resized.ws_col = 20;

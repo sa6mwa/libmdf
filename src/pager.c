@@ -403,6 +403,69 @@ static int mdf_pager_search_refresh(mdf_pager_search *search, const mdf_pager_vi
     return 0;
 }
 
+static size_t mdf_pager_utf8_complete_prefix(const char *text, size_t len)
+{
+    size_t i;
+
+    for (i = 0; i < len;) {
+        unsigned char byte;
+        size_t expected;
+        size_t j;
+
+        byte = (unsigned char)text[i];
+        if (byte < 0x80) {
+            i++;
+            continue;
+        }
+        if (byte < 0xc2 || byte > 0xf4) {
+            i++;
+            continue;
+        }
+        expected = byte < 0xe0 ? 2 : (byte < 0xf0 ? 3 : 4);
+        if (i + expected > len) break;
+        for (j = 1; j < expected; j++) {
+            if (((unsigned char)text[i + j] & 0xc0) != 0x80) break;
+        }
+        if (j != expected) break;
+        i += expected;
+    }
+    return i;
+}
+
+static size_t mdf_pager_utf8_character_count(const mdf_pager_buffer *text)
+{
+    size_t i;
+    size_t count;
+    size_t complete_len;
+
+    complete_len = mdf_pager_utf8_complete_prefix(text->data, text->len);
+    count = 0;
+    for (i = 0; i < complete_len; i++) {
+        if (((unsigned char)text->data[i] & 0xc0) != 0x80) count++;
+    }
+    return count;
+}
+
+static void mdf_pager_search_clear_matches(mdf_pager_search *search)
+{
+    free(search->matches);
+    search->matches = NULL;
+    search->count = 0;
+    search->cap = 0;
+    search->selected = 0;
+}
+
+static int mdf_pager_search_update_live(mdf_pager_search *search, const mdf_pager_view *view)
+{
+    if (mdf_pager_utf8_character_count(&search->query) < 3) {
+        mdf_pager_search_clear_matches(search);
+        search->active = 0;
+        return 0;
+    }
+    search->active = 1;
+    return mdf_pager_search_refresh(search, view);
+}
+
 static void mdf_pager_search_backspace(mdf_pager_search *search)
 {
     if (search->query.len == 0) return;
@@ -650,6 +713,7 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     size_t available;
     size_t path_len;
     size_t search_len;
+    size_t query_len;
     size_t percent_len;
     size_t right_margin;
     size_t padding;
@@ -680,9 +744,14 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     }
     search_status[0] = '\0';
     if (search != NULL && search->editing) {
-        (void)snprintf(search_status, sizeof(search_status), "  /%s", search->query.data == NULL ? "" : search->query.data);
+        query_len = search->query.data == NULL ? 0 :
+            mdf_pager_utf8_complete_prefix(search->query.data, search->query.len);
+        (void)snprintf(search_status, sizeof(search_status), "  /%.*s", (int)query_len,
+                       search->query.data == NULL ? "" : search->query.data);
     } else if (search != NULL && search->active) {
-        (void)snprintf(search_status, sizeof(search_status), "  /%s  %lu/%lu",
+        query_len = search->query.data == NULL ? 0 :
+            mdf_pager_utf8_complete_prefix(search->query.data, search->query.len);
+        (void)snprintf(search_status, sizeof(search_status), "  /%.*s  %lu/%lu", (int)query_len,
                        search->query.data == NULL ? "" : search->query.data,
                        (unsigned long)(search->count == 0 ? 0 : search->selected + 1),
                        (unsigned long)search->count);
@@ -993,6 +1062,13 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
             }
             if (ready_byte == 8 || ready_byte == 127) {
                 mdf_pager_search_backspace(&search);
+                if (mdf_pager_search_update_live(&search, &view) != 0) {
+                    result = MDF_ERROR_NOMEM;
+                    goto done;
+                }
+                if (search.active && search.count != 0) {
+                    top = mdf_pager_view_line_for_offset(&view, search.matches[0].start);
+                }
                 redraw = 1;
                 continue;
             }
@@ -1001,7 +1077,16 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
                 result = MDF_ERROR_NOMEM;
                 goto done;
             }
-            if (ready_byte >= 32 && ready_byte != 127) redraw = 1;
+            if (ready_byte >= 32 && ready_byte != 127) {
+                if (mdf_pager_search_update_live(&search, &view) != 0) {
+                    result = MDF_ERROR_NOMEM;
+                    goto done;
+                }
+                if (search.active && search.count != 0) {
+                    top = mdf_pager_view_line_for_offset(&view, search.matches[0].start);
+                }
+                redraw = 1;
+            }
             continue;
         }
         if (search.active) {
@@ -1016,7 +1101,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
                 redraw = 1;
                 continue;
             }
-            if (ready_byte == 'p' && search.count != 0) {
+            if ((ready_byte == 'p' || ready_byte == 'N') && search.count != 0) {
                 search.selected = search.selected == 0 ? search.count - 1 : search.selected - 1;
                 top = mdf_pager_view_line_for_offset(&view, search.matches[search.selected].start);
                 redraw = 1;
