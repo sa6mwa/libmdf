@@ -1222,6 +1222,14 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     mdf_options_init(&opts);
     opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo\\* literal](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped emphasis closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped emphasis closer link label writes match traces");
+    fails += expect_contains(cap.out, "*foo\\* literal", "ansi escaped emphasis closer remains literal in link labels");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
     fails += expect_trace_matches_writes(&cap, "ansi malformed code link label writes match traces");

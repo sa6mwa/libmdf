@@ -4789,6 +4789,15 @@ static int inline_emphasis_can_close(const char *text, size_t text_len, size_t o
     return right_flanking;
 }
 
+static int inline_delimiter_is_escaped(const char *text, size_t offset)
+{
+    size_t slash_count;
+
+    slash_count = 0;
+    while (offset > slash_count && text[offset - slash_count - 1] == '\\') slash_count++;
+    return (slash_count & 1) != 0;
+}
+
 static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text_len, size_t offset,
                                    const char **inner, size_t *inner_len,
                                    const char **rest, size_t *rest_len, const char **style)
@@ -4812,7 +4821,8 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         }
         run_len = 0;
         while (i + run_len < text_len && text[i + run_len] == delim) run_len++;
-        if (run_len == delim_len && inline_emphasis_can_close(text, text_len, i, run_len)) {
+        if (!inline_delimiter_is_escaped(text, i) && run_len == delim_len &&
+            inline_emphasis_can_close(text, text_len, i, run_len)) {
             *inner = text + offset + delim_len;
             *inner_len = i - offset - delim_len;
             *rest = text + i + run_len;
