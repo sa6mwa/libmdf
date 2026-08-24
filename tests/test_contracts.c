@@ -1240,6 +1240,15 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     mdf_options_init(&opts);
     opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[` foo `](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi padded code link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi padded code link label writes match traces");
+    fails += expect_contains(cap.out, "foo (https://x)", "ansi padded code link label normalizes boundary spaces");
+    fails += expect_not_contains(cap.out, " foo ", "ansi padded code link label removes one boundary space");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
     fails += expect_trace_matches_writes(&cap, "ansi malformed code link label writes match traces");

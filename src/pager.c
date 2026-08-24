@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <sys/stat.h>
@@ -135,14 +136,41 @@ static void mdf_pager_restore_termination_handlers(const mdf_pager_termination_h
     }
 }
 
-static long mdf_pager_now_ms(void)
+static int mdf_pager_now(struct timespec *now)
+{
+    return clock_gettime(CLOCK_MONOTONIC, now) == 0 ? 0 : -1;
+}
+
+static long mdf_pager_resize_wait_ms(const struct timespec *last_winch)
 {
     struct timespec now;
+    uintmax_t seconds;
+    long elapsed_ns;
+    long remaining_ns;
 
-    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-        return -1;
+    if (mdf_pager_now(&now) != 0 || now.tv_sec < last_winch->tv_sec) return 0;
+    seconds = (uintmax_t)now.tv_sec - (uintmax_t)last_winch->tv_sec;
+    if (seconds > 1) return 0;
+    if (seconds == 0) {
+        if (now.tv_nsec < last_winch->tv_nsec) return 0;
+        elapsed_ns = now.tv_nsec - last_winch->tv_nsec;
+    } else {
+        elapsed_ns = 1000000000L - last_winch->tv_nsec + now.tv_nsec;
     }
-    return (long)now.tv_sec * 1000L + now.tv_nsec / 1000000L;
+    if (elapsed_ns >= MDF_PAGER_RESIZE_DEBOUNCE_MS * 1000000L) return 0;
+    remaining_ns = MDF_PAGER_RESIZE_DEBOUNCE_MS * 1000000L - elapsed_ns;
+    return (remaining_ns + 999999L) / 1000000L;
+}
+
+static void mdf_pager_note_resize(sig_atomic_t *seen_winch, int *resize_pending,
+                                  struct timespec *last_winch)
+{
+    *seen_winch = mdf_pager_winch_count;
+    *resize_pending = 1;
+    if (mdf_pager_now(last_winch) != 0) {
+        last_winch->tv_sec = 0;
+        last_winch->tv_nsec = 0;
+    }
 }
 
 static void mdf_pager_buffer_destroy(mdf_pager_buffer *buffer)
@@ -1344,7 +1372,8 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
     int rows;
     size_t top;
     sig_atomic_t seen_winch;
-    long resize_deadline;
+    struct timespec last_winch;
+    int resize_pending;
     int entered_terminal;
     int handler_installed;
     int termination_handlers_installed;
@@ -1391,12 +1420,15 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
         result = MDF_ERROR_IO;
         goto done;
     }
+    seen_winch = mdf_pager_winch_count;
     mdf_pager_window_size(&columns, &rows);
     result = mdf_pager_make_view(&view, input, &opts, markdown, columns);
     if (result != MDF_OK) goto done;
     top = 0;
-    seen_winch = mdf_pager_winch_count;
-    resize_deadline = -1;
+    resize_pending = mdf_pager_winch_count != seen_winch;
+    if (resize_pending) {
+        mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
+    }
     redraw = 1;
     for (;;) {
         mdf_pager_key key;
@@ -1418,20 +1450,13 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
             redraw = 0;
         }
         if (mdf_pager_winch_count != seen_winch) {
-            long now;
-
-            seen_winch = mdf_pager_winch_count;
-            now = mdf_pager_now_ms();
-            resize_deadline = now < 0 ? 0 : now + MDF_PAGER_RESIZE_DEBOUNCE_MS;
+            mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
         }
         content_rows = (size_t)(rows - 1);
         max_top = view.line_count > content_rows ? view.line_count - content_rows : 0;
         wait_ms = 1000;
-        if (resize_deadline >= 0) {
-            long now;
-
-            now = mdf_pager_now_ms();
-            wait_ms = now < 0 || now >= resize_deadline ? 0 : resize_deadline - now;
+        if (resize_pending) {
+            wait_ms = mdf_pager_resize_wait_ms(&last_winch);
         }
         ready = mdf_pager_read_with_timeout(&ready_byte, wait_ms);
         if (mdf_pager_termination_signal != 0) {
@@ -1439,14 +1464,10 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
             goto done;
         }
         if (mdf_pager_winch_count != seen_winch) {
-            long now;
-
-            seen_winch = mdf_pager_winch_count;
-            now = mdf_pager_now_ms();
-            resize_deadline = now < 0 ? 0 : now + MDF_PAGER_RESIZE_DEBOUNCE_MS;
+            mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
             continue;
         }
-        if (resize_deadline >= 0 && ready == 0) {
+        if (resize_pending && ready == 0) {
             size_t anchor;
             size_t expected;
             size_t previous_searchable_len;
@@ -1475,7 +1496,7 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
                 result = MDF_ERROR_NOMEM;
                 goto done;
             }
-            resize_deadline = -1;
+            resize_pending = 0;
             redraw = 1;
             continue;
         }

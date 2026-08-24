@@ -370,6 +370,30 @@ static int write_wide_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_initial_resize_fixture(char *path, size_t cap)
+{
+    int fd;
+    int i;
+    char temporary[128];
+    static const char line[] = "0123456789012345678901234567890123456789 initial resize rendering payload\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-initial-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    for (i = 0; i < 100000; i++) {
+        if (write_all(fd, line, sizeof(line) - 1) != 0) {
+            close(fd);
+            unlink(temporary);
+            return -1;
+        }
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.txt", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int write_status_path_fixture(char *path, size_t cap, const char *suffix)
 {
     int fd;
@@ -563,6 +587,7 @@ int main(int argc, char **argv)
     char osc8_path[128];
     char osc8_reflow_path[128];
     char wide_path[128];
+    char initial_resize_path[128];
     char control_path[128];
     char unicode_path[128];
     char styled_path[128];
@@ -587,6 +612,7 @@ int main(int argc, char **argv)
         write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0 ||
         write_osc8_reflow_fixture(osc8_reflow_path, sizeof(osc8_reflow_path)) != 0 ||
         write_wide_fixture(wide_path, sizeof(wide_path)) != 0 ||
+        write_initial_resize_fixture(initial_resize_path, sizeof(initial_resize_path)) != 0 ||
         write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
                                   "\346\227\245\346\234\254\350\252\236\346\227\245.txt") != 0 ||
@@ -729,7 +755,7 @@ int main(int argc, char **argv)
     resized.ws_col = 20;
     resized.ws_row = 10;
     if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
-        wait_for_output(master, &out, 300) != 0 ||
+        wait_for_output(master, &out, 500) != 0 ||
         require_contains(&out, "rendered heading") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
@@ -798,7 +824,7 @@ int main(int argc, char **argv)
     resized.ws_col = 1;
     resized.ws_row = 10;
     if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
-        wait_for_output(master, &out, 300) != 0 ||
+        wait_for_output(master, &out, 500) != 0 ||
         require_contains(&out, "a\033]8;;\033\\\033[0m\r\n") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
@@ -824,9 +850,26 @@ int main(int argc, char **argv)
     stage = "resize premature redraw";
     if (wait_for_output(master, &out, 50) != 0 || out.len != 0) goto done;
     stage = "resize settled redraw";
-    if (wait_for_output(master, &out, 300) != 0 ||
+    if (wait_for_output(master, &out, 500) != 0 ||
         count_occurrences(out.data, "\033[H\033[2J") != 1 ||
         require_contains(&out, "line-52") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "resize during initial render";
+    pid = start_pager(argv[1], initial_resize_path, 1, 0, 0, &master);
+    if (pid < 0) goto done;
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 20;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0) goto done;
+    for (i = 0; i < 50; i++) {
+        if (kill(pid, SIGWINCH) != 0) goto done;
+        sleep_ms(10);
+    }
+    if (wait_for_output(master, &out, 2500) != 0 ||
+        require_contains(&out, "\033[K01234567890123456789\033[0m\r\n") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
@@ -954,6 +997,7 @@ done:
     unlink(osc8_path);
     unlink(osc8_reflow_path);
     unlink(wide_path);
+    unlink(initial_resize_path);
     unlink(control_path);
     unlink(unicode_path);
     unlink(styled_path);

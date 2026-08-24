@@ -4564,8 +4564,23 @@ static int inline_code_span_prefix(const char *text, size_t text_len, const char
         run_len = 0;
         while (i + run_len < text_len && text[i + run_len] == '`') run_len++;
         if (run_len == delim_len) {
-            *inner = text + delim_len;
-            *inner_len = i - delim_len;
+            const char *code_inner;
+            size_t code_len;
+            size_t j;
+
+            code_inner = text + delim_len;
+            code_len = i - delim_len;
+            if (code_len >= 2 && code_inner[0] == ' ' && code_inner[code_len - 1] == ' ') {
+                for (j = 0; j < code_len; j++) {
+                    if (code_inner[j] != ' ') break;
+                }
+                if (j < code_len) {
+                    code_inner++;
+                    code_len -= 2;
+                }
+            }
+            *inner = code_inner;
+            *inner_len = code_len;
             *rest = text + i + run_len;
             *rest_len = text_len - (i + run_len);
             return *inner_len > 0;
