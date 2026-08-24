@@ -376,6 +376,7 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     if (status_len >= (int)sizeof(status)) status_len = (int)sizeof(status) - 1;
     theme = mdf_theme_resolve(opts == NULL ? NULL : opts->theme_name);
     if (theme == NULL) theme = mdf_theme_resolve("default");
+    if (mdf_pager_write("\033[7m", strlen("\033[7m")) != 0) return -1;
     if (opts == NULL || !opts->boring) {
         if (mdf_pager_write(theme->heading[0], strlen(theme->heading[0])) != 0) return -1;
     }

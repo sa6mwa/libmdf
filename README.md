@@ -406,7 +406,7 @@ containing sequence number, format, byte length, and base64 data.
 `--pager` requires a named input file and terminal stdin/stdout. It uses the
 alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
 arrow up/down, Page Up/Page Down, Home/End, and Ctrl-U/Ctrl-D navigation. Its
-bottom bar uses the selected ANSI theme and shows the filename plus percentage
+bottom bar uses inverted video with the selected ANSI theme and shows the filename plus percentage
 viewed. Markdown views rerender only after SIGWINCH has been quiet for at least
 250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
 HTML/deck output, `--output`, write tracing, or input simulation.

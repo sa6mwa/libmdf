@@ -213,7 +213,7 @@ int main(int argc, char **argv)
     if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "# raw heading") != 0 ||
-        require_contains(&out, "\033[1;32m ") != 0 ||
+        require_contains(&out, "\033[7m\033[1;32m ") != 0 ||
         strstr(out.data, "\033[1;32m# raw heading") != NULL) goto done;
     stage = "down";
     if (write_all(master, "j", 1) != 0 || wait_for_output(master, &out, 80) != 0 ||
