@@ -538,6 +538,32 @@ static int ansi_write_styled_split_word_full_width(mdf_impl *impl, mdf_sink *sin
     return 0;
 }
 
+static int ansi_write_styled_split_word_reset_suffix(mdf_impl *impl, mdf_sink *sink,
+                                                       const char *style,
+                                                       const char *text, size_t text_len,
+                                                       const char *suffix, size_t suffix_len)
+{
+    size_t suffix_cols;
+
+    if (ansi_write_styled_split_word_full_width(impl, sink, style, text, text_len) != 0) {
+        return -1;
+    }
+    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) {
+        return -1;
+    }
+    if (suffix_len == 0) {
+        return 0;
+    }
+    suffix_cols = visible_cols(suffix, suffix_len);
+    if (impl->opts.width > 0 && impl->ansi_col > 0 &&
+        impl->ansi_col + (int)suffix_cols > impl->opts.width) {
+        if (ansi_emit_newline(impl, sink) != 0) {
+            return -1;
+        }
+    }
+    return ansi_write_split_word_full_width(impl, sink, suffix, suffix_len);
+}
+
 static int ansi_write_split_word_preserve_prefix(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)
 {
     size_t split;
@@ -2925,12 +2951,15 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
                       impl->ansi_pending_inline_style != final_emph_style) ? "" : final_emph_style;
         total_word_cols = visible_cols(impl->ansi_word, impl->ansi_word_len);
         if (impl->opts.width > 0 && total_word_cols > (size_t)impl->opts.width) {
-            if (ansi_write_styled_split_word_full_width(impl, sink, emit_style,
-                    impl->ansi_word, impl->ansi_word_len) != 0) {
+            impl->ansi_active_inline_style = NULL;
+            impl->ansi_pending_inline_style = NULL;
+            if (ansi_write_styled_split_word_reset_suffix(impl, sink, emit_style,
+                    impl->ansi_word, impl->ansi_pending_final_emph_base_len,
+                    impl->ansi_word + impl->ansi_pending_final_emph_base_len,
+                    impl->ansi_word_len - impl->ansi_pending_final_emph_base_len) != 0) {
                 impl->ansi_flushing_word = 0;
                 return -1;
             }
-            impl->ansi_pending_style_reset = 1;
         } else if (ansi_emit_styled_word_reset_suffix(impl, sink, emit_style,
                 impl->ansi_word,
                 impl->ansi_pending_final_emph_base_len,
@@ -3250,9 +3279,12 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
                       impl->ansi_active_inline_style == style &&
                       impl->ansi_pending_inline_style != style) ? "" : style;
         if (impl->opts.width > 0 && total_cols > (size_t)impl->opts.width) {
-            if (ansi_write_styled_split_word_full_width(impl, sink, emit_style,
-                    impl->ansi_word, impl->ansi_word_len) != 0) return -1;
-            impl->ansi_pending_style_reset = 1;
+            impl->ansi_active_inline_style = NULL;
+            impl->ansi_pending_inline_style = NULL;
+            if (ansi_write_styled_split_word_reset_suffix(impl, sink, emit_style,
+                    impl->ansi_word, impl->ansi_pending_final_emph_base_len,
+                    impl->ansi_word + impl->ansi_pending_final_emph_base_len,
+                    impl->ansi_word_len - impl->ansi_pending_final_emph_base_len) != 0) return -1;
         } else if (ansi_emit_styled_word_reset_suffix(impl, sink, emit_style,
                 impl->ansi_word,
                 impl->ansi_pending_final_emph_base_len,

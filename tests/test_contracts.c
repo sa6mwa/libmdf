@@ -610,6 +610,35 @@ static int test_margin_contract(void)
         }
     }
     capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 6;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "(*quiet executor mode*).foo\n",
+                        1,
+                        &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "narrow styled parenthetical emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "narrow styled parenthetical emphasis writes match traces");
+    fails += expect_contains(cap.out, "mode\033[0m",
+                             "narrow styled parenthetical emphasis resets after its final word");
+    fails += expect_not_contains(cap.out, "mode).foo\033[0m",
+                                 "narrow parenthetical punctuation is never emitted inside emphasis");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "narrow styled parenthetical emphasis output can be stripped");
+        if (plain != NULL) {
+            fails += expect_contains(plain, ").foo",
+                                     "narrow styled parenthetical emphasis preserves terminal punctuation");
+            free(plain);
+        }
+    }
+    capture_free(&cap);
     return fails;
 }
 
