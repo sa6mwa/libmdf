@@ -1090,7 +1090,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
             continue;
         }
         if (search.active) {
-            if (ready_byte == 'q') {
+            if (ready_byte == 'q' || ready_byte == 0x1b) {
                 mdf_pager_search_destroy(&search);
                 redraw = 1;
                 continue;

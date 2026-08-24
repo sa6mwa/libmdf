@@ -273,27 +273,29 @@ int main(int argc, char **argv)
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
-        wait_for_output(master, &out, 80) != 0 ||
+        wait_for_marker(master, &out, "\033[K\033[0m") != 0 ||
         require_contains(&out, "# raw heading") != 0 ||
         require_contains(&out, "\033[7m\033[1;32m ") != 0 ||
         require_full_status_bar(&out, text_path) != 0 ||
         strstr(out.data, "\033[1;32m# raw heading") != NULL) goto done;
+    clear_capture(&out);
     stage = "down";
-    if (write_all(master, "j", 1) != 0 || wait_for_output(master, &out, 80) != 0 ||
-        require_contains(&out, "line-02") != 0) goto done;
+    if (write_all(master, "j", 1) != 0 || wait_for_marker(master, &out, "line-08") != 0) goto done;
+    clear_capture(&out);
     stage = "up";
-    if (write_all(master, "k", 1) != 0 || wait_for_output(master, &out, 80) != 0 ||
-        require_contains(&out, "line-01") != 0) goto done;
+    if (write_all(master, "k", 1) != 0 || wait_for_marker(master, &out, "# raw heading") != 0) goto done;
+    clear_capture(&out);
     stage = "page down";
-    if (write_all(master, "\033[6~", 4) != 0 || wait_for_output(master, &out, 80) != 0 ||
-        require_contains(&out, "line-10") != 0) goto done;
+    if (write_all(master, "\033[6~", 4) != 0 || wait_for_marker(master, &out, "line-10") != 0) goto done;
+    clear_capture(&out);
     stage = "page up";
-    if (write_all(master, "\033[5~", 4) != 0 || wait_for_output(master, &out, 80) != 0) goto done;
+    if (write_all(master, "\033[5~", 4) != 0 || wait_for_marker(master, &out, "# raw heading") != 0) goto done;
+    clear_capture(&out);
     stage = "half down";
-    if (write_all(master, "\004", 1) != 0 || wait_for_output(master, &out, 80) != 0 ||
-        require_contains(&out, "line-05") != 0) goto done;
+    if (write_all(master, "\004", 1) != 0 || wait_for_marker(master, &out, "line-05") != 0) goto done;
+    clear_capture(&out);
     stage = "half up";
-    if (write_all(master, "\025", 1) != 0 || wait_for_output(master, &out, 80) != 0) goto done;
+    if (write_all(master, "\025", 1) != 0 || wait_for_marker(master, &out, "# raw heading") != 0) goto done;
     clear_capture(&out);
     stage = "space page down";
     if (write_all(master, " ", 1) != 0 || wait_for_marker(master, &out, "line-08") != 0) goto done;
@@ -332,7 +334,11 @@ int main(int argc, char **argv)
         wait_for_marker(master, &out, "\033[7mS\303\244k\033[27m") != 0) goto done;
     clear_capture(&out);
     stage = "Swedish case-insensitive search";
-    if (write_all(master, "ERHET\r", strlen("ERHET\r")) != 0 ||
+    if (write_all(master, "ERHET", strlen("ERHET")) != 0 ||
+        wait_for_marker(master, &out, "\033[7mS\303\244kerhet\033[27m") != 0) goto done;
+    clear_capture(&out);
+    stage = "confirm Swedish search";
+    if (write_all(master, "\r", 1) != 0 ||
         wait_for_marker(master, &out, "/S\303\204KERHET  1/2") != 0 ||
         require_contains(&out, "\033[7mS\303\244kerhet\033[27m") != 0 ||
         require_contains(&out, "/S\303\204KERHET  1/2") != 0) goto done;
@@ -364,8 +370,8 @@ int main(int argc, char **argv)
     if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0 ||
         require_contains(&out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0) goto done;
     clear_capture(&out);
-    stage = "exit Japanese search";
-    if (write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0) goto done;
+    stage = "escape exits Japanese search";
+    if (write_all(master, "\033", 1) != 0 || wait_for_marker(master, &out, "line-01") != 0) goto done;
     stage = "escape";
     if (write_all(master, "\033", 1) != 0 || wait_for_exit(pid) != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
