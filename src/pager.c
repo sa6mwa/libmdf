@@ -601,6 +601,20 @@ static int mdf_pager_write(const char *src, size_t len)
     return 0;
 }
 
+static int mdf_pager_write_spaces(size_t count)
+{
+    static const char spaces[] = "                                                                ";
+
+    while (count > 0) {
+        size_t chunk;
+
+        chunk = count < sizeof(spaces) - 1 ? count : sizeof(spaces) - 1;
+        if (mdf_pager_write(spaces, chunk) != 0) return -1;
+        count -= chunk;
+    }
+    return 0;
+}
+
 static int mdf_pager_draw_highlighted(const mdf_pager_view *view, const mdf_pager_search *search,
                                       size_t start, size_t end)
 {
@@ -633,13 +647,17 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
     size_t content_rows;
     size_t row;
     size_t max_top;
+    size_t available;
+    size_t path_len;
+    size_t search_len;
+    size_t percent_len;
+    size_t right_margin;
+    size_t padding;
     int percent;
-    char status[512];
-    char suffix[320];
     char search_status[256];
-    int status_len;
-    int suffix_len;
-    int path_len;
+    char percent_status[8];
+    int search_status_len;
+    int percent_status_len;
 
     content_rows = (size_t)(rows - 1);
     max_top = view->line_count > content_rows ? view->line_count - content_rows : 0;
@@ -669,21 +687,35 @@ static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const md
                        (unsigned long)(search->count == 0 ? 0 : search->selected + 1),
                        (unsigned long)search->count);
     }
-    suffix_len = snprintf(suffix, sizeof(suffix), "  %d%%%s", percent, search_status);
-    if (suffix_len < 0) return -1;
-    if (suffix_len >= (int)sizeof(suffix)) suffix_len = (int)sizeof(suffix) - 1;
-    path_len = columns - suffix_len - 1;
-    if (path_len < 0) path_len = 0;
-    status_len = snprintf(status, sizeof(status), " %.*s%s", path_len, path, suffix);
-    if (status_len < 0) return -1;
-    if (status_len >= (int)sizeof(status)) status_len = (int)sizeof(status) - 1;
+    search_status_len = (int)strlen(search_status);
+    percent_status_len = snprintf(percent_status, sizeof(percent_status), "%d%%", percent);
+    if (percent_status_len < 0) return -1;
+    if (percent_status_len >= (int)sizeof(percent_status)) percent_status_len = (int)sizeof(percent_status) - 1;
+    percent_len = (size_t)percent_status_len;
+    right_margin = (size_t)columns > percent_len ? 1 : 0;
+    available = (size_t)columns - percent_len - right_margin;
+    search_len = 0;
+    path_len = 0;
+    padding = 0;
+    if (available > 0) {
+        search_len = (size_t)search_status_len;
+        if (search_len >= available) search_len = available - 1;
+        path_len = available - search_len - 1;
+        if (path_len > strlen(path)) path_len = strlen(path);
+        padding = available - 1 - path_len - search_len;
+    }
     theme = mdf_theme_resolve(opts == NULL ? NULL : opts->theme_name);
     if (theme == NULL) theme = mdf_theme_resolve("default");
     if (mdf_pager_write("\033[7m", strlen("\033[7m")) != 0) return -1;
     if (opts == NULL || !opts->boring) {
         if (mdf_pager_write(theme->heading[0], strlen(theme->heading[0])) != 0) return -1;
     }
-    if (mdf_pager_write(status, (size_t)status_len) != 0 ||
+    if (mdf_pager_write(" ", 1) != 0 ||
+        (path_len > 0 && mdf_pager_write(path, path_len) != 0) ||
+        (search_len > 0 && mdf_pager_write(search_status, search_len) != 0) ||
+        mdf_pager_write_spaces(padding) != 0 ||
+        mdf_pager_write(percent_status, percent_len) != 0 ||
+        mdf_pager_write_spaces(right_margin) != 0 ||
         mdf_pager_write("\033[K\033[0m", strlen("\033[K\033[0m")) != 0) return -1;
     return 0;
 }

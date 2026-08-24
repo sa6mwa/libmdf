@@ -192,6 +192,32 @@ static int require_contains(const capture *out, const char *needle)
     return out->data != NULL && strstr(out->data, needle) != NULL ? 0 : -1;
 }
 
+static int require_full_status_bar(const capture *out, const char *path)
+{
+    const char *prefix;
+    const char *suffix;
+    char expected[128];
+    size_t path_len;
+    size_t shown_path_len;
+    size_t position;
+
+    prefix = "\033[7m\033[1;32m ";
+    suffix = "0% \033[K\033[0m";
+    path_len = strlen(path);
+    shown_path_len = path_len > 36 ? 36 : path_len;
+    position = 0;
+    memcpy(expected + position, prefix, strlen(prefix));
+    position += strlen(prefix);
+    memcpy(expected + position, path, shown_path_len);
+    position += shown_path_len;
+    memset(expected + position, ' ', 36 - shown_path_len);
+    position += 36 - shown_path_len;
+    memcpy(expected + position, suffix, strlen(suffix));
+    position += strlen(suffix);
+    expected[position] = '\0';
+    return require_contains(out, expected);
+}
+
 static int clear_capture(capture *out)
 {
     out->len = 0;
@@ -250,6 +276,7 @@ int main(int argc, char **argv)
         wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "# raw heading") != 0 ||
         require_contains(&out, "\033[7m\033[1;32m ") != 0 ||
+        require_full_status_bar(&out, text_path) != 0 ||
         strstr(out.data, "\033[1;32m# raw heading") != NULL) goto done;
     stage = "down";
     if (write_all(master, "j", 1) != 0 || wait_for_output(master, &out, 80) != 0 ||
