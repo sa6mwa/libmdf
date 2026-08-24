@@ -165,6 +165,30 @@ static int mdf_pager_append_escape(mdf_pager_buffer *out, const char *src, size_
                 break;
             }
         }
+    } else if (i < len && src[i] == ']') {
+        if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+            return -1;
+        }
+        i++;
+        while (i < len) {
+            unsigned char byte;
+
+            byte = (unsigned char)src[i];
+            if (mdf_pager_buffer_append_byte(out, byte) != 0) {
+                return -1;
+            }
+            i++;
+            if (byte == '\a') {
+                break;
+            }
+            if (byte == 0x1b && i < len && src[i] == '\\') {
+                if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+                    return -1;
+                }
+                i++;
+                break;
+            }
+        }
     }
     *index = i;
     return 0;

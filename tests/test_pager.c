@@ -100,7 +100,7 @@ static int write_all(int fd, const char *src, size_t len)
     return 0;
 }
 
-static pid_t start_pager(const char *cmdf, const char *path, int direct, int *master)
+static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc8, int *master)
 {
     struct winsize size;
     pid_t pid;
@@ -111,6 +111,13 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int *ma
     pid = forkpty(master, NULL, NULL, &size);
     if (pid != 0) return pid;
     if (direct) {
+        if (osc8) {
+            mdf_options opts;
+
+            mdf_options_init(&opts);
+            opts.osc8 = 1;
+            _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
+        }
         _exit(mdf_pager_file(path, NULL, MDF_PAGER_FORMAT_AUTO) == MDF_OK ? 0 : 1);
     }
     execl(cmdf, cmdf, "-p", path, (char *)NULL);
@@ -148,6 +155,28 @@ static int write_fixture(char *path, size_t cap, const char *suffix, int markdow
     }
     if (close(fd) != 0 || snprintf(path, cap, "%s.%s", temporary, suffix) >= (int)cap ||
         rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
+static int write_osc8_fixture(char *path, size_t cap)
+{
+    int fd;
+    const char *source;
+    char temporary[128];
+
+    source = "Regeringens [molnpolicy f\303\266r Sverige](https://www.regeringen.se/contentassets/112463c2b5404f84826545ba01967f28/en-molnpolicy-for-sverige--for-okad-sakerhet-effektivitet-och-innovation-i-den-offentliga-forvaltningen1.pdf) f\303\266rbjuder inte Azure och kr\303\244ver inte ett svenskt eller suver\303\244nt moln. Den betonar d\303\244remot kontroll, portabilitet, ers\303\244ttningsstrategier, *exit* och kontinuitet.\n";
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-osc8-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, strlen(source)) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
         unlink(temporary);
         return -1;
     }
@@ -194,6 +223,7 @@ int main(int argc, char **argv)
 {
     char text_path[128];
     char markdown_path[128];
+    char osc8_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -206,10 +236,11 @@ int main(int argc, char **argv)
     rc = 1;
     stage = "fixtures";
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
-        write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0) goto done;
+        write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0 ||
+        write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0) goto done;
 
     stage = "text startup";
-    pid = start_pager(argv[1], text_path, 1, &master);
+    pid = start_pager(argv[1], text_path, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "# raw heading") != 0 ||
@@ -244,7 +275,7 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "markdown direct";
-    pid = start_pager(argv[1], markdown_path, 1, &master);
+    pid = start_pager(argv[1], markdown_path, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
@@ -252,15 +283,24 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "markdown cmdf";
-    pid = start_pager(argv[1], markdown_path, 0, &master);
+    pid = start_pager(argv[1], markdown_path, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
 
+    stage = "osc8 long URL";
+    pid = start_pager(argv[1], osc8_path, 1, 1, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "molnpolicy") != 0 ||
+        wait_for_output(master, &out, 80) != 0 ||
+        require_contains(&out, "\033]8;;https://www.regeringen.se/contentassets/112463c2b5404f84826545ba01967f28/en-molnpolicy-for-sverige--for-okad-sakerhet-effektivitet-och-innovation-i-den-offentliga-forvaltningen1.pdf\033\\") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "resize";
-    pid = start_pager(argv[1], markdown_path, 1, &master);
+    pid = start_pager(argv[1], markdown_path, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         wait_for_output(master, &out, 100) != 0) goto done;
     clear_capture(&out);
@@ -281,6 +321,7 @@ done:
     if (rc != 0) fprintf(stderr, "test_pager failed at %s\n", stage);
     unlink(text_path);
     unlink(markdown_path);
+    unlink(osc8_path);
     free(out.data);
     return rc;
 }
