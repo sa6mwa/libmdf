@@ -4896,7 +4896,7 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         }
         run_len = 0;
         while (i + run_len < text_len && text[i + run_len] == delim) run_len++;
-        if (!inline_delimiter_is_escaped(text, i) && run_len == delim_len &&
+        if (!inline_delimiter_is_escaped(text, i) && run_len >= delim_len &&
             inline_emphasis_can_close(text, text_len, i, run_len)) {
             if (delim_len == 3) {
                 *inner = text + offset + 2;

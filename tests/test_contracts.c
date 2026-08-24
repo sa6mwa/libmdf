@@ -1307,6 +1307,17 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo**](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi longer emphasis closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi longer emphasis closer link label writes match traces");
+    fails += expect_output_equals(&cap, "foo (https://x)\n",
+                                  "ansi longer emphasis closer link label consumes its closing run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");
