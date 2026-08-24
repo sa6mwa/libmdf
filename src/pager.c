@@ -2,6 +2,8 @@
 #include "render_internal.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +17,7 @@
 
 #define MDF_PAGER_RESIZE_DEBOUNCE_MS 250L
 #define MDF_PAGER_TERMINATION_SIGNAL_COUNT 7
+#define MDF_PAGER_MIN_RENDER_WIDTH 3
 
 typedef struct mdf_pager_buffer {
     char *data;
@@ -181,26 +184,20 @@ static int mdf_pager_buffer_append_byte(mdf_pager_buffer *buffer, unsigned char 
     return mdf_pager_buffer_append(buffer, &c, 1);
 }
 
-static int mdf_pager_read_file(const char *path, mdf_pager_buffer *out)
+static int mdf_pager_read_file(int fd, mdf_pager_buffer *out)
 {
-    FILE *fp;
     char chunk[4096];
-    size_t n;
+    ssize_t n;
 
-    fp = fopen(path, "rb");
-    if (fp == NULL) {
-        return -1;
-    }
-    while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
-        if (mdf_pager_buffer_append(out, chunk, n) != 0) {
-            fclose(fp);
-            return -1;
+    for (;;) {
+        n = read(fd, chunk, sizeof(chunk));
+        if (n > 0) {
+            if (mdf_pager_buffer_append(out, chunk, (size_t)n) != 0) return -1;
+            continue;
         }
+        if (n == 0) return 0;
+        if (errno != EINTR) return -1;
     }
-    if (ferror(fp) || fclose(fp) != 0) {
-        return -1;
-    }
-    return 0;
 }
 
 static int mdf_pager_read_source(mdf_source *source, mdf_pager_buffer *out)
@@ -261,6 +258,39 @@ static int mdf_pager_arguments_valid(const char *name, const mdf_options *render
          format == MDF_PAGER_FORMAT_MARKDOWN) &&
         isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
         (render_options == NULL || render_options->write_trace.emit == NULL);
+}
+
+static mdf_status mdf_pager_validate_options(const mdf_options *render_options)
+{
+    mdf_options opts;
+    mdf *renderer;
+    mdf_status st;
+
+    mdf_options_init(&opts);
+    if (render_options != NULL) opts = *render_options;
+    if (opts.margin_left >= 0 && opts.margin_right >= 0) {
+        if (opts.margin_left > INT_MAX - opts.margin_right - MDF_PAGER_MIN_RENDER_WIDTH) {
+            return MDF_ERROR_INVALID;
+        }
+        opts.width = opts.margin_left + opts.margin_right + MDF_PAGER_MIN_RENDER_WIDTH;
+    } else {
+        opts.width = MDF_PAGER_MIN_RENDER_WIDTH;
+    }
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    if (st == MDF_OK) renderer->destroy(renderer);
+    return st;
+}
+
+static int mdf_pager_render_width(const mdf_options *opts, int width)
+{
+    int minimum_width;
+
+    if (width < MDF_PAGER_MIN_RENDER_WIDTH) width = MDF_PAGER_MIN_RENDER_WIDTH;
+    if (opts == NULL || opts->margin_left < 0 || opts->margin_right < 0) return width;
+    if (opts->margin_left > INT_MAX - opts->margin_right - MDF_PAGER_MIN_RENDER_WIDTH) return width;
+    minimum_width = opts->margin_left + opts->margin_right + MDF_PAGER_MIN_RENDER_WIDTH;
+    return width >= minimum_width ? width : minimum_width;
 }
 
 static int mdf_pager_append_escape(mdf_pager_buffer *out, const char *src, size_t len, size_t *index)
@@ -1138,7 +1168,7 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     }
     mdf_options_init(&render_opts);
     if (opts != NULL) render_opts = *opts;
-    render_opts.width = width;
+    render_opts.width = mdf_pager_render_width(&render_opts, width);
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &render_opts, &renderer);
     if (st != MDF_OK) return st;
@@ -1450,15 +1480,27 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
     struct stat st;
     mdf_pager_buffer input;
     mdf_status result;
+    int fd;
 
-    if (!mdf_pager_arguments_valid(path, render_options, format) ||
-        stat(path, &st) != 0 || !S_ISREG(st.st_mode)) {
+    if (!mdf_pager_arguments_valid(path, render_options, format)) {
+        return MDF_ERROR_INVALID;
+    }
+    result = mdf_pager_validate_options(render_options);
+    if (result != MDF_OK) return result;
+    fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        return MDF_ERROR_INVALID;
+    }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        (void)close(fd);
         return MDF_ERROR_INVALID;
     }
     memset(&input, 0, sizeof(input));
-    if (mdf_pager_read_file(path, &input) != 0) {
+    result = mdf_pager_read_file(fd, &input) == 0 ? MDF_OK : MDF_ERROR_IO;
+    if (close(fd) != 0 && result == MDF_OK) result = MDF_ERROR_IO;
+    if (result != MDF_OK) {
         mdf_pager_buffer_destroy(&input);
-        return MDF_ERROR_IO;
+        return result;
     }
     result = mdf_pager_run(path, &input, render_options, format);
     mdf_pager_buffer_destroy(&input);
@@ -1475,6 +1517,8 @@ mdf_status mdf_pager_source(const char *name, mdf_source *source,
         !mdf_pager_arguments_valid(name, render_options, format)) {
         return MDF_ERROR_INVALID;
     }
+    result = mdf_pager_validate_options(render_options);
+    if (result != MDF_OK) return result;
     memset(&input, 0, sizeof(input));
     if (mdf_pager_read_source(source, &input) != 0) {
         mdf_pager_buffer_destroy(&input);

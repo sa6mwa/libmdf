@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
@@ -166,6 +167,25 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc
     }
     execl(cmdf, cmdf, "-p", path, (char *)NULL);
     _exit(127);
+}
+
+static pid_t start_pager_with_theme(const char *path, const char *theme_name, int *master)
+{
+    struct winsize size;
+    pid_t pid;
+
+    memset(&size, 0, sizeof(size));
+    size.ws_col = 40;
+    size.ws_row = 10;
+    pid = forkpty(master, NULL, NULL, &size);
+    if (pid != 0) return pid;
+    {
+        mdf_options opts;
+
+        mdf_options_init(&opts);
+        opts.theme_name = theme_name;
+        _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_TEXT) == MDF_OK ? 0 : 1);
+    }
 }
 
 static pid_t start_pager_source(const char *name, const char *data, size_t len, int *master)
@@ -366,6 +386,25 @@ static int write_nul_markdown_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_fifo_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-fifo-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (close(fd) != 0 || snprintf(path, cap, "%s.fifo", temporary) >= (int)cap) {
+        unlink(temporary);
+        return -1;
+    }
+    if (unlink(temporary) != 0 || mkfifo(path, 0600) != 0) {
+        unlink(path);
+        return -1;
+    }
+    return 0;
+}
+
 static int require_contains(const capture *out, const char *needle)
 {
     return capture_contains(out, needle) ? 0 : -1;
@@ -438,6 +477,7 @@ int main(int argc, char **argv)
     char unicode_path[128];
     char styled_path[128];
     char nul_path[128];
+    char fifo_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -458,7 +498,8 @@ int main(int argc, char **argv)
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
                                   "\346\227\245\346\234\254\350\252\236\346\227\245.txt") != 0 ||
         write_styled_search_fixture(styled_path, sizeof(styled_path)) != 0 ||
-        write_nul_markdown_fixture(nul_path, sizeof(nul_path)) != 0) goto done;
+        write_nul_markdown_fixture(nul_path, sizeof(nul_path)) != 0 ||
+        write_fifo_fixture(fifo_path, sizeof(fifo_path)) != 0) goto done;
 
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
@@ -585,6 +626,18 @@ int main(int argc, char **argv)
     close(master);
     clear_capture(&out);
 
+    stage = "text invalid theme";
+    pid = start_pager_with_theme(text_path, "not-a-theme", &master);
+    if (pid < 0 || wait_for_failure(pid) != 0 || wait_for_output(master, &out, 40) != 0 || out.len != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "nonregular file";
+    pid = start_pager(argv[1], fifo_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_failure(pid) != 0 || wait_for_output(master, &out, 40) != 0 || out.len != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "markdown NUL file";
     pid = start_pager(argv[1], nul_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "Before NUL") != 0 ||
@@ -631,9 +684,9 @@ int main(int argc, char **argv)
     stage = "resize";
     pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
-        wait_for_output(master, &out, 100) != 0 ||
-        write_all(master, "\033[F", 3) != 0 || wait_for_output(master, &out, 80) != 0 ||
-        require_contains(&out, "line-52") != 0) goto done;
+        wait_for_output(master, &out, 150) != 0 ||
+        write_all(master, "\033[F", 3) != 0 || wait_for_marker(master, &out, "line-52") != 0 ||
+        wait_for_output(master, &out, 150) != 0) goto done;
     clear_capture(&out);
     if (wait_for_output(master, &out, 20) != 0) goto done;
     clear_capture(&out);
@@ -659,6 +712,19 @@ int main(int argc, char **argv)
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "# raw heading") != 0 ||
         wait_for_output(master, &out, 80) != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 1;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "\033[H\033[2J") != 0 || out.len > 16384 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "narrow markdown";
+    pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0) goto done;
     clear_capture(&out);
     memset(&resized, 0, sizeof(resized));
     resized.ws_col = 1;
@@ -750,6 +816,7 @@ done:
     unlink(unicode_path);
     unlink(styled_path);
     unlink(nul_path);
+    unlink(fifo_path);
     free(out.data);
     return rc;
 }
