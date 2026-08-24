@@ -218,6 +218,28 @@ static pid_t start_pager_source(const char *name, const char *data, size_t len, 
     }
 }
 
+static pid_t start_pager_with_owned_emission_buffer(const char *path, int *master)
+{
+    struct winsize size;
+    pid_t pid;
+
+    memset(&size, 0, sizeof(size));
+    size.ws_col = 40;
+    size.ws_row = 10;
+    pid = forkpty(master, NULL, NULL, &size);
+    if (pid != 0) return pid;
+    {
+        mdf_options opts;
+
+        mdf_options_init(&opts);
+        opts.emission_buffer.data = (char *)malloc(128);
+        if (opts.emission_buffer.data == NULL) _exit(1);
+        opts.emission_buffer.cap = 128;
+        opts.emission_buffer.take_ownership = 1;
+        _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_MARKDOWN) == MDF_OK ? 0 : 1);
+    }
+}
+
 static int wait_for_exit(pid_t pid)
 {
     int status;
@@ -672,6 +694,20 @@ int main(int argc, char **argv)
     pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "markdown owned emission buffer";
+    pid = start_pager_with_owned_emission_buffer(markdown_path, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 20;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_output(master, &out, 300) != 0 ||
+        require_contains(&out, "rendered heading") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);

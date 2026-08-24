@@ -40,6 +40,13 @@ typedef struct mdf_pager_view {
     size_t line_cap;
 } mdf_pager_view;
 
+typedef struct mdf_pager_reflow_state {
+    mdf_pager_view *view;
+    int width;
+    int styled;
+    int col;
+} mdf_pager_reflow_state;
+
 typedef struct mdf_pager_match {
     size_t start;
     size_t end;
@@ -234,11 +241,6 @@ static size_t mdf_pager_buffer_source_read(void *userdata, char *dst, size_t cap
     return n;
 }
 
-static int mdf_pager_buffer_sink_write(void *userdata, const char *src, size_t len)
-{
-    return mdf_pager_buffer_append((mdf_pager_buffer *)userdata, src, len);
-}
-
 static int mdf_pager_is_markdown_path(const char *path)
 {
     const char *dot;
@@ -268,6 +270,8 @@ static mdf_status mdf_pager_validate_options(const mdf_options *render_options)
 
     mdf_options_init(&opts);
     if (render_options != NULL) opts = *render_options;
+    /* Validation must not consume a buffer the caller transfers to the pager. */
+    opts.emission_buffer.take_ownership = 0;
     if (opts.margin_left >= 0 && opts.margin_right >= 0) {
         if (opts.margin_left > INT_MAX - opts.margin_right - MDF_PAGER_MIN_RENDER_WIDTH) {
             return MDF_ERROR_INVALID;
@@ -728,16 +732,19 @@ static void mdf_pager_search_backspace(mdf_pager_search *search)
     search->query.data[search->query.len] = '\0';
 }
 
-static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, int width, int styled)
+static int mdf_pager_reflow_chunk(mdf_pager_reflow_state *reflow, const char *src, size_t len)
 {
     size_t i;
+    mdf_pager_view *view;
+    int width;
+    int styled;
     int col;
 
-    if (width < 1) {
-        width = 1;
-    }
+    view = reflow->view;
+    width = reflow->width;
+    styled = reflow->styled;
+    col = reflow->col;
     i = 0;
-    col = 0;
     while (i < len) {
         unsigned char byte;
         unsigned long codepoint;
@@ -805,7 +812,24 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
         col += unit_width;
         i += unit_len;
     }
+    reflow->col = col;
     return 0;
+}
+
+static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, int width, int styled)
+{
+    mdf_pager_reflow_state reflow;
+
+    memset(&reflow, 0, sizeof(reflow));
+    reflow.view = view;
+    reflow.width = width < 1 ? 1 : width;
+    reflow.styled = styled;
+    return mdf_pager_reflow_chunk(&reflow, src, len);
+}
+
+static int mdf_pager_reflow_sink_write(void *userdata, const char *src, size_t len)
+{
+    return mdf_pager_reflow_chunk((mdf_pager_reflow_state *)userdata, src, len);
 }
 
 static void mdf_pager_view_destroy(mdf_pager_view *view)
@@ -1195,11 +1219,11 @@ static mdf_pager_key mdf_pager_read_key(unsigned char byte)
 }
 
 static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buffer *input,
-                                      const mdf_options *opts, int markdown, int width)
+                                      mdf_options *opts, int markdown, int width)
 {
-    mdf_pager_buffer rendered;
     mdf_pager_buffer sanitized;
     mdf_pager_buffer_source source_data;
+    mdf_pager_reflow_state reflow;
     mdf *renderer;
     mdf_options render_opts;
     mdf_source source;
@@ -1225,21 +1249,24 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
         mdf_pager_buffer_destroy(&sanitized);
         return st;
     }
-    memset(&rendered, 0, sizeof(rendered));
+    if (render_opts.emission_buffer.data != NULL && render_opts.emission_buffer.take_ownership) {
+        memset(&opts->emission_buffer, 0, sizeof(opts->emission_buffer));
+    }
     memset(&source_data, 0, sizeof(source_data));
+    memset(&reflow, 0, sizeof(reflow));
     source_data.buffer = &sanitized;
     source.userdata = &source_data;
     source.read = mdf_pager_buffer_source_read;
-    sink.userdata = &rendered;
-    sink.write = mdf_pager_buffer_sink_write;
+    reflow.view = view;
+    reflow.width = width < 1 ? 1 : width;
+    reflow.styled = 1;
+    sink.userdata = &reflow;
+    sink.write = mdf_pager_reflow_sink_write;
     st = renderer->render(renderer, &source, &sink);
     if (st == MDF_OK &&
-        (mdf_pager_reflow(view, rendered.data == NULL ? "" : rendered.data,
-                          rendered.len, width, 1) != 0 ||
-         mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0)) {
+        (mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0)) {
         st = MDF_ERROR_NOMEM;
     }
-    mdf_pager_buffer_destroy(&rendered);
     mdf_pager_buffer_destroy(&sanitized);
     renderer->destroy(renderer);
     return st;
