@@ -3,6 +3,7 @@
 
 #include <libmdf/mdf.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1046,6 +1047,20 @@ static int lua_mdf_terminal_width(lua_State *L)
     return 1;
 }
 
+static int lua_mdf_pager_format_is_markdown_media_type(const char *value)
+{
+    static const char media_type[] = "text/markdown";
+    size_t i;
+
+    while (*value != '\0' && isspace((unsigned char)*value)) value++;
+    for (i = 0; media_type[i] != '\0'; i++) {
+        if (tolower((unsigned char)value[i]) != media_type[i]) return 0;
+    }
+    value += i;
+    while (*value != '\0' && isspace((unsigned char)*value)) value++;
+    return *value == '\0' || *value == ';';
+}
+
 static int lua_mdf_pager(lua_State *L)
 {
     const char *path;
@@ -1066,13 +1081,13 @@ static int lua_mdf_pager(lua_State *L)
         lua_getfield(L, 2, "format");
         if (!lua_isnil(L, -1)) {
             value = luaL_checkstring(L, -1);
-            if (strcmp(value, "markdown") == 0) {
+            if (strcmp(value, "markdown") == 0 || lua_mdf_pager_format_is_markdown_media_type(value)) {
                 format = MDF_PAGER_FORMAT_MARKDOWN;
             } else if (strcmp(value, "text") == 0) {
                 format = MDF_PAGER_FORMAT_TEXT;
             } else {
                 lua_pop(L, 1);
-                return luaL_error(L, "pager format must be markdown or text");
+                return luaL_error(L, "pager format must be markdown, text, or text/markdown");
             }
         }
         lua_pop(L, 1);

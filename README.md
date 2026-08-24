@@ -525,7 +525,9 @@ h:close()
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
 extension-based (`.md` is Markdown; all other files are text); pass
-`{ format = "markdown" }` to render a non-`.md` file as Markdown, or
+`{ format = "markdown" }` or an HTTP media type such as
+`{ format = "text/markdown" }` (assumed UTF-8) or
+`{ format = "text/markdown; charset=utf-8" }` to render a non-`.md` file as Markdown, or
 `{ format = "text" }` to suppress Markdown rendering for a `.md` file.
 
 HTML and deck handles can set or clear the document/deck title before rendering:
