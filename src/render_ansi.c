@@ -4543,31 +4543,53 @@ static int inline_full_emphasis(mdf_impl *impl, const char *text, size_t text_le
     return *inner_len > 0;
 }
 
-static int inline_full_code(const char *text, size_t text_len, const char **inner, size_t *inner_len)
+static int inline_code_span_prefix(const char *text, size_t text_len, const char **inner, size_t *inner_len,
+                                   const char **rest, size_t *rest_len)
 {
     size_t delim_len;
-    size_t trailing_len;
+    size_t i;
 
     if (text_len < 3 || text[0] != '`') return 0;
     delim_len = 0;
     while (delim_len < text_len && text[delim_len] == '`') delim_len++;
-    trailing_len = 0;
-    while (trailing_len < text_len && text[text_len - trailing_len - 1] == '`') trailing_len++;
-    if (delim_len * 2 >= text_len || trailing_len != delim_len) return 0;
-    *inner = text + delim_len;
-    *inner_len = text_len - delim_len * 2;
-    return *inner_len > 0;
+    if (delim_len * 2 >= text_len) return 0;
+    i = delim_len;
+    while (i < text_len) {
+        size_t run_len;
+
+        if (text[i] != '`') {
+            i++;
+            continue;
+        }
+        run_len = 0;
+        while (i + run_len < text_len && text[i + run_len] == '`') run_len++;
+        if (run_len == delim_len) {
+            *inner = text + delim_len;
+            *inner_len = i - delim_len;
+            *rest = text + i + run_len;
+            *rest_len = text_len - (i + run_len);
+            return *inner_len > 0;
+        }
+        i += run_len;
+    }
+    return 0;
 }
 
 static size_t inline_link_label_first_word_cols(mdf_impl *impl, const char *text, size_t text_len)
 {
     const char *inner;
+    const char *code_rest;
     const char *style;
     size_t inner_len;
+    size_t code_rest_len;
+    size_t code_cols;
 
-    if (inline_full_code(text, text_len, &inner, &inner_len)) {
-        return visible_first_word_cols(inner, inner_len);
+    if (inline_code_span_prefix(text, text_len, &inner, &inner_len, &code_rest, &code_rest_len)) {
+        code_cols = visible_first_word_cols(inner, inner_len);
+        if (code_cols < visible_cols(inner, inner_len) || code_rest_len == 0) return code_cols;
+        return code_cols + visible_first_word_cols(code_rest, code_rest_len);
     }
+
     if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {
         (void)style;
         return visible_first_word_cols(inner, inner_len);
@@ -4680,8 +4702,10 @@ static int ansi_reopen_osc8_link_if_needed(mdf_impl *impl, mdf_sink *sink)
 static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text, size_t text_len, const char *prefix_style)
 {
     const char *inner;
+    const char *code_rest;
     const char *style;
     size_t inner_len;
+    size_t code_rest_len;
     ansi_sim_input input;
     char style_buf[96];
     char style_buf2[160];
@@ -4724,12 +4748,18 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
             } else if (ansi_sim_emit_inputs(impl, sink, &input, 1) != 0) return -1; \
         } while (0)
 
-    if (inline_full_code(text, text_len, &inner, &inner_len)) {
+    if (inline_code_span_prefix(text, text_len, &inner, &inner_len, &code_rest, &code_rest_len)) {
         ANSI_EMIT_LINK_LABEL_INPUT(inner,
                                    inner_len,
                                    impl->opts.boring ? "" :
                                    ansi_join_styles(ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)),
                                                     mdf_theme_code_inline(impl), style_buf2, sizeof(style_buf2)));
+        if (code_rest_len > 0) {
+            ANSI_EMIT_LINK_LABEL_INPUT(code_rest,
+                                       code_rest_len,
+                                       impl->opts.boring ? "" :
+                                       ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)));
+        }
         return 0;
     }
     if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {

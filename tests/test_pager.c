@@ -430,6 +430,27 @@ static int write_c1_text_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_control_markdown_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+    static const char source[] = "# Markdown controls\n\nbefore \033]52;c;INJECT\a and \23552;c;C1\a after\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-markdown-control-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, sizeof(source) - 1) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int require_contains(const capture *out, const char *needle)
 {
     return capture_contains(out, needle) ? 0 : -1;
@@ -504,6 +525,7 @@ int main(int argc, char **argv)
     char nul_path[128];
     char fifo_path[128];
     char c1_path[128];
+    char control_markdown_path[128];
     capture out;
     pid_t pid;
     int master;
@@ -526,7 +548,8 @@ int main(int argc, char **argv)
         write_styled_search_fixture(styled_path, sizeof(styled_path)) != 0 ||
         write_nul_markdown_fixture(nul_path, sizeof(nul_path)) != 0 ||
         write_fifo_fixture(fifo_path, sizeof(fifo_path)) != 0 ||
-        write_c1_text_fixture(c1_path, sizeof(c1_path)) != 0) goto done;
+        write_c1_text_fixture(c1_path, sizeof(c1_path)) != 0 ||
+        write_control_markdown_fixture(control_markdown_path, sizeof(control_markdown_path)) != 0) goto done;
 
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
@@ -777,6 +800,16 @@ int main(int argc, char **argv)
     close(master);
     clear_capture(&out);
 
+    stage = "Markdown controls";
+    pid = start_pager(argv[1], control_markdown_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "^[]52;c;INJECT^G") != 0 ||
+        wait_for_marker(master, &out, "M-^]52") != 0 ||
+        strstr(out.data, "\033]52;c;INJECT\a") != NULL ||
+        strstr(out.data, "\23552;c;C1\a") != NULL ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "C1 text control";
     pid = start_pager(argv[1], c1_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "M-^]52;c;INJECT^G") != 0 ||
@@ -853,6 +886,7 @@ done:
     unlink(nul_path);
     unlink(fifo_path);
     unlink(c1_path);
+    unlink(control_markdown_path);
     free(out.data);
     return rc;
 }

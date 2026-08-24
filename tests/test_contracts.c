@@ -1198,6 +1198,15 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     mdf_options_init(&opts);
     opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo``bar``](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi internal code closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi internal code closer link label writes match traces");
+    fails += expect_contains(cap.out, "foobar``", "ansi link label honors its first code-span closer");
+    fails += expect_not_contains(cap.out, "``foo``bar``", "ansi link label consumes only the opening code delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_***both***_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple nested emphasis render succeeds");
     fails += expect_trace_matches_writes(&cap, "ansi triple nested emphasis writes match traces");
