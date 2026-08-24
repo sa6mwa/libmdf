@@ -350,6 +350,10 @@ static int mdf_pager_append_escape(mdf_pager_buffer *out, const char *src, size_
 
 static int mdf_pager_append_text_byte(mdf_pager_buffer *out, unsigned char byte)
 {
+    if (byte >= 0x80 && byte <= 0x9f) {
+        if (mdf_pager_buffer_append(out, "M-", 2) != 0) return -1;
+        return mdf_pager_append_text_byte(out, (unsigned char)(byte - 0x80));
+    }
     if (byte < 32 || byte == 127) {
         if (mdf_pager_buffer_append_byte(out, '^') != 0 ||
             mdf_pager_buffer_append_byte(out, byte == 127 ? '?' : (unsigned char)(byte + 64)) != 0) {
@@ -619,7 +623,7 @@ static int mdf_pager_status_append_sanitized(mdf_pager_buffer *out, const char *
         unsigned char byte;
 
         byte = (unsigned char)text[i];
-        if (byte < 32 || byte == 127) {
+        if (byte < 32 || byte == 127 || (byte >= 0x80 && byte <= 0x9f)) {
             if (mdf_pager_append_text_byte(out, byte) != 0) return -1;
             i++;
             continue;
@@ -701,8 +705,10 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
     col = 0;
     while (i < len) {
         unsigned char byte;
+        unsigned long codepoint;
         size_t unit_len;
         int unit_width;
+        int text_c1;
 
         byte = (unsigned char)src[i];
         if (byte == '\r') {
@@ -734,13 +740,17 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
             i++;
             continue;
         }
+        text_c1 = 0;
         {
-            unsigned long codepoint;
-
             unit_len = utf8_decode_codepoint(src + i, len - i, &codepoint);
             if (unit_len == 0) return -1;
             unit_width = (int)utf8_display_width(codepoint);
             if (!styled && (byte < 32 || byte == 127)) unit_width = 2;
+            if (!styled && byte >= 0x80 && byte <= 0x9f) unit_width = 4;
+            if (!styled && codepoint >= 0x80 && codepoint <= 0x9f) {
+                text_c1 = 1;
+                unit_width = 4;
+            }
         }
         if (unit_width > 0 && col > 0 && (col >= width || col + unit_width > width)) {
             if (mdf_pager_buffer_append_byte(&view->bytes, '\n') != 0) return -1;
@@ -749,10 +759,12 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
         if (styled) {
             if (mdf_pager_buffer_append(&view->bytes, src + i, unit_len) != 0) return -1;
         } else {
-            size_t j;
-
-            for (j = 0; j < unit_len; j++) {
-                if (mdf_pager_append_text_byte(&view->bytes, (unsigned char)src[i + j]) != 0) return -1;
+            if (text_c1) {
+                if (mdf_pager_append_text_byte(&view->bytes, (unsigned char)codepoint) != 0) return -1;
+            } else if (unit_len == 1) {
+                if (mdf_pager_append_text_byte(&view->bytes, byte) != 0) return -1;
+            } else {
+                if (mdf_pager_buffer_append(&view->bytes, src + i, unit_len) != 0) return -1;
             }
         }
         col += unit_width;
