@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_RECORDS 1024
+#define MAX_RECORDS 16384
 
 typedef struct chunk_source {
     const char *src;
@@ -1322,6 +1322,38 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     fails += expect_not_contains(cap.out, "*both", "ansi triple nested emphasis consumes opening delimiters");
     fails += expect_not_contains(cap.out, "both*", "ansi triple nested emphasis consumes closing delimiters");
     capture_free(&cap);
+
+    {
+        static const char suffix[] = "](https://x)\n";
+        static const char unit[] = "*a,";
+        const size_t repeats = 6000;
+        size_t source_len;
+        size_t i;
+        char *source;
+
+        source_len = 1 + repeats * (sizeof(unit) - 1) + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large unmatched link-label emphasis fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            for (i = 0; i < repeats; i++) {
+                memcpy(source + 1 + i * (sizeof(unit) - 1), unit, sizeof(unit) - 1);
+            }
+            memcpy(source + 1 + repeats * (sizeof(unit) - 1), suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large unmatched link-label emphasis render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large unmatched link-label emphasis writes match traces");
+            fails += expect_contains(cap.out, "*a,*a",
+                                     "large unmatched link-label emphasis remains literal");
+            capture_free(&cap);
+            free(source);
+        }
+    }
     return fails;
 }
 

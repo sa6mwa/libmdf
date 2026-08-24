@@ -4819,12 +4819,14 @@ static int inline_delimiter_is_escaped(const char *text, size_t offset)
 
 static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text_len, size_t offset,
                                    const char **inner, size_t *inner_len,
-                                   const char **rest, size_t *rest_len, const char **style)
+                                   const char **rest, size_t *rest_len, const char **style,
+                                   int *no_closer)
 {
     char delim;
     size_t delim_len;
     size_t i;
 
+    *no_closer = 0;
     if (offset >= text_len || (text[offset] != '*' && text[offset] != '_')) return 0;
     delim = text[offset];
     delim_len = offset + 2 < text_len && text[offset + 1] == delim && text[offset + 2] == delim ? 3 :
@@ -4868,6 +4870,7 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         }
         i += run_len;
     }
+    *no_closer = 1;
     return 0;
 }
 
@@ -4920,9 +4923,13 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
 {
     size_t offset;
     size_t plain_start;
+    int no_more_star_closers;
+    int no_more_underscore_closers;
 
     offset = 0;
     plain_start = 0;
+    no_more_star_closers = 0;
+    no_more_underscore_closers = 0;
     while (offset < text_len) {
         const char *inner;
         const char *rest;
@@ -4932,6 +4939,7 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         ansi_link_label_style span_style;
         int code_span;
         int found;
+        int no_closer;
 
         if (text[offset] == '\\' && offset + 1 < text_len && markdown_escapable_char(text[offset + 1])) {
             offset += 2;
@@ -4941,9 +4949,20 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
                                         &inner, &inner_len, &rest, &rest_len);
         code_span = found;
         inline_style = mdf_theme_code_inline(impl);
-        if (!found) {
+        no_closer = 0;
+        if (!found &&
+            !((text[offset] == '*' && no_more_star_closers) ||
+              (text[offset] == '_' && no_more_underscore_closers))) {
             found = inline_emphasis_span_at(impl, text, text_len, offset,
-                                             &inner, &inner_len, &rest, &rest_len, &inline_style);
+                                             &inner, &inner_len, &rest, &rest_len, &inline_style,
+                                             &no_closer);
+            if (!found && no_closer) {
+                if (text[offset] == '*') {
+                    no_more_star_closers = 1;
+                } else {
+                    no_more_underscore_closers = 1;
+                }
+            }
         }
         if (!found) {
             offset++;

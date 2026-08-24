@@ -143,9 +143,12 @@ do
   assert(not pager_ok and tostring(pager_err):match("mdf_pager: invalid argument"),
          "lua pager assumes UTF-8 for the bare HTTP markdown media type before rejecting a non-terminal session")
   pager_ok, pager_err = pcall(mdf.pager, path, { format = "Text/Markdown; charset=utf-8" })
-  os.remove(path)
   assert(not pager_ok and tostring(pager_err):match("mdf_pager: invalid argument"),
          "lua pager accepts parameterized HTTP markdown media types before rejecting a non-terminal session")
+  pager_ok, pager_err = pcall(mdf.pager, path, { format = "t" })
+  assert(not pager_ok and tostring(pager_err):match("pager format must be"),
+         "lua pager rejects short invalid format strings before pager startup")
+  os.remove(path)
 end
 
 local out = mdf.render("# Lua\n\nbody\n", { boring = true })

@@ -1047,18 +1047,27 @@ static int lua_mdf_terminal_width(lua_State *L)
     return 1;
 }
 
-static int lua_mdf_pager_format_is_markdown_media_type(const char *value)
+static int lua_mdf_pager_format_is_markdown_media_type(const char *value, size_t value_len)
 {
     static const char media_type[] = "text/markdown";
     size_t i;
+    size_t media_i;
 
-    while (*value != '\0' && isspace((unsigned char)*value)) value++;
-    for (i = 0; media_type[i] != '\0'; i++) {
-        if (tolower((unsigned char)value[i]) != media_type[i]) return 0;
+    i = 0;
+    while (i < value_len && isspace((unsigned char)value[i])) i++;
+    for (media_i = 0; media_type[media_i] != '\0'; media_i++, i++) {
+        if (i >= value_len || tolower((unsigned char)value[i]) != media_type[media_i]) return 0;
     }
-    value += i;
-    while (*value != '\0' && isspace((unsigned char)*value)) value++;
-    return *value == '\0' || *value == ';';
+    while (i < value_len && isspace((unsigned char)value[i])) i++;
+    return i == value_len || value[i] == ';';
+}
+
+static int lua_mdf_pager_format_equals(const char *value, size_t value_len, const char *expected)
+{
+    size_t expected_len;
+
+    expected_len = strlen(expected);
+    return value_len == expected_len && memcmp(value, expected, expected_len) == 0;
 }
 
 static int lua_mdf_pager(lua_State *L)
@@ -1076,14 +1085,16 @@ static int lua_mdf_pager(lua_State *L)
     format = MDF_PAGER_FORMAT_AUTO;
     if (!lua_isnoneornil(L, 2)) {
         const char *value;
+        size_t value_len;
 
         luaL_checktype(L, 2, LUA_TTABLE);
         lua_getfield(L, 2, "format");
         if (!lua_isnil(L, -1)) {
-            value = luaL_checkstring(L, -1);
-            if (strcmp(value, "markdown") == 0 || lua_mdf_pager_format_is_markdown_media_type(value)) {
+            value = luaL_checklstring(L, -1, &value_len);
+            if (lua_mdf_pager_format_equals(value, value_len, "markdown") ||
+                lua_mdf_pager_format_is_markdown_media_type(value, value_len)) {
                 format = MDF_PAGER_FORMAT_MARKDOWN;
-            } else if (strcmp(value, "text") == 0) {
+            } else if (lua_mdf_pager_format_equals(value, value_len, "text")) {
                 format = MDF_PAGER_FORMAT_TEXT;
             } else {
                 lua_pop(L, 1);
