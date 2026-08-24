@@ -117,6 +117,7 @@ typedef struct mdf_impl {
     const char *ansi_active_inline_style;
     const char *ansi_pending_inline_style;
     char ansi_owned_inline_style[160];
+    char ansi_link_label_style[160];
     int ansi_osc8_active;
     int ansi_osc8_pending_reopen;
     const char *ansi_osc8_prefix;

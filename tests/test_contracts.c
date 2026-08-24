@@ -1229,6 +1229,24 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[x *foo `*` bar* y](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi emphasis around code-span delimiter link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi emphasis around code-span delimiter link label writes match traces");
+    fails += expect_output_equals(&cap, "x foo * bar y (https://x)\n",
+                                  "ansi link-label emphasis ignores delimiters inside code spans");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[***both***](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple-emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi triple-emphasis link label writes match traces");
+    fails += expect_output_equals(&cap, "both (https://x)\n",
+                                  "ansi triple-emphasis link label consumes nested delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");

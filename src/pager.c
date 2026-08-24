@@ -44,6 +44,7 @@ typedef struct mdf_pager_view {
 typedef struct mdf_pager_reflow_state {
     mdf_pager_view *view;
     mdf_pager_buffer osc8_start;
+    mdf_pager_buffer sgr_start;
     int width;
     int styled;
     int col;
@@ -398,8 +399,81 @@ static int mdf_pager_escape_is_osc8_close(const char *src, size_t len)
     return len == sizeof(close) - 1 && memcmp(src, close, sizeof(close) - 1) == 0;
 }
 
+static int mdf_pager_escape_is_sgr(const char *src, size_t len)
+{
+    return len >= 3 && src[0] == '\033' && src[1] == '[' && src[len - 1] == 'm';
+}
+
+static int mdf_pager_sgr_has_nonreset_parameter(const char *src, size_t len)
+{
+    size_t i;
+    int value;
+    int have_value;
+
+    if (!mdf_pager_escape_is_sgr(src, len)) return 0;
+    value = 0;
+    have_value = 0;
+    for (i = 2; i + 1 < len; i++) {
+        unsigned char byte;
+
+        byte = (unsigned char)src[i];
+        if (byte >= '0' && byte <= '9') {
+            value = value * 10 + (int)(byte - '0');
+            have_value = 1;
+            continue;
+        }
+        if (byte == ';') {
+            if (have_value && value != 0) return 1;
+            value = 0;
+            have_value = 0;
+            continue;
+        }
+        return 1;
+    }
+    return have_value && value != 0;
+}
+
+static int mdf_pager_sgr_has_reset_parameter(const char *src, size_t len)
+{
+    size_t i;
+    int value;
+    int have_value;
+
+    if (!mdf_pager_escape_is_sgr(src, len)) return 0;
+    if (len == 3) return 1;
+    value = 0;
+    have_value = 0;
+    for (i = 2; i + 1 < len; i++) {
+        unsigned char byte;
+
+        byte = (unsigned char)src[i];
+        if (byte >= '0' && byte <= '9') {
+            value = value * 10 + (int)(byte - '0');
+            have_value = 1;
+            continue;
+        }
+        if (byte == ';') {
+            if (!have_value || value == 0) return 1;
+            value = 0;
+            have_value = 0;
+            continue;
+        }
+        return 0;
+    }
+    return !have_value || value == 0;
+}
+
 static int mdf_pager_reflow_track_escape(mdf_pager_reflow_state *reflow, const char *src, size_t len)
 {
+    if (mdf_pager_escape_is_sgr(src, len)) {
+        if (mdf_pager_sgr_has_reset_parameter(src, len)) {
+            reflow->sgr_start.len = 0;
+        }
+        if (mdf_pager_sgr_has_nonreset_parameter(src, len) &&
+            mdf_pager_buffer_append(&reflow->sgr_start, src, len) != 0) {
+            return -1;
+        }
+    }
     if (mdf_pager_escape_is_osc8_close(src, len)) {
         reflow->osc8_active = 0;
         return 0;
@@ -422,6 +496,10 @@ static int mdf_pager_reflow_append_wrap(mdf_pager_reflow_state *reflow)
     if (mdf_pager_buffer_append_byte(&reflow->view->bytes, '\n') != 0) return -1;
     if (reflow->osc8_active &&
         mdf_pager_buffer_append(&reflow->view->bytes, reflow->osc8_start.data, reflow->osc8_start.len) != 0) {
+        return -1;
+    }
+    if (reflow->sgr_start.len > 0 &&
+        mdf_pager_buffer_append(&reflow->view->bytes, reflow->sgr_start.data, reflow->sgr_start.len) != 0) {
         return -1;
     }
     return 0;
@@ -905,9 +983,11 @@ static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, i
     reflow.styled = styled;
     if (mdf_pager_reflow_chunk(&reflow, src, len) != 0) {
         mdf_pager_buffer_destroy(&reflow.osc8_start);
+        mdf_pager_buffer_destroy(&reflow.sgr_start);
         return -1;
     }
     mdf_pager_buffer_destroy(&reflow.osc8_start);
+    mdf_pager_buffer_destroy(&reflow.sgr_start);
     return 0;
 }
 
@@ -1348,6 +1428,7 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     sink.write = mdf_pager_reflow_sink_write;
     st = renderer->render(renderer, &source, &sink);
     mdf_pager_buffer_destroy(&reflow.osc8_start);
+    mdf_pager_buffer_destroy(&reflow.sgr_start);
     if (st == MDF_OK &&
         (mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0)) {
         st = MDF_ERROR_NOMEM;

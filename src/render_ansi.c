@@ -597,6 +597,7 @@ typedef struct ansi_sim_input {
     ansi_sim_kind kind;
 } ansi_sim_input;
 
+
 typedef struct ansi_sim_atom {
     size_t off;
     size_t len;
@@ -999,9 +1000,7 @@ static int ansi_sim_emit_atoms(mdf_impl *impl, mdf_sink *sink, const ansi_sim_wo
                 (void)cp;
                 if (strcmp(*active_style, target) != 0) {
                     if ((*active_style)[0] != '\0' && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
-                    if (ansi_emit_styled_visible_chunk(impl, sink, target, text + off, adv) != 0) {
-                        return -1;
-                    }
+                    if (ansi_emit_styled_visible_chunk(impl, sink, target, text + off, adv) != 0) return -1;
                     *active_style = target;
                 } else if (ansi_emit_visible_chunk(impl, sink, text + off, adv) != 0) {
                     return -1;
@@ -4823,12 +4822,24 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
 
     if (offset >= text_len || (text[offset] != '*' && text[offset] != '_')) return 0;
     delim = text[offset];
-    delim_len = offset + 1 < text_len && text[offset + 1] == delim ? 2 : 1;
+    delim_len = offset + 2 < text_len && text[offset + 1] == delim && text[offset + 2] == delim ? 3 :
+                (offset + 1 < text_len && text[offset + 1] == delim ? 2 : 1);
     if (offset + delim_len * 2 >= text_len ||
         !inline_emphasis_can_open(text, text_len, offset, delim_len)) return 0;
     i = offset + delim_len;
     while (i < text_len) {
+        const char *code_inner;
+        const char *code_rest;
+        size_t code_inner_len;
+        size_t code_rest_len;
         size_t run_len;
+
+        if (text[i] == '`' && !inline_delimiter_is_escaped(text, i) &&
+            inline_code_span_prefix(text + i, text_len - i, &code_inner, &code_inner_len,
+                                    &code_rest, &code_rest_len)) {
+            i = (size_t)(code_rest - text);
+            continue;
+        }
 
         if (text[i] != delim) {
             i++;
@@ -4838,11 +4849,16 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         while (i + run_len < text_len && text[i + run_len] == delim) run_len++;
         if (!inline_delimiter_is_escaped(text, i) && run_len == delim_len &&
             inline_emphasis_can_close(text, text_len, i, run_len)) {
-            *inner = text + offset + delim_len;
-            *inner_len = i - offset - delim_len;
+            if (delim_len == 3) {
+                *inner = text + offset + 2;
+                *inner_len = i - offset - 1;
+            } else {
+                *inner = text + offset + delim_len;
+                *inner_len = i - offset - delim_len;
+            }
             *rest = text + i + run_len;
             *rest_len = text_len - (i + run_len);
-            *style = delim_len == 2 ? mdf_theme_strong(impl) : mdf_theme_emphasis(impl);
+            *style = delim_len >= 2 ? mdf_theme_strong(impl) : mdf_theme_emphasis(impl);
             return *inner_len > 0;
         }
         i += run_len;
@@ -4850,8 +4866,52 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
     return 0;
 }
 
+typedef struct ansi_link_label_style {
+    const struct ansi_link_label_style *parent;
+    const char *style;
+} ansi_link_label_style;
+
+static int ansi_link_label_append_styles(mdf_impl *impl, const ansi_link_label_style *style)
+{
+    if (style == NULL) return 0;
+    if (ansi_link_label_append_styles(impl, style->parent) != 0 ||
+        (style->style != NULL && mdf_emit_buffer_append_cstr(impl, style->style) != 0)) {
+        return -1;
+    }
+    return 0;
+}
+
+static const char *ansi_link_label_style_cstr(mdf_impl *impl, const ansi_link_label_style *style)
+{
+    if (impl->opts.boring || style == NULL) return "";
+    if (mdf_emit_buffer_reset(impl) != 0 || ansi_link_label_append_styles(impl, style) != 0 ||
+        impl->emit_len >= sizeof(impl->ansi_link_label_style)) {
+        mdf_impl_mark_oom(impl);
+        return NULL;
+    }
+    memcpy(impl->ansi_link_label_style, impl->emit_buf, impl->emit_len);
+    impl->ansi_link_label_style[impl->emit_len] = '\0';
+    if (mdf_emit_buffer_reset(impl) != 0) {
+        mdf_impl_mark_oom(impl);
+        return NULL;
+    }
+    return impl->ansi_link_label_style;
+}
+
+static int ansi_emit_link_label_input_styled(mdf_impl *impl, mdf_sink *sink,
+                                              const char *text, size_t text_len,
+                                              const ansi_link_label_style *style)
+{
+    const char *style_cstr;
+
+    style_cstr = ansi_link_label_style_cstr(impl, style);
+    if (style_cstr == NULL) return -1;
+    return ansi_emit_link_label_input(impl, sink, text, text_len, style_cstr);
+}
+
 static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
-                                          const char *text, size_t text_len, const char *link_style)
+                                          const char *text, size_t text_len,
+                                          const ansi_link_label_style *link_style)
 {
     size_t offset;
     size_t plain_start;
@@ -4864,8 +4924,7 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         const char *inline_style;
         size_t inner_len;
         size_t rest_len;
-        char style_buf[160];
-        const char *span_style;
+        ansi_link_label_style span_style;
         int code_span;
         int found;
 
@@ -4886,22 +4945,22 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             continue;
         }
         if (offset > plain_start &&
-            ansi_emit_link_label_input(impl, sink, text + plain_start, offset - plain_start, link_style) != 0) {
+            ansi_emit_link_label_input_styled(impl, sink, text + plain_start, offset - plain_start, link_style) != 0) {
             return -1;
         }
-        span_style = impl->opts.boring ? "" :
-            ansi_join_styles(link_style, inline_style, style_buf, sizeof(style_buf));
+        span_style.parent = link_style;
+        span_style.style = inline_style;
         if (code_span) {
-            if (ansi_emit_link_label_input(impl, sink, inner, inner_len, span_style) != 0) return -1;
+            if (ansi_emit_link_label_input_styled(impl, sink, inner, inner_len, &span_style) != 0) return -1;
         } else {
-            if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, span_style) != 0) return -1;
+            if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, &span_style) != 0) return -1;
         }
         offset = (size_t)(rest - text);
         plain_start = offset;
         (void)rest_len;
     }
     if (plain_start < text_len &&
-        ansi_emit_link_label_input(impl, sink, text + plain_start, text_len - plain_start, link_style) != 0) {
+        ansi_emit_link_label_input_styled(impl, sink, text + plain_start, text_len - plain_start, link_style) != 0) {
         return -1;
     }
     return 0;
@@ -4909,71 +4968,17 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
 
 static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text, size_t text_len, const char *prefix_style)
 {
-    const char *inner;
-    const char *code_rest;
-    const char *style;
-    size_t inner_len;
-    size_t code_rest_len;
-    char style_buf[96];
-    char style_buf2[160];
+    ansi_link_label_style prefix;
+    ansi_link_label_style link;
 
-    if (inline_code_span_prefix(text, text_len, &inner, &inner_len, &code_rest, &code_rest_len)) {
-        const char *link_style;
-
-        link_style = impl->opts.boring ? "" :
-            ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf));
-        if (ansi_emit_link_label_input(impl, sink, inner, inner_len,
-                                       impl->opts.boring ? "" :
-                                       ansi_join_styles(link_style, mdf_theme_code_inline(impl),
-                                                        style_buf2, sizeof(style_buf2))) != 0) return -1;
-        if (code_rest_len > 0) {
-            if (ansi_emit_link_label_remainder(impl, sink, code_rest, code_rest_len, link_style) != 0) return -1;
-        }
-        return 0;
+    if (impl->opts.boring) {
+        return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL);
     }
-    if (inline_full_emphasis(impl, text, text_len, &inner, &inner_len, &style)) {
-	        if (style[2] == '3') {
-	            if (ansi_emit_link_label_input(impl, sink, inner,
-	                                       inner_len,
-	                                       impl->opts.boring ? "" :
-	                                       ansi_join_styles(ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)),
-	                                                        mdf_theme_emphasis(impl),
-	                                                        style_buf2,
-	                                                        sizeof(style_buf2))) != 0) return -1;
-	        } else {
-	            if (ansi_emit_link_label_input(impl, sink, inner,
-	                                       inner_len,
-	                                       impl->opts.boring ? "" :
-	                                       ansi_join_styles(ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf)),
-	                                                        mdf_theme_strong(impl),
-	                                                        style_buf2,
-	                                                        sizeof(style_buf2))) != 0) return -1;
-	        }
-        return 0;
-    }
-    {
-        size_t scheme_end;
-
-        for (scheme_end = 0; scheme_end + 2 < text_len; scheme_end++) {
-            if (text[scheme_end] == ':' && text[scheme_end + 1] == '/' && text[scheme_end + 2] == '/') {
-                break;
-            }
-        }
-        if (scheme_end + 2 < text_len &&
-            impl->opts.width > 0 &&
-            (int)visible_cols(text + scheme_end + 1, text_len - scheme_end - 1) <= impl->opts.width) {
-            const char *link_style;
-
-            link_style = impl->opts.boring ? "" : ansi_join_styles(prefix_style, mdf_theme_link_text(impl), style_buf, sizeof(style_buf));
-            if (ansi_emit_styled_visible_chunk(impl, sink, link_style, text, scheme_end + 1) != 0) return -1;
-            if (ansi_emit_visible_chunk(impl, sink, text + scheme_end + 1, text_len - scheme_end - 1) != 0) return -1;
-            return 0;
-        }
-    }
-    return ansi_emit_link_label_remainder(impl, sink, text, text_len,
-                                          impl->opts.boring ? "" :
-                                          ansi_join_styles(prefix_style, mdf_theme_link_text(impl),
-                                                           style_buf, sizeof(style_buf)));
+    prefix.parent = NULL;
+    prefix.style = prefix_style;
+    link.parent = &prefix;
+    link.style = mdf_theme_link_text(impl);
+    return ansi_emit_link_label_remainder(impl, sink, text, text_len, &link);
 }
 
 static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,

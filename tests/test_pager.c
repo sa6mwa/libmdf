@@ -830,6 +830,24 @@ int main(int argc, char **argv)
     close(master);
     clear_capture(&out);
 
+    stage = "styled narrow reflow";
+    pid = start_pager(argv[1], styled_path, 1, 0, 0, &master);
+    if (pid < 0) goto done;
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 80;
+    resized.ws_row = 10;
+    sleep_ms(100);
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "foo ") != 0) goto done;
+    clear_capture(&out);
+    resized.ws_col = 2;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "\033[35mba") != 0 ||
+        require_contains(&out, "\033[35mr\033[0m") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "resize";
     pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
