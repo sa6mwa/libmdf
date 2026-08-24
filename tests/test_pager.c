@@ -327,6 +327,27 @@ static int write_osc8_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_osc8_reflow_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+    static const char source[] = "[abc](https://example.com)\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-osc8-reflow-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, sizeof(source) - 1) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int write_wide_fixture(char *path, size_t cap)
 {
     int fd;
@@ -540,6 +561,7 @@ int main(int argc, char **argv)
     char text_path[128];
     char markdown_path[128];
     char osc8_path[128];
+    char osc8_reflow_path[128];
     char wide_path[128];
     char control_path[128];
     char unicode_path[128];
@@ -563,6 +585,7 @@ int main(int argc, char **argv)
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
         write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0 ||
         write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0 ||
+        write_osc8_reflow_fixture(osc8_reflow_path, sizeof(osc8_reflow_path)) != 0 ||
         write_wide_fixture(wide_path, sizeof(wide_path)) != 0 ||
         write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
@@ -767,6 +790,20 @@ int main(int argc, char **argv)
     close(master);
     clear_capture(&out);
 
+    stage = "osc8 narrow reflow";
+    pid = start_pager(argv[1], osc8_reflow_path, 1, 1, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "abc") != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 1;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_output(master, &out, 300) != 0 ||
+        require_contains(&out, "a\033]8;;\033\\\033[0m\r\n") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "resize";
     pid = start_pager(argv[1], markdown_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
@@ -915,6 +952,7 @@ done:
     unlink(text_path);
     unlink(markdown_path);
     unlink(osc8_path);
+    unlink(osc8_reflow_path);
     unlink(wide_path);
     unlink(control_path);
     unlink(unicode_path);

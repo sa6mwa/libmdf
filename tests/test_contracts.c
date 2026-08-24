@@ -1212,6 +1212,16 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     mdf_options_init(&opts);
     opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[foo_bar_baz](http://link.example) [escaped \\*stars\\*](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi literal-delimiter link labels render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi literal-delimiter link label writes match traces");
+    fails += expect_contains(cap.out, "foo_bar_baz", "ansi intraword underscore link label remains literal");
+    fails += expect_contains(cap.out, "\\*stars\\*", "ansi escaped emphasis delimiters remain literal in link labels");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
     fails += expect_trace_matches_writes(&cap, "ansi malformed code link label writes match traces");

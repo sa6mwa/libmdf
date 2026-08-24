@@ -4743,19 +4743,66 @@ static int ansi_emit_link_label_input(mdf_impl *impl, mdf_sink *sink,
     return ansi_sim_emit_inputs(impl, sink, &input, 1);
 }
 
-static int inline_emphasis_span_prefix(mdf_impl *impl, const char *text, size_t text_len,
-                                       const char **inner, size_t *inner_len,
-                                       const char **rest, size_t *rest_len, const char **style)
+static int inline_emphasis_can_open(const char *text, size_t text_len, size_t offset, size_t delim_len)
+{
+    unsigned char previous;
+    unsigned char next;
+    int previous_space;
+    int next_space;
+    int previous_punctuation;
+    int next_punctuation;
+    int left_flanking;
+    int right_flanking;
+
+    previous = offset == 0 ? ' ' : (unsigned char)text[offset - 1];
+    next = offset + delim_len >= text_len ? ' ' : (unsigned char)text[offset + delim_len];
+    previous_space = isspace(previous) != 0;
+    next_space = isspace(next) != 0;
+    previous_punctuation = ispunct(previous) != 0;
+    next_punctuation = ispunct(next) != 0;
+    left_flanking = !next_space && (!next_punctuation || previous_space || previous_punctuation);
+    right_flanking = !previous_space && (!previous_punctuation || next_space || next_punctuation);
+    if (text[offset] == '_') return left_flanking && (!right_flanking || previous_punctuation);
+    return left_flanking;
+}
+
+static int inline_emphasis_can_close(const char *text, size_t text_len, size_t offset, size_t delim_len)
+{
+    unsigned char previous;
+    unsigned char next;
+    int previous_space;
+    int next_space;
+    int previous_punctuation;
+    int next_punctuation;
+    int left_flanking;
+    int right_flanking;
+
+    previous = offset == 0 ? ' ' : (unsigned char)text[offset - 1];
+    next = offset + delim_len >= text_len ? ' ' : (unsigned char)text[offset + delim_len];
+    previous_space = isspace(previous) != 0;
+    next_space = isspace(next) != 0;
+    previous_punctuation = ispunct(previous) != 0;
+    next_punctuation = ispunct(next) != 0;
+    left_flanking = !next_space && (!next_punctuation || previous_space || previous_punctuation);
+    right_flanking = !previous_space && (!previous_punctuation || next_space || next_punctuation);
+    if (text[offset] == '_') return right_flanking && (!left_flanking || next_punctuation);
+    return right_flanking;
+}
+
+static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text_len, size_t offset,
+                                   const char **inner, size_t *inner_len,
+                                   const char **rest, size_t *rest_len, const char **style)
 {
     char delim;
     size_t delim_len;
     size_t i;
 
-    if (text_len < 3 || (text[0] != '*' && text[0] != '_')) return 0;
-    delim = text[0];
-    delim_len = text_len >= 2 && text[1] == delim ? 2 : 1;
-    if (delim_len * 2 >= text_len) return 0;
-    i = delim_len;
+    if (offset >= text_len || (text[offset] != '*' && text[offset] != '_')) return 0;
+    delim = text[offset];
+    delim_len = offset + 1 < text_len && text[offset + 1] == delim ? 2 : 1;
+    if (offset + delim_len * 2 >= text_len ||
+        !inline_emphasis_can_open(text, text_len, offset, delim_len)) return 0;
+    i = offset + delim_len;
     while (i < text_len) {
         size_t run_len;
 
@@ -4765,9 +4812,9 @@ static int inline_emphasis_span_prefix(mdf_impl *impl, const char *text, size_t 
         }
         run_len = 0;
         while (i + run_len < text_len && text[i + run_len] == delim) run_len++;
-        if (run_len == delim_len) {
-            *inner = text + delim_len;
-            *inner_len = i - delim_len;
+        if (run_len == delim_len && inline_emphasis_can_close(text, text_len, i, run_len)) {
+            *inner = text + offset + delim_len;
+            *inner_len = i - offset - delim_len;
             *rest = text + i + run_len;
             *rest_len = text_len - (i + run_len);
             *style = delim_len == 2 ? mdf_theme_strong(impl) : mdf_theme_emphasis(impl);
@@ -4795,12 +4842,16 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         char style_buf[160];
         int found;
 
+        if (text[offset] == '\\' && offset + 1 < text_len && markdown_escapable_char(text[offset + 1])) {
+            offset += 2;
+            continue;
+        }
         found = inline_code_span_prefix(text + offset, text_len - offset,
                                         &inner, &inner_len, &rest, &rest_len);
         inline_style = mdf_theme_code_inline(impl);
         if (!found) {
-            found = inline_emphasis_span_prefix(impl, text + offset, text_len - offset,
-                                                &inner, &inner_len, &rest, &rest_len, &inline_style);
+            found = inline_emphasis_span_at(impl, text, text_len, offset,
+                                             &inner, &inner_len, &rest, &rest_len, &inline_style);
         }
         if (!found) {
             offset++;
