@@ -1,5 +1,6 @@
 #include "mdf_internal.h"
 #include "render_internal.h"
+#include "unicode_casefold.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -575,31 +576,53 @@ static int mdf_pager_view_build_searchable(mdf_pager_view *view)
     return 0;
 }
 
-static unsigned char mdf_pager_fold_byte(const char *src, size_t len, size_t index)
-{
-    unsigned char byte;
-
-    byte = (unsigned char)src[index];
-    if (byte >= 'A' && byte <= 'Z') return (unsigned char)(byte + ('a' - 'A'));
-    if (byte == 0xc3 && index + 1 < len) return byte;
-    if (index > 0 && (unsigned char)src[index - 1] == 0xc3 &&
-        ((byte >= 0x80 && byte <= 0x96) || (byte >= 0x98 && byte <= 0x9e))) {
-        return (unsigned char)(byte + 0x20);
-    }
-    return byte;
-}
-
 static int mdf_pager_search_equal(const char *haystack, size_t haystack_len, size_t at,
-                                  const char *needle, size_t needle_len)
+                                  const char *needle, size_t needle_len, size_t *end)
 {
-    size_t i;
+    unsigned long haystack_folded[3];
+    unsigned long needle_folded[3];
+    unsigned long codepoint;
+    size_t haystack_offset;
+    size_t needle_offset;
+    size_t haystack_folded_len;
+    size_t needle_folded_len;
+    size_t haystack_folded_index;
+    size_t needle_folded_index;
+    size_t consumed;
 
-    if (at + needle_len > haystack_len) return 0;
-    for (i = 0; i < needle_len; i++) {
-        if (mdf_pager_fold_byte(haystack, haystack_len, at + i) !=
-            mdf_pager_fold_byte(needle, needle_len, i)) return 0;
+    haystack_offset = at;
+    needle_offset = 0;
+    haystack_folded_len = 0;
+    needle_folded_len = 0;
+    haystack_folded_index = 0;
+    needle_folded_index = 0;
+    for (;;) {
+        if (needle_folded_index == needle_folded_len) {
+            if (needle_offset == needle_len) {
+                if (haystack_folded_index != haystack_folded_len) return 0;
+                if (end != NULL) *end = haystack_offset;
+                return 1;
+            }
+            consumed = utf8_decode_codepoint(needle + needle_offset,
+                                              needle_len - needle_offset, &codepoint);
+            if (consumed == 0) return 0;
+            needle_offset += consumed;
+            needle_folded_len = mdf_unicode_casefold(codepoint, needle_folded);
+            needle_folded_index = 0;
+        }
+        if (haystack_folded_index == haystack_folded_len) {
+            if (haystack_offset == haystack_len) return 0;
+            consumed = utf8_decode_codepoint(haystack + haystack_offset,
+                                              haystack_len - haystack_offset, &codepoint);
+            if (consumed == 0) return 0;
+            haystack_offset += consumed;
+            haystack_folded_len = mdf_unicode_casefold(codepoint, haystack_folded);
+            haystack_folded_index = 0;
+        }
+        if (haystack_folded[haystack_folded_index] != needle_folded[needle_folded_index]) return 0;
+        haystack_folded_index++;
+        needle_folded_index++;
     }
-    return 1;
 }
 
 static size_t mdf_pager_view_visible_anchor(const mdf_pager_view *view, size_t top);
@@ -634,11 +657,11 @@ static int mdf_pager_view_find_anchor(const mdf_pager_view *view, const mdf_page
     found = 0;
     best = 0;
     best_distance = 0;
-    for (i = 0; i + anchor->len <= view->searchable.len; i++) {
+    for (i = 0; i < view->searchable.len; i++) {
         size_t distance;
 
         if (!mdf_pager_search_equal(view->searchable.data, view->searchable.len, i,
-                                    anchor->data, anchor->len)) continue;
+                                    anchor->data, anchor->len, NULL)) continue;
         distance = i > expected ? i - expected : expected - i;
         if (!found || distance < best_distance) {
             found = 1;
@@ -685,15 +708,17 @@ static int mdf_pager_search_refresh(mdf_pager_search *search, const mdf_pager_vi
     search->cap = 0;
     search->selected = 0;
     if (search->query.len == 0) return 0;
-    for (i = 0; i + search->query.len <= view->searchable.len; i++) {
+    for (i = 0; i < view->searchable.len; i++) {
+        size_t searchable_end;
+
         if (((unsigned char)view->searchable.data[i] & 0xc0) == 0x80) continue;
         if (mdf_pager_search_equal(view->searchable.data, view->searchable.len, i,
-                                   search->query.data, search->query.len)) {
+                                   search->query.data, search->query.len, &searchable_end)) {
             size_t start;
             size_t end;
 
             start = view->search_offsets[i];
-            end = view->search_offsets[i + search->query.len - 1] + 1;
+            end = view->search_offsets[searchable_end - 1] + 1;
             if (mdf_pager_search_add_match(search, start, end) != 0) return -1;
         }
     }

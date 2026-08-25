@@ -85,7 +85,8 @@ set(LIBMDF_SOURCES
   src/pager.c
   src/path.c
   src/render_html.c
-  src/render_parse.c)
+  src/render_parse.c
+  src/unicode_casefold.c)
 
 function(libmdf_target_defaults target)
   target_include_directories(${target}
