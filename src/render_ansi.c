@@ -616,7 +616,8 @@ static int ansi_write_split_word_preserve_prefix(mdf_impl *impl, mdf_sink *sink,
 typedef enum ansi_sim_kind {
     ANSI_SIM_TEXT = 0,
     ANSI_SIM_URL = 1,
-    ANSI_SIM_STRUCT = 2
+    ANSI_SIM_STRUCT = 2,
+    ANSI_SIM_CODE = 3
 } ansi_sim_kind;
 
 typedef struct ansi_sim_input {
@@ -1154,6 +1155,11 @@ static int ansi_sim_emit_inputs_active(mdf_impl *impl, mdf_sink *sink, const ans
                 (void)next_adv;
             }
             boundary = ansi_sim_classify_boundary(cp, next_cp);
+            if (inputs[input_idx].kind == ANSI_SIM_CODE &&
+                boundary != ANSI_SIM_BOUNDARY_NEWLINE) {
+                /* Code spans preserve their interior whitespace verbatim. */
+                boundary = ANSI_SIM_BOUNDARY_NONE;
+            }
             if (punct_quote_pending) {
                 if (ansi_is_quote_codepoint(cp)) {
                     boundary = ANSI_SIM_BOUNDARY_NONE;
@@ -4760,15 +4766,16 @@ static int ansi_reopen_osc8_link_if_needed(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
-static int ansi_emit_link_label_input(mdf_impl *impl, mdf_sink *sink,
-                                      const char *text, size_t text_len, const char *style)
+static int ansi_emit_link_label_input_kind(mdf_impl *impl, mdf_sink *sink,
+                                           const char *text, size_t text_len,
+                                           const char *style, ansi_sim_kind kind)
 {
     ansi_sim_input input;
 
     input.text = text;
     input.len = text_len;
     input.style = style;
-    input.kind = ANSI_SIM_TEXT;
+    input.kind = kind;
     if (impl->inline_outer_paren_pending && input.len > 0) {
         if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
             if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
@@ -4840,7 +4847,7 @@ static int inline_delimiter_is_escaped(const char *text, size_t offset)
 static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text_len, size_t offset,
                                    const char **inner, size_t *inner_len,
                                    const char **rest, size_t *rest_len, const char **style,
-                                   int *no_closer)
+                                   int *no_closer, size_t nesting)
 {
     char delim;
     size_t delim_len;
@@ -4862,6 +4869,8 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         size_t code_inner_len;
         size_t code_rest_len;
         size_t run_len;
+        int can_open;
+        int can_close;
 
         if (text[i] == '`' && !inline_delimiter_is_escaped(text, i)) {
             if (inline_code_span_prefix(text + i, text_len - i, &code_inner, &code_inner_len,
@@ -4879,8 +4888,29 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
         }
         run_len = 0;
         while (i + run_len < text_len && text[i + run_len] == delim) run_len++;
-        if (!inline_delimiter_is_escaped(text, i) && run_len >= delim_len &&
-            inline_emphasis_can_close(text, text_len, i, run_len)) {
+        can_open = !inline_delimiter_is_escaped(text, i) &&
+                   inline_emphasis_can_open(text, text_len, i, run_len);
+        can_close = !inline_delimiter_is_escaped(text, i) && run_len >= delim_len &&
+                    inline_emphasis_can_close(text, text_len, i, run_len);
+        if (run_len > delim_len && can_open && !can_close &&
+            nesting < ANSI_LINK_LABEL_MAX_NESTING) {
+            const char *nested_inner;
+            const char *nested_rest;
+            const char *nested_style;
+            size_t nested_inner_len;
+            size_t nested_rest_len;
+            int nested_no_closer;
+
+            if (inline_emphasis_span_at(impl, text, text_len, i,
+                                        &nested_inner, &nested_inner_len,
+                                        &nested_rest, &nested_rest_len,
+                                        &nested_style, &nested_no_closer,
+                                        nesting + 1)) {
+                i = (size_t)(nested_rest - text);
+                continue;
+            }
+        }
+        if (can_close) {
             if (delim_len == 3) {
                 *inner = text + offset + 2;
                 *inner_len = i - offset - 1;
@@ -4934,16 +4964,25 @@ static const char *ansi_link_label_style_cstr(mdf_impl *impl, const ansi_link_la
     return impl->ansi_link_label_style;
 }
 
-static int ansi_emit_link_label_input_styled(mdf_impl *impl, mdf_sink *sink,
-                                              const char *text, size_t text_len,
-                                              const ansi_link_label_style *style,
-                                              int reset_styles)
+static int ansi_emit_link_label_input_styled_kind(mdf_impl *impl, mdf_sink *sink,
+                                                   const char *text, size_t text_len,
+                                                   const ansi_link_label_style *style,
+                                                   int reset_styles, ansi_sim_kind kind)
 {
     const char *style_cstr;
 
     style_cstr = ansi_link_label_style_cstr(impl, style, reset_styles);
     if (style_cstr == NULL) return -1;
-    return ansi_emit_link_label_input(impl, sink, text, text_len, style_cstr);
+    return ansi_emit_link_label_input_kind(impl, sink, text, text_len, style_cstr, kind);
+}
+
+static int ansi_emit_link_label_input_styled(mdf_impl *impl, mdf_sink *sink,
+                                              const char *text, size_t text_len,
+                                              const ansi_link_label_style *style,
+                                              int reset_styles)
+{
+    return ansi_emit_link_label_input_styled_kind(impl, sink, text, text_len,
+                                                   style, reset_styles, ANSI_SIM_TEXT);
 }
 
 static int ansi_emit_link_label_literal(mdf_impl *impl, mdf_sink *sink,
@@ -5035,7 +5074,7 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
               (text[offset] == '_' && no_more_underscore_closers))) {
             found = inline_emphasis_span_at(impl, text, text_len, offset,
                                              &inner, &inner_len, &rest, &rest_len, &inline_style,
-                                             &no_closer);
+                                             &no_closer, nesting);
             if (!found && no_closer) {
                 if (text[offset] == '*') {
                     no_more_star_closers = 1;
@@ -5063,8 +5102,9 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
         span_style.parent = link_style;
         span_style.style = inline_style;
         if (code_span) {
-            if (ansi_emit_link_label_input_styled(impl, sink, inner, inner_len,
-                                                   &span_style, *emitted_segment) != 0) return -1;
+            if (ansi_emit_link_label_input_styled_kind(impl, sink, inner, inner_len,
+                                                        &span_style, *emitted_segment,
+                                                        ANSI_SIM_CODE) != 0) return -1;
             *emitted_segment = 1;
         } else {
             if (ansi_emit_link_label_remainder(impl, sink, inner, inner_len, &span_style,

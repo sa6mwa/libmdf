@@ -1378,6 +1378,28 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[`a  b`](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi code link label with repeated spaces render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi code link label repeated-space writes match traces");
+    fails += expect_output_equals(&cap, "a  b (https://x)\n",
+                                  "ansi code link label preserves repeated interior spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*a **b** c*](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi nested emphasis link label with longer inner runs renders succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi nested emphasis link-label writes match traces");
+    fails += expect_output_equals(&cap, "a b c (https://x)\n",
+                                  "ansi outer emphasis ignores nested closer runs");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");
