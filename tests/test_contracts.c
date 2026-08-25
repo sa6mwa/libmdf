@@ -1435,6 +1435,34 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     {
+        static const char prefix[] = "([";
+        static const char suffix[] = "](https://x))\n";
+        const size_t label_len = 9000;
+        size_t source_len;
+        char *source;
+
+        source_len = sizeof(prefix) - 1 + label_len + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large parenthesized link-label fixture allocates");
+        if (source != NULL) {
+            memcpy(source, prefix, sizeof(prefix) - 1);
+            memset(source + sizeof(prefix) - 1, 'x', label_len);
+            memcpy(source + sizeof(prefix) - 1 + label_len, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large parenthesized link-label render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large parenthesized link-label writes match traces");
+            fails += expect_contains(cap.out, "(xxxxx",
+                                     "large parenthesized link-label emits its opening parenthesis");
+            capture_free(&cap);
+            free(source);
+        }
+    }
+
+    {
         static const char suffix[] = "](https://x)\n";
         const size_t delimiters = 100000;
         size_t source_len;

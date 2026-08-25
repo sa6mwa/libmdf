@@ -4770,36 +4770,14 @@ static int ansi_emit_link_label_input(mdf_impl *impl, mdf_sink *sink,
     input.style = style;
     input.kind = ANSI_SIM_TEXT;
     if (impl->inline_outer_paren_pending && input.len > 0) {
-        size_t first_len;
-        size_t style_len;
-        size_t reset_len;
-
-        first_len = 0;
-        while (first_len < input.len && input.text[first_len] != ' ') {
-            first_len++;
-        }
-        style_len = strlen(input.style);
-        reset_len = (impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring ? 4 : 0;
-        if (mdf_emit_buffer_reset(impl) != 0 ||
-            mdf_emit_buffer_append(impl, "\033[0m", reset_len) != 0 ||
-            mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-            mdf_emit_buffer_append(impl, input.style, style_len) != 0 ||
-            mdf_emit_buffer_append(impl, input.text, first_len) != 0) {
-            mdf_impl_mark_oom(impl);
-            return -1;
+        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
+            if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         }
         impl->ansi_pending_style_reset = 0;
         impl->quote_text_open = 0;
-        if (mdf_emit_buffer_commit(impl, sink) != 0) return -1;
-        ansi_update_visible_output_state(impl, "(", 1);
-        ansi_update_visible_output_state(impl, input.text, first_len);
+        if (ansi_emit_visible_chunk(impl, sink, "(", 1) != 0) return -1;
         impl->inline_outer_paren_pending = 0;
-        if (first_len < input.len) {
-            input.text += first_len;
-            input.len -= first_len;
-            return ansi_sim_emit_inputs_active(impl, sink, &input, 1, input.style);
-        }
-        return 0;
+        return ansi_sim_emit_inputs(impl, sink, &input, 1);
     }
     return ansi_sim_emit_inputs(impl, sink, &input, 1);
 }
