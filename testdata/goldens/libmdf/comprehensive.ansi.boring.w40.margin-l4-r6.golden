@@ -95,8 +95,8 @@
     combined emphasis, inline code
     , links
     (https://example.com/deck),
-    and autolinks like https:
-    //example.com/autolink.
+    and autolinks like https://
+    example.com/autolink.
 
     # Lists
 

@@ -136,8 +136,7 @@ include [3m[34memphasis[0m,
 (https://example.com
 /deck), and
 autolinks like
-https:
-//example.com/
+https://example.com/
 autolink.
 
 [1;32m# [0m[1;32mLists[0m

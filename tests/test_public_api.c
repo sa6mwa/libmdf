@@ -2652,6 +2652,47 @@ int main(void)
         }
     }
 
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    {
+        char fixed_emit[64];
+        char source[1024];
+        size_t source_len;
+        size_t level;
+
+        source_len = 0;
+        source[source_len++] = '[';
+        for (level = 1; level <= 17; level++) {
+            memset(source + source_len, '*', level);
+            source_len += level;
+            source[source_len++] = 'a';
+            source[source_len++] = '-';
+        }
+        memset(source + source_len, 'x', 256);
+        source_len += 256;
+        for (level = 17; level > 0; level--) {
+            source[source_len++] = '-';
+            source[source_len++] = 'b';
+            memset(source + source_len, '*', level);
+            source_len += level;
+        }
+        memcpy(source + source_len, "](https://x)\n", sizeof("](https://x)\n"));
+
+        opts.emission_buffer.data = fixed_emit;
+        opts.emission_buffer.cap = sizeof(fixed_emit);
+        opts.emission_buffer.fixed = 1;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "ansi create accepts fixed emission buffer for bounded link-label fallback");
+        if (inst != NULL) {
+            st = inst->render_cstr(inst, source, &out);
+            fails += expect(st != MDF_OK && out == NULL,
+                            "bounded link-label fallback does not split an oversized emission decision");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+    }
+
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
     opts.boring = 0;

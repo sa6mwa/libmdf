@@ -330,6 +330,19 @@ static int expect_no_write_contains(const capture *cap, const char *needle, cons
     return 0;
 }
 
+static int expect_write_contains(const capture *cap, const char *needle, const char *msg)
+{
+    size_t i;
+
+    for (i = 0; i < cap->write_count; i++) {
+        if (record_contains(&cap->writes[i], needle)) {
+            return 0;
+        }
+    }
+    fprintf(stderr, "FAIL: %s\n", msg);
+    return 1;
+}
+
 static char *strip_ansi(const char *src)
 {
     size_t len;
@@ -1397,6 +1410,51 @@ static int test_ansi_nested_emphasis_edge_contract(void)
                                          "ansi nested emphasis link-label writes match traces");
     fails += expect_output_equals(&cap, "a b c (https://x)\n",
                                   "ansi outer emphasis ignores nested closer runs");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 100;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n",
+                        1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi URL link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi URL link-label writes match traces");
+    fails += expect_write_contains(&cap, "//pkt.systems/centaur.md",
+                                   "ansi URL link label emits its URL tail as one decision");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[https://x](u)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi narrow URL link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi narrow URL link-label writes match traces");
+    fails += expect_contains(cap.out, "https://",
+                             "ansi narrow URL link label keeps its scheme delimiter together");
+    fails += expect_not_contains(cap.out, "https:\n//",
+                                 "ansi narrow URL link label does not split after its scheme");
+    fails += expect_not_contains(cap.out, "https\n://",
+                                 "ansi narrow URL link label does not split before its scheme delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "https://x\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi narrow streamed URL render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi narrow streamed URL writes match traces");
+    fails += expect_contains(cap.out, "https://",
+                             "ansi narrow streamed URL keeps its scheme delimiter together");
+    fails += expect_not_contains(cap.out, "https:\n//",
+                                 "ansi narrow streamed URL does not split after its scheme");
+    fails += expect_not_contains(cap.out, "https\n://",
+                                 "ansi narrow streamed URL does not split before its scheme delimiter");
     capture_free(&cap);
 
     mdf_options_init(&opts);

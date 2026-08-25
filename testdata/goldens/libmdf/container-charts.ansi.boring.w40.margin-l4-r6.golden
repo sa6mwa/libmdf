@@ -89,7 +89,7 @@
     Container link
     (https://example.com/container-
     cha
-    rt) and bare https:
-    //example.com/container-chart/
-    autolink should both remain
-    safe in HTML and deck output.
+    rt) and bare https://example.com/
+    container-chart/autolink
+    should both remain safe in
+    HTML and deck output.

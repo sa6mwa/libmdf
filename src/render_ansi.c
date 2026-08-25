@@ -307,6 +307,12 @@ static int ansi_word_has_url_scheme(const char *s, size_t len)
     return has_dot && has_slash;
 }
 
+static int ansi_word_ends_with_http_scheme(const char *s, size_t len)
+{
+    return (len == 5 && memcmp(s, "http:", 5) == 0) ||
+           (len == 6 && memcmp(s, "https:", 6) == 0);
+}
+
 static int ansi_word_ends_with_open_bracket(const char *s, size_t len)
 {
     if (len == 0) {
@@ -380,11 +386,12 @@ static size_t ansi_word_split_offset(const char *s, size_t len, int limit)
     scheme_break = 0;
     for (i = 0; i + 2 < len; i++) {
         if (s[i] == ':' && s[i + 1] == '/' && s[i + 2] == '/') {
-            scheme_break = i + 1;
+            scheme_break = i + 3;
             break;
         }
     }
-    if (scheme_break > 0 && (int)scheme_break <= limit) {
+    /* Keep :// together only when it cannot fit in the requested row. */
+    if (scheme_break > 0 && (int)scheme_break > limit) {
         return scheme_break;
     }
     cols = 0;
@@ -4990,35 +4997,122 @@ static int ansi_emit_link_label_literal(mdf_impl *impl, mdf_sink *sink,
                                         const ansi_link_label_style *style,
                                         int *emitted_segment)
 {
-    size_t chunk_cap;
-    size_t offset;
+    if (text_len == 0) {
+        return 0;
+    }
+    if (ansi_emit_link_label_input_styled(impl, sink, text, text_len,
+                                           style, *emitted_segment) != 0) {
+        return -1;
+    }
+    *emitted_segment = 1;
+    return 0;
+}
 
-    chunk_cap = impl->emit_max_cap / 4;
-    if (chunk_cap == 0) chunk_cap = 1;
-    offset = 0;
-    while (offset < text_len) {
-        size_t chunk_len;
+static int ansi_link_label_plain_url(const char *text, size_t text_len)
+{
+    size_t i;
+    int has_scheme;
 
-        chunk_len = text_len - offset;
-        if (chunk_len > chunk_cap) {
-            chunk_len = chunk_cap;
-            while (chunk_len > 0 &&
-                   utf8_continuation_byte(text[offset + chunk_len])) {
-                chunk_len--;
+    has_scheme = 0;
+    for (i = 0; i < text_len; i++) {
+        unsigned char c;
+
+        c = (unsigned char)text[i];
+        if (c <= ' ' || c == '*' || c == '_' || c == '`' || c == '\\') {
+            return 0;
+        }
+        if (i + 2 < text_len && text[i] == ':' && text[i + 1] == '/' && text[i + 2] == '/') {
+            has_scheme = 1;
+        }
+    }
+    return has_scheme;
+}
+
+static size_t ansi_link_label_scheme_prefix_len(const char *text, size_t text_len)
+{
+    size_t i;
+
+    for (i = 0; i + 2 < text_len; i++) {
+        if (text[i] == ':' && text[i + 1] == '/' && text[i + 2] == '/') {
+            return i + 1;
+        }
+    }
+    return 0;
+}
+
+static int ansi_emit_plain_url_link_label(mdf_impl *impl, mdf_sink *sink,
+                                          const char *text, size_t text_len,
+                                          const ansi_link_label_style *style)
+{
+    const char *style_cstr;
+    size_t off;
+    int emitted_style;
+
+    style_cstr = ansi_link_label_style_cstr(impl, style, 0);
+    if (style_cstr == NULL) {
+        return -1;
+    }
+    if (impl->inline_outer_paren_pending) {
+        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
+            if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+        }
+        impl->ansi_pending_style_reset = 0;
+        impl->quote_text_open = 0;
+        if (ansi_emit_visible_chunk(impl, sink, "(", 1) != 0) return -1;
+        impl->inline_outer_paren_pending = 0;
+    }
+    if (text_len > 0 && ansi_ensure_left_margin(impl, sink) != 0) {
+        return -1;
+    }
+    off = 0;
+    emitted_style = 0;
+    while (off < text_len) {
+        size_t rem_len;
+        size_t split;
+        int avail;
+        int wrapped;
+
+        rem_len = text_len - off;
+        wrapped = 0;
+        if (impl->opts.width <= 0) {
+            split = rem_len;
+        } else {
+            avail = impl->opts.width - impl->ansi_col;
+            if (avail <= 0) {
+                if (ansi_emit_newline(impl, sink) != 0) return -1;
+                continue;
             }
-            if (chunk_len == 0) {
-                unsigned long cp;
+            if ((int)visible_cols(text + off, rem_len) <= avail) {
+                split = off == 0 ? ansi_link_label_scheme_prefix_len(text, text_len) : 0;
+                if (split == 0) {
+                    split = rem_len;
+                }
+            } else {
+                wrapped = 1;
+                split = ansi_word_split_offset(text + off, rem_len, avail);
+                if (split == 0) {
+                    split = ansi_rune_split_offset(text + off, rem_len, avail);
+                }
+                if (split == 0) {
+                    unsigned long cp;
 
-                chunk_len = utf8_decode_codepoint(text + offset, text_len - offset, &cp);
-                if (chunk_len == 0) chunk_len = 1;
+                    split = utf8_decode_codepoint(text + off, rem_len, &cp);
+                    if (split == 0) split = rem_len;
+                }
             }
         }
-        if (ansi_emit_link_label_input_styled(impl, sink, text + offset, chunk_len,
-                                               style, *emitted_segment) != 0) {
+        if (!emitted_style && style_cstr[0] != '\0') {
+            if (ansi_emit_styled_visible_chunk(impl, sink, style_cstr, text + off, split) != 0) {
+                return -1;
+            }
+            emitted_style = 1;
+        } else if (ansi_emit_visible_chunk(impl, sink, text + off, split) != 0) {
             return -1;
         }
-        *emitted_segment = 1;
-        offset += chunk_len;
+        off += split;
+        if (off < text_len && wrapped && ansi_emit_newline(impl, sink) != 0) {
+            return -1;
+        }
     }
     return 0;
 }
@@ -5131,14 +5225,18 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
     ansi_link_label_style link;
     int emitted_segment;
 
-    emitted_segment = 0;
-    if (impl->opts.boring) {
-        return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL, &emitted_segment, 0);
-    }
     prefix.parent = NULL;
     prefix.style = prefix_style;
     link.parent = &prefix;
     link.style = mdf_theme_link_text(impl);
+    if (ansi_link_label_plain_url(text, text_len)) {
+        return ansi_emit_plain_url_link_label(impl, sink, text, text_len,
+                                              impl->opts.boring ? NULL : &link);
+    }
+    emitted_segment = 0;
+    if (impl->opts.boring) {
+        return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL, &emitted_segment, 0);
+    }
     return ansi_emit_link_label_remainder(impl, sink, text, text_len, &link, &emitted_segment, 0);
 }
 
@@ -7171,6 +7269,10 @@ static int ansi_handle_plain_visible_char(mdf_impl *impl, mdf_sink *sink, const 
         size_t j;
         size_t tail_cols;
 
+        if (c == ':' && ansi_word_ends_with_http_scheme(impl->ansi_word,
+                                                          impl->ansi_word_len)) {
+            return 0;
+        }
         if (next == '\0') {
             impl->ansi_punct_quote_pending = 1;
             return 0;

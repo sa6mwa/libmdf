@@ -10,13 +10,12 @@ wrapping, inline
 emphasis, strong
 text, inline code,
 links, autolinks
-like https:
-//example.com/
-mixed, tables,
-charts, quotes,
-lists, code, and
-deck slide
-boundaries.
+like https://
+example.com/mixed,
+tables, charts,
+quotes, lists,
+code, and deck
+slide boundaries.
 
 # Inline And
   Containers
