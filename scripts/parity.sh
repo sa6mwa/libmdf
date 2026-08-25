@@ -39,7 +39,10 @@ BORINGS=${LIBMDF_PARITY_BORINGS:-$DEFAULT_BORINGS}
 OSC8S=${LIBMDF_PARITY_OSC8S:-$DEFAULT_OSC8S}
 TABLE_BUFFERS=${LIBMDF_PARITY_TABLE_BUFFERS:-$DEFAULT_TABLE_BUFFERS}
 TABLE_WIRES=${LIBMDF_PARITY_TABLE_WIRES:-$DEFAULT_TABLE_WIRES}
-EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus"}
+# Go mdf splits URL scheme delimiters at narrow widths. libmdf intentionally
+# keeps :// atomic; the affected corpus documents are covered by libmdf ANSI
+# goldens instead of Go parity.
+EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus $ROOT/testdata/centaur-post.md $ROOT/testdata/frontmatter2.md $ROOT/testdata/future/linkify.md $ROOT/testdata/future/reflinks.md"}
 STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
 child_pid=
 

@@ -119,3 +119,19 @@ container-charts.deck.default tests/golden-fixtures/container-charts.md --deck
 container-charts.deck.w42 tests/golden-fixtures/container-charts.md --deck -w 42
 container-charts.deck.slide-numbers.fade tests/golden-fixtures/container-charts.md --deck --slide-numbers -x fade
 container-charts.deck.boring tests/golden-fixtures/container-charts.md --deck --boring
+url-wrap-centaur.ansi.styled.w20.margin-l0-r0 testdata/centaur-post.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-centaur.ansi.styled.w40.margin-l10-r10 testdata/centaur-post.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-centaur.ansi.boring.w20.margin-l0-r0 testdata/centaur-post.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-centaur.ansi.boring.w40.margin-l10-r10 testdata/centaur-post.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-frontmatter2.ansi.styled.w20.margin-l0-r0 testdata/frontmatter2.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-frontmatter2.ansi.styled.w40.margin-l10-r10 testdata/frontmatter2.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-frontmatter2.ansi.boring.w20.margin-l0-r0 testdata/frontmatter2.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-frontmatter2.ansi.boring.w40.margin-l10-r10 testdata/frontmatter2.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-linkify.ansi.styled.w20.margin-l0-r0 testdata/future/linkify.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.styled.w40.margin-l10-r10 testdata/future/linkify.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-linkify.ansi.boring.w20.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w40.margin-l10-r10 testdata/future/linkify.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-reflinks.ansi.styled.w20.margin-l0-r0 testdata/future/reflinks.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w40.margin-l10-r10 testdata/future/reflinks.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-reflinks.ansi.boring.w20.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w40.margin-l10-r10 testdata/future/reflinks.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
