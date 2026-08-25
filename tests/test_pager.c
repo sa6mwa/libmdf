@@ -388,6 +388,27 @@ static int write_wide_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_utf8_search_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+    static const char source[] = "abc\346\227\245\346\234\254\350\252\236 abc\346\227\245\346\234\254\350\252\236\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-utf8-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, sizeof(source) - 1) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.txt", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int write_initial_resize_fixture(char *path, size_t cap)
 {
     int fd;
@@ -605,6 +626,7 @@ int main(int argc, char **argv)
     char osc8_path[128];
     char osc8_reflow_path[128];
     char wide_path[128];
+    char utf8_search_path[128];
     char initial_resize_path[128];
     char control_path[128];
     char unicode_path[128];
@@ -633,6 +655,7 @@ int main(int argc, char **argv)
         write_osc8_fixture(osc8_path, sizeof(osc8_path)) != 0 ||
         write_osc8_reflow_fixture(osc8_reflow_path, sizeof(osc8_reflow_path)) != 0 ||
         write_wide_fixture(wide_path, sizeof(wide_path)) != 0 ||
+        write_utf8_search_fixture(utf8_search_path, sizeof(utf8_search_path)) != 0 ||
         write_initial_resize_fixture(initial_resize_path, sizeof(initial_resize_path)) != 0 ||
         write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
@@ -771,6 +794,26 @@ int main(int argc, char **argv)
     if (write_all(master, "\033", 1) != 0 || wait_for_exit(pid) != 0 ||
         wait_for_output(master, &out, 80) != 0 ||
         require_contains(&out, "\033[?1049l") != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "UTF-8 search startup";
+    pid = start_pager(argv[1], utf8_search_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "abc") != 0) goto done;
+    stage = "ASCII UTF-8 search";
+    if (write_all(master, "/abc", 4) != 0 || wait_for_marker(master, &out, "\033[7mabc\033[27m") != 0 ||
+        wait_for_output(master, &out, 80) != 0) goto done;
+    clear_capture(&out);
+    stage = "incomplete UTF-8 search first byte";
+    if (write_all(master, "\346", 1) != 0 || wait_for_output(master, &out, 80) != 0 || out.len != 0) goto done;
+    stage = "incomplete UTF-8 search second byte";
+    if (write_all(master, "\227", 1) != 0 || wait_for_output(master, &out, 80) != 0 || out.len != 0) goto done;
+    stage = "complete UTF-8 search";
+    if (write_all(master, "\245", 1) != 0 ||
+        wait_for_marker(master, &out, "\033[7mabc\346\227\245\033[27m") != 0 ||
+        require_contains(&out, "\033[7mabc\346\227\245\033[27m") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "abc") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
 
@@ -1057,6 +1100,7 @@ done:
     unlink(osc8_path);
     unlink(osc8_reflow_path);
     unlink(wide_path);
+    unlink(utf8_search_path);
     unlink(initial_resize_path);
     unlink(control_path);
     unlink(unicode_path);

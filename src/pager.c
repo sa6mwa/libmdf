@@ -882,6 +882,9 @@ static void mdf_pager_search_clear_matches(mdf_pager_search *search)
 
 static int mdf_pager_search_update_live(mdf_pager_search *search, const mdf_pager_view *view)
 {
+    if (mdf_pager_utf8_complete_prefix(search->query.data, search->query.len) != search->query.len) {
+        return 0;
+    }
     if (mdf_pager_utf8_character_count(&search->query) < 3) {
         mdf_pager_search_clear_matches(search);
         search->active = 0;
@@ -1610,7 +1613,8 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
         if (search.editing) {
             if (ready_byte == '\r' || ready_byte == '\n') {
                 search.editing = 0;
-                search.active = search.query.len != 0;
+                search.active = search.query.len != 0 &&
+                    mdf_pager_utf8_complete_prefix(search.query.data, search.query.len) == search.query.len;
                 if (search.active && mdf_pager_search_refresh(&search, &view) != 0) {
                     result = MDF_ERROR_NOMEM;
                     goto done;
@@ -1644,6 +1648,9 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
                 goto done;
             }
             if (ready_byte >= 32 && ready_byte != 127) {
+                if (mdf_pager_utf8_complete_prefix(search.query.data, search.query.len) != search.query.len) {
+                    continue;
+                }
                 if (mdf_pager_search_update_live(&search, &view) != 0) {
                     result = MDF_ERROR_NOMEM;
                     goto done;

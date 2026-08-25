@@ -5,6 +5,7 @@
 #include <math.h>
 
 #define ANSI_LINK_LABEL_MAX_NESTING 16
+#define ANSI_LINK_LABEL_MAX_FAILED_CODE_SPANS 16
 
 int ansi_inline_append(mdf_impl *impl, char **buf, size_t *len, size_t *cap, const char *src, size_t n)
 {
@@ -4870,8 +4871,10 @@ static int inline_emphasis_span_at(mdf_impl *impl, const char *text, size_t text
     *no_closer = 0;
     if (offset >= text_len || (text[offset] != '*' && text[offset] != '_')) return 0;
     delim = text[offset];
-    delim_len = offset + 2 < text_len && text[offset + 1] == delim && text[offset + 2] == delim ? 3 :
-                (offset + 1 < text_len && text[offset + 1] == delim ? 2 : 1);
+    delim_len = 1;
+    while (offset + delim_len < text_len && text[offset + delim_len] == delim) {
+        delim_len++;
+    }
     if (offset + delim_len * 2 >= text_len ||
         !inline_emphasis_can_open(text, text_len, offset, delim_len)) return 0;
     i = offset + delim_len;
@@ -5012,11 +5015,13 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
     size_t plain_start;
     int no_more_star_closers;
     int no_more_underscore_closers;
+    size_t failed_code_spans;
 
     offset = 0;
     plain_start = 0;
     no_more_star_closers = 0;
     no_more_underscore_closers = 0;
+    failed_code_spans = 0;
     if (nesting >= ANSI_LINK_LABEL_MAX_NESTING) {
         return ansi_emit_link_label_literal(impl, sink, text, text_len,
                                             link_style, emitted_segment);
@@ -5036,9 +5041,11 @@ static int ansi_emit_link_label_remainder(mdf_impl *impl, mdf_sink *sink,
             offset += 2;
             continue;
         }
-        if (text[offset] == '`') {
+        if (text[offset] == '`' &&
+            failed_code_spans < ANSI_LINK_LABEL_MAX_FAILED_CODE_SPANS) {
             found = inline_code_span_prefix(text + offset, text_len - offset,
                                             &inner, &inner_len, &rest, &rest_len);
+            if (!found) failed_code_spans++;
         } else {
             found = 0;
         }

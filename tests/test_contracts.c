@@ -1423,6 +1423,17 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     fails += expect_not_contains(cap.out, "both*", "ansi triple nested emphasis consumes closing delimiters");
     capture_free(&cap);
 
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[****foo****](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi long emphasis-run link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi long emphasis-run link label writes match traces");
+    fails += expect_output_equals(&cap, "foo (https://x)\n",
+                                  "ansi long emphasis-run link label consumes matching delimiters");
+    capture_free(&cap);
+
     {
         static const char suffix[] = "](https://x)\n";
         const size_t delimiters = 100000;
@@ -1451,6 +1462,42 @@ static int test_ansi_nested_emphasis_edge_contract(void)
                             "deep nested link-label emphasis render succeeds");
             fails += expect(elapsed != (clock_t)-1 && elapsed < 2 * CLOCKS_PER_SEC,
                             "deep nested link-label emphasis remains bounded");
+            free(source);
+        }
+    }
+
+    {
+        static const char suffix[] = "literal](https://x)\n";
+        const size_t repeats = 1000;
+        size_t source_len;
+        size_t offset;
+        size_t i;
+        char *source;
+        count_sink count;
+        clock_t started;
+        clock_t elapsed;
+
+        source_len = 1 + (repeats * (repeats + 1)) / 2 + repeats + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large malformed code link-label fixture allocates");
+        if (source != NULL) {
+            offset = 0;
+            source[offset++] = '[';
+            for (i = 1; i <= repeats; i++) {
+                memset(source + offset, '`', i);
+                offset += i;
+                source[offset++] = 'a';
+            }
+            memcpy(source + offset, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            started = clock();
+            st = render_count(MDF_FORMAT_ANSI, &opts, source, source_len, &count);
+            elapsed = clock() - started;
+            fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
+                            "large malformed code link-label render succeeds");
+            fails += expect(elapsed != (clock_t)-1 && elapsed < 2 * CLOCKS_PER_SEC,
+                            "large malformed code link-label remains bounded");
             free(source);
         }
     }
