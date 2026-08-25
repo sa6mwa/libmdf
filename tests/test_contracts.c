@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define MAX_RECORDS 65536
 
@@ -28,6 +29,11 @@ typedef struct capture {
     size_t out_cap;
     int failed;
 } capture;
+
+typedef struct count_sink {
+    size_t bytes;
+    int failed;
+} count_sink;
 
 static int expect(int cond, const char *msg)
 {
@@ -123,6 +129,20 @@ static int capture_trace(void *userdata, mdf_format format, const char *src, siz
     return 0;
 }
 
+static int count_write(void *userdata, const char *src, size_t len)
+{
+    count_sink *count;
+
+    (void)src;
+    count = (count_sink *)userdata;
+    if (len > (size_t)-1 - count->bytes) {
+        count->failed = 1;
+        return -1;
+    }
+    count->bytes += len;
+    return 0;
+}
+
 static void capture_free(capture *cap)
 {
     size_t i;
@@ -183,6 +203,34 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     source.read = chunk_read;
     sink.userdata = cap;
     sink.write = capture_write;
+    st = inst->render(inst, &source, &sink);
+    inst->destroy(inst);
+    return st;
+}
+
+static mdf_status render_count(mdf_format format, mdf_options *opts, const char *markdown,
+                               size_t chunk, count_sink *count)
+{
+    mdf *inst;
+    mdf_source source;
+    mdf_sink sink;
+    chunk_source source_data;
+    mdf_status st;
+
+    inst = NULL;
+    memset(count, 0, sizeof(*count));
+    st = mdf_create(format, opts, &inst);
+    if (st != MDF_OK) {
+        return st;
+    }
+    source_data.src = markdown;
+    source_data.len = strlen(markdown);
+    source_data.off = 0;
+    source_data.chunk = chunk;
+    source.userdata = &source_data;
+    source.read = chunk_read;
+    sink.userdata = count;
+    sink.write = count_write;
     st = inst->render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
@@ -1374,6 +1422,38 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     fails += expect_not_contains(cap.out, "*both", "ansi triple nested emphasis consumes opening delimiters");
     fails += expect_not_contains(cap.out, "both*", "ansi triple nested emphasis consumes closing delimiters");
     capture_free(&cap);
+
+    {
+        static const char suffix[] = "](https://x)\n";
+        const size_t delimiters = 100000;
+        size_t source_len;
+        char *source;
+        count_sink count;
+        clock_t started;
+        clock_t elapsed;
+
+        source_len = 1 + delimiters + 1 + delimiters + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "deep nested link-label emphasis fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            memset(source + 1, '*', delimiters);
+            source[1 + delimiters] = 'x';
+            memset(source + 2 + delimiters, '*', delimiters);
+            memcpy(source + 2 + delimiters + delimiters, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 0;
+            started = clock();
+            st = render_count(MDF_FORMAT_ANSI, &opts, source, source_len, &count);
+            elapsed = clock() - started;
+            fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
+                            "deep nested link-label emphasis render succeeds");
+            fails += expect(elapsed != (clock_t)-1 && elapsed < 2 * CLOCKS_PER_SEC,
+                            "deep nested link-label emphasis remains bounded");
+            free(source);
+        }
+    }
 
     {
         static const char suffix[] = "](https://x)\n";
