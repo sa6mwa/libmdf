@@ -173,6 +173,24 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc
     _exit(127);
 }
 
+static pid_t start_pager_with_expected_status(const char *path, mdf_status expected, int *master)
+{
+    struct winsize size;
+    pid_t pid;
+
+    memset(&size, 0, sizeof(size));
+    size.ws_col = 40;
+    size.ws_row = 10;
+    pid = forkpty(master, NULL, NULL, &size);
+    if (pid != 0) return pid;
+    {
+        mdf_options opts;
+
+        mdf_options_init(&opts);
+        _exit(mdf_pager_file(path, &opts, MDF_PAGER_FORMAT_AUTO) == expected ? 0 : 1);
+    }
+}
+
 static pid_t start_pager_with_theme(const char *path, const char *theme_name, int *master)
 {
     struct winsize size;
@@ -595,8 +613,10 @@ int main(int argc, char **argv)
     char fifo_path[128];
     char c1_path[128];
     char control_markdown_path[128];
+    char missing_path[128];
     capture out;
     pid_t pid;
+    int fd;
     int master;
     int rc;
     int i;
@@ -605,6 +625,7 @@ int main(int argc, char **argv)
 
     if (argc != 2) return 2;
     memset(&out, 0, sizeof(out));
+    missing_path[0] = '\0';
     rc = 1;
     stage = "fixtures";
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
@@ -621,6 +642,8 @@ int main(int argc, char **argv)
         write_fifo_fixture(fifo_path, sizeof(fifo_path)) != 0 ||
         write_c1_text_fixture(c1_path, sizeof(c1_path)) != 0 ||
         write_control_markdown_fixture(control_markdown_path, sizeof(control_markdown_path)) != 0) goto done;
+    if (snprintf(missing_path, sizeof(missing_path), "/tmp/libmdf-pager-missing-XXXXXX") >= (int)sizeof(missing_path) ||
+        (fd = mkstemp(missing_path)) < 0 || close(fd) != 0 || unlink(missing_path) != 0) goto done;
 
     stage = "text startup";
     pid = start_pager(argv[1], text_path, 1, 0, 0, &master);
@@ -722,6 +745,18 @@ int main(int argc, char **argv)
     if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0 ||
         require_contains(&out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0) goto done;
     clear_capture(&out);
+    stage = "resize preserves Japanese search hit";
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 40;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0 ||
+        require_contains(&out, "/\346\227\245\346\234\254\350\252\236  2/2") != 0) goto done;
+    clear_capture(&out);
+    stage = "next Japanese search hit after resize";
+    if (write_all(master, "n", 1) != 0 || wait_for_marker(master, &out, "/\346\227\245\346\234\254\350\252\236  1/2") != 0 ||
+        require_contains(&out, "/\346\227\245\346\234\254\350\252\236  1/2") != 0) goto done;
+    clear_capture(&out);
     stage = "narrow Japanese search status";
     memset(&resized, 0, sizeof(resized));
     resized.ws_col = 10;
@@ -770,6 +805,12 @@ int main(int argc, char **argv)
     stage = "nonregular file";
     pid = start_pager(argv[1], fifo_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_failure(pid) != 0 || wait_for_output(master, &out, 40) != 0 || out.len != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "missing regular file";
+    pid = start_pager_with_expected_status(missing_path, MDF_ERROR_IO, &master);
+    if (pid < 0 || wait_for_exit(pid) != 0 || wait_for_output(master, &out, 40) != 0 || out.len != 0) goto done;
     close(master);
     clear_capture(&out);
 
@@ -824,7 +865,7 @@ int main(int argc, char **argv)
     resized.ws_col = 1;
     resized.ws_row = 10;
     if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
-        wait_for_output(master, &out, 500) != 0 ||
+        wait_for_marker(master, &out, "a\033]8;;\033\\\033[0m\r\n") != 0 ||
         require_contains(&out, "a\033]8;;\033\\\033[0m\r\n") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
@@ -955,7 +996,7 @@ int main(int argc, char **argv)
     stage = "control filename status";
     pid = start_pager(argv[1], control_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
-        wait_for_marker(master, &out, "\033[7m\033[1;32m") != 0 ||
+        wait_for_marker(master, &out, "^[]52;c") != 0 ||
         require_contains(&out, "^[]52;c") != 0 ||
         strstr(out.data, "\033]52;c;INJECT\a") != NULL ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
@@ -965,7 +1006,7 @@ int main(int argc, char **argv)
     stage = "unicode filename status";
     pid = start_pager(argv[1], unicode_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
-        wait_for_marker(master, &out, "\033[7m\033[1;32m") != 0 ||
+        wait_for_marker(master, &out, "\346\227\245\346\234\254\350\252\236\346\227\245") != 0 ||
         require_contains(&out, "\346\227\245\346\234\254\350\252\236\346\227\245") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
@@ -975,8 +1016,9 @@ int main(int argc, char **argv)
     pid = start_pager(argv[1], styled_path, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "foo ") != 0 ||
         write_all(master, "/bar baz\r", strlen("/bar baz\r")) != 0 ||
-        wait_for_marker(master, &out, "bar\033[0m\033[7m baz") != 0 ||
-        write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "foo ") != 0 ||
+        wait_for_marker(master, &out, "bar\033[0m\033[7m baz") != 0) goto done;
+    clear_capture(&out);
+    if (write_all(master, "q", 1) != 0 || wait_for_marker(master, &out, "foo ") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
@@ -1023,6 +1065,7 @@ done:
     unlink(fifo_path);
     unlink(c1_path);
     unlink(control_markdown_path);
+    unlink(missing_path);
     free(out.data);
     return rc;
 }

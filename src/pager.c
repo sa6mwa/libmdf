@@ -700,6 +700,23 @@ static int mdf_pager_search_refresh(mdf_pager_search *search, const mdf_pager_vi
     return 0;
 }
 
+static int mdf_pager_search_refresh_preserving_selection(mdf_pager_search *search,
+                                                          const mdf_pager_view *view)
+{
+    size_t selected;
+
+    selected = search->selected;
+    if (mdf_pager_search_refresh(search, view) != 0) return -1;
+    if (search->count == 0) {
+        search->selected = 0;
+    } else if (selected >= search->count) {
+        search->selected = search->count - 1;
+    } else {
+        search->selected = selected;
+    }
+    return 0;
+}
+
 static size_t mdf_pager_utf8_complete_prefix(const char *text, size_t len)
 {
     size_t i;
@@ -1576,7 +1593,7 @@ static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
             (void)mdf_pager_view_find_anchor(&view, &anchor_text, expected, &anchor);
             top = mdf_pager_view_top_for_anchor(&view, anchor);
             mdf_pager_buffer_destroy(&anchor_text);
-            if (search.active && mdf_pager_search_refresh(&search, &view) != 0) {
+            if (search.active && mdf_pager_search_refresh_preserving_selection(&search, &view) != 0) {
                 result = MDF_ERROR_NOMEM;
                 goto done;
             }
@@ -1732,7 +1749,7 @@ mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, m
     if (result != MDF_OK) return result;
     fd = open(path, O_RDONLY | O_NONBLOCK);
     if (fd < 0) {
-        return MDF_ERROR_INVALID;
+        return MDF_ERROR_IO;
     }
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
         (void)close(fd);
