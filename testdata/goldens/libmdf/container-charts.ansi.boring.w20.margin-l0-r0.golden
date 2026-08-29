@@ -116,8 +116,7 @@ rows.
 Container link
 (https://example.com
 /container-chart)
-and bare https:
-//example.com/
+and bare https://example.com/
 container-chart/
 autolink should both
 remain safe in HTML

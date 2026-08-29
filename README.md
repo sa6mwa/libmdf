@@ -337,7 +337,15 @@ rendering, while `MDF_TABLE_BUFFER_ROW` emits header plus first row, then later
 rows as the parser can decide them.
 
 The Go `mdf` implementation is the behavioral reference for ANSI streaming.
-Parity checks compare the C hot path against that reference.
+Parity checks compare the C hot path against that reference. Deliberate,
+documented exceptions are limited to narrow URI wrapping (libmdf keeps `://`
+atomic rather than rendering a scheme followed by a wrapped `//host`) and
+correct Markdown link-label handling where Go is known to be wrong. The latter
+keeps styled labels inside their OSC8 hyperlink and follows CommonMark for
+unequal emphasis delimiters. Every exception is listed in
+`testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt` and protected by matching
+libmdf goldens; ANSI/trace entries require styled and boring exact outputs at
+each excluded width, and HTML entries require exact HTML outputs.
 
 HTML output is streamed, but byte-for-byte streaming parity with the Go CLI is
 not a supported contract. HTML tables rely on browser layout rather than ANSI
@@ -345,14 +353,18 @@ alignment.
 
 ## cmdf
 
-`cmdf` reads Markdown from a file or stdin and writes ANSI or HTML to stdout or
-`--output`.
+`cmdf` renders Markdown from a file or stdin and writes ANSI or HTML to stdout
+or `--output`. With `--pager`, it instead opens a named regular file in an
+interactive terminal pager: `.md` files render as Markdown and every other
+file is shown as ordinary text.
 
 ```sh
 cmdf README.md
 cmdf --html README.md -o README.html
 cmdf README.md -o README.html
 cmdf -b -w 80 --margin-left 2 --margin-right 2 README.md
+cmdf --pager README.md
+cmdf -p /var/log/messages
 ```
 
 Flags:
@@ -363,6 +375,7 @@ Flags:
     --html
     --deck
 -b, --boring
+-p, --pager
 -o, --output PATH
 -t, --theme NAME
 -T, --title TITLE
@@ -397,6 +410,16 @@ them. `--simulate-delay` is an opt-in demo/probe option for making output timing
 visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
+
+`--pager` requires a named input file and terminal stdin/stdout. It uses the
+alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
+arrow up/down, Page Up/Page Down, Home/End, and Ctrl-U/Ctrl-D navigation. Its
+bottom bar uses inverted video with the selected ANSI theme and shows the filename plus percentage
+viewed. Press `/` to search case-insensitively; matching text is highlighted as
+the query is entered, and `n`/`N` move to the next/previous match. `q` or `Esc`
+leaves search mode without leaving the pager. Markdown views rerender only after SIGWINCH has been quiet for at least
+250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
+HTML/deck output, `--output`, write tracing, or input simulation.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
 default. `--html-disable-embedded-font` instead references byte-identical,
@@ -509,6 +532,14 @@ io.write(h:render("# hello\n"))
 h:close()
 ```
 
+Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
+same terminal controls and navigation as `cmdf --pager`. The default is
+extension-based (`.md` is Markdown; all other files are text); pass
+`{ format = "markdown" }` or an HTTP media type such as
+`{ format = "text/markdown" }` (assumed UTF-8) or
+`{ format = "text/markdown; charset=utf-8" }` to render a non-`.md` file as Markdown, or
+`{ format = "text" }` to suppress Markdown rendering for a `.md` file.
+
 HTML and deck handles can set or clear the document/deck title before rendering:
 
 ```lua
@@ -521,7 +552,7 @@ h:close()
 Lua option names mirror the C options where practical:
 
 ```text
-format = "ansi" | "html" | "deck" | "html_deck"
+format = "ansi" | "html" | "deck" | "html_deck" (rendering)
 html = true
 deck = true
 boring = true
@@ -607,6 +638,7 @@ make package
 make package-verify
 make release-lua-artifacts
 make verify-release-privacy
+make prerelease
 make release
 ```
 
@@ -657,12 +689,16 @@ rounds to avoid noise when using the 5% allowance.
 https://github.com/sa6mwa/c.pkt.systems/
 ```
 
-The local lifecycle skill is the release authority for this repository. The
-public release surface is `make release`: it starts from a clean tree, runs the
+The local lifecycle skill is the release authority for this repository.
+`make prerelease` runs the complete release proof graph without first removing
+generated state. `make release` first verifies the lightweight-tag version
+contract, then starts from a clean tree and runs that same proof graph:
 prerelease checks, sanitizer checks, fuzz smoke, Lua checks, full Go parity
 matrix, release matrix builds, package generation, Lua release artifact
 generation, checksum generation, package verification, and artifact
-privacy/relocatability checks.
+privacy/relocatability checks. `make lifecycle-version-contract` is the
+focused pre-clean check for tag/version behavior; `make release` is the only
+standard release target that invokes it.
 
 Release artifacts are selected from the generated checksum manifest, not from a
 `dist/` glob.
@@ -673,7 +709,7 @@ default to `$HOME/.local/cross/osxcross` and `arm64-apple-darwin25`. Package
 verification discovers target tools from explicit overrides, CMake cache
 entries, compiler siblings, osxcross target-prefixed tools, and `PATH` last.
 Darwin configure, build, and package commands prepend the osxcross `bin`
-directory to `PATH` and pass an absolute `-fuse-ld` linker path so `cmdf` and
+directory to `PATH` and pass the target linker through `--ld-path` so `cmdf` and
 shared libraries do not accidentally link through a host `ld`. Darwin archives
 are verified with target-correct `otool` against the final extracted artifacts.
 

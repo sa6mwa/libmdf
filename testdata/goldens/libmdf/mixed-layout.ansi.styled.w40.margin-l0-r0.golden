@@ -4,10 +4,9 @@ This fixture is intentionally compact
 but broad. It exercises headings,
 paragraph wrapping, inline [3m[34memphasis[0m,
 [1m[1;37mstrong text[0m, [35minline code[0m, links,
-autolinks like https:
-//example.com/mixed, tables, charts,
-quotes, lists, code, and deck slide
-boundaries.
+autolinks like https://example.com/
+mixed, tables, charts, quotes, lists,
+code, and deck slide boundaries.
 
 [1;32m# [0m[1;32mInline And Containers[0m
 

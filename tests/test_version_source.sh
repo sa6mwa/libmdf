@@ -25,6 +25,10 @@ git -C "$REPO" commit -q -m initial
 git -C "$REPO" tag v2.3.4
 
 test "$(sh "$REPO/scripts/version.sh")" = "2.3.4" || fail "exact v tag must resolve release version"
+
+git -C "$REPO" tag -a v9.9.9 -m annotated
+test "$(sh "$REPO/scripts/version.sh")" = "2.3.4" ||
+  fail "annotated v tag must not satisfy lightweight release version contract"
 sh "$REPO/scripts/package_source.sh" >/dev/null
 test -f "$REPO/dist/libmdf-2.3.4.tar.gz" || fail "source archive was not produced from tag version"
 test "$(tar -xOzf "$REPO/dist/libmdf-2.3.4.tar.gz" libmdf-2.3.4/VERSION)" = "2.3.4" ||
@@ -46,6 +50,10 @@ git -C "$REPO" tag v2.9.9
 git -C "$REPO" tag v2.10.0
 test "$(PATH="$NOSORT:$PATH" sh "$REPO/scripts/version.sh")" = "2.10.0" ||
   fail "multiple tags on HEAD must resolve highest semver without GNU sort"
+git -C "$REPO" tag v99.99.99
+if sh "$REPO/scripts/version.sh" >/dev/null 2>&1; then
+  fail "reserved lifecycle test tag must reject release version resolution"
+fi
 
 cp "$ROOT/scripts/version.sh" "$UNTAGGED/scripts/version.sh"
 git -C "$UNTAGGED" init -q

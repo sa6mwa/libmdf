@@ -3,6 +3,7 @@
 
 #include <libmdf/mdf.h>
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -1046,6 +1047,74 @@ static int lua_mdf_terminal_width(lua_State *L)
     return 1;
 }
 
+static int lua_mdf_pager_format_is_markdown_media_type(const char *value, size_t value_len)
+{
+    static const char media_type[] = "text/markdown";
+    size_t i;
+    size_t media_i;
+
+    i = 0;
+    while (i < value_len && isspace((unsigned char)value[i])) i++;
+    for (media_i = 0; media_type[media_i] != '\0'; media_i++, i++) {
+        if (i >= value_len || tolower((unsigned char)value[i]) != media_type[media_i]) return 0;
+    }
+    while (i < value_len && isspace((unsigned char)value[i])) i++;
+    return i == value_len || value[i] == ';';
+}
+
+static int lua_mdf_pager_format_equals(const char *value, size_t value_len, const char *expected)
+{
+    size_t expected_len;
+
+    expected_len = strlen(expected);
+    return value_len == expected_len && memcmp(value, expected, expected_len) == 0;
+}
+
+static int lua_mdf_pager(lua_State *L)
+{
+    const char *path;
+    mdf_options opts;
+    lua_mdf_trace_ctx trace_ctx;
+    mdf_pager_format format;
+    mdf_status st;
+
+    path = luaL_checkstring(L, 1);
+    mdf_options_init(&opts);
+    trace_ctx.L = L;
+    trace_ctx.ref = LUA_NOREF;
+    format = MDF_PAGER_FORMAT_AUTO;
+    if (!lua_isnoneornil(L, 2)) {
+        const char *value;
+        size_t value_len;
+
+        luaL_checktype(L, 2, LUA_TTABLE);
+        lua_getfield(L, 2, "format");
+        if (!lua_isnil(L, -1)) {
+            value = luaL_checklstring(L, -1, &value_len);
+            if (lua_mdf_pager_format_equals(value, value_len, "markdown") ||
+                lua_mdf_pager_format_is_markdown_media_type(value, value_len)) {
+                format = MDF_PAGER_FORMAT_MARKDOWN;
+            } else if (lua_mdf_pager_format_equals(value, value_len, "text")) {
+                format = MDF_PAGER_FORMAT_TEXT;
+            } else {
+                lua_pop(L, 1);
+                return luaL_error(L, "pager format must be markdown, text, or text/markdown");
+            }
+        }
+        lua_pop(L, 1);
+        lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
+    }
+    st = mdf_pager_file(path, &opts, format);
+    if (trace_ctx.ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
+    }
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_pager: %s", mdf_status_string(st));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 static const luaL_Reg lua_mdf_funcs[] = {
     {"new", lua_mdf_new},
     {"create", lua_mdf_new},
@@ -1060,6 +1129,7 @@ static const luaL_Reg lua_mdf_funcs[] = {
     {"status_string", lua_mdf_status_string},
     {"detect_osc8_support", lua_mdf_detect_osc8_support},
     {"terminal_width", lua_mdf_terminal_width},
+    {"pager", lua_mdf_pager},
     {NULL, NULL}
 };
 

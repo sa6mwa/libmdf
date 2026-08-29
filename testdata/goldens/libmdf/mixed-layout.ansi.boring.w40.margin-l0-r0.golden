@@ -4,10 +4,9 @@ This fixture is intentionally compact
 but broad. It exercises headings,
 paragraph wrapping, inline emphasis,
 strong text, inline code, links,
-autolinks like https:
-//example.com/mixed, tables, charts,
-quotes, lists, code, and deck slide
-boundaries.
+autolinks like https://example.com/
+mixed, tables, charts, quotes, lists,
+code, and deck slide boundaries.
 
 # Inline And Containers
 

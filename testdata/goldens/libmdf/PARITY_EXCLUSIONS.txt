@@ -1,0 +1,40 @@
+# Deliberate project contract exceptions to Go mdf. URI entries preserve `://`
+# as an atomic delimiter at narrow ANSI widths rather than emitting `https:`
+# followed by a wrapped `//host`. `ansi` is a final-output divergence; `trace`
+# is an emission-boundary divergence. These are intentional, not parity
+# regressions to restore. Every ANSI/trace skipped case has styled and boring
+# zero-margin libmdf ANSI goldens at its exact width, plus at least four ANSI
+# goldens for the source; every HTML exception has exact HTML goldens.
+# Go mdf places inline-code link-label text outside the OSC8 hyperlink and
+# parses ***foo** as combined emphasis. Libmdf instead keeps styled labels
+# clickable and follows CommonMark's literal-* plus strong interpretation.
+# These exact libmdf goldens make that deliberate behavioral authority
+# explicit rather than silently weakening the parity gate.
+html testdata/styled-link-labels.md
+ansi testdata/styled-link-labels.md 20
+ansi testdata/styled-link-labels.md 40
+ansi testdata/styled-link-labels.md 80
+ansi testdata/styled-link-labels.md 100
+ansi testdata/styled-link-labels.md 120
+ansi testdata/centaur-post.md 20
+ansi testdata/frontmatter2.md 20
+ansi testdata/future/linkify.md 20
+ansi testdata/future/linkify.md 40
+ansi testdata/future/reflinks.md 20
+trace testdata/centaur-post.md 20
+trace testdata/frontmatter2.md 20
+trace testdata/future/linkify.md 20
+trace testdata/future/linkify.md 40
+trace testdata/future/linkify.md 80
+trace testdata/future/linkify.md 100
+trace testdata/future/linkify.md 120
+trace testdata/future/reflinks.md 20
+trace testdata/future/reflinks.md 40
+trace testdata/future/reflinks.md 80
+trace testdata/future/reflinks.md 100
+trace testdata/future/reflinks.md 120
+trace testdata/styled-link-labels.md 20
+trace testdata/styled-link-labels.md 40
+trace testdata/styled-link-labels.md 80
+trace testdata/styled-link-labels.md 100
+trace testdata/styled-link-labels.md 120

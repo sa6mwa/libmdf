@@ -2,6 +2,7 @@ local mdf = require("libmdf")
 
 local opts = {}
 local input
+local repeat_count = 1
 local i = 1
 
 while i <= #arg do
@@ -12,6 +13,10 @@ while i <= #arg do
     opts.format = "html"
   elseif a == "--deck" then
     opts.format = "deck"
+  elseif a == "--repeat" then
+    i = i + 1
+    repeat_count = tonumber(arg[i])
+    assert(repeat_count and repeat_count > 0 and repeat_count == math.floor(repeat_count), "--repeat must be a positive integer")
   elseif a == "-w" or a == "--width" then
     i = i + 1
     opts.width = tonumber(arg[i])
@@ -41,18 +46,29 @@ end
 
 assert(input, "missing input")
 
-local f = assert(io.open(input, "rb"))
-local eof = false
+for run = 1, repeat_count do
+  local f = assert(io.open(input, "rb"))
+  local eof = false
+  local bytes = 0
 
-mdf.render_stream(function(cap)
-  if eof then return nil end
-  local chunk = f:read(math.min(cap, 4096))
-  if not chunk or #chunk == 0 then
-    eof = true
-    f:close()
-    return nil
+  mdf.render_stream(function(cap)
+    if eof then return nil end
+    local chunk = f:read(math.min(cap, 4096))
+    if not chunk or #chunk == 0 then
+      eof = true
+      f:close()
+      return nil
+    end
+    return chunk
+  end, function(chunk)
+    if repeat_count == 1 then
+      io.write(chunk)
+    else
+      bytes = bytes + #chunk
+    end
+  end, opts)
+
+  if repeat_count > 1 then
+    assert(bytes > 0, "renderer produced no output")
   end
-  return chunk
-end, function(chunk)
-  io.write(chunk)
-end, opts)
+end

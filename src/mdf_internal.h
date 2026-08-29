@@ -125,6 +125,7 @@ typedef struct mdf_impl {
     int ansi_line_has_space;
     char ansi_prev_char;
     int ansi_punct_quote_pending;
+    int ansi_uri_scheme_pending;
     char *ansi_word;
     size_t ansi_word_len;
     size_t ansi_word_cols;
@@ -181,6 +182,7 @@ typedef struct mdf_impl {
     int inline_emph_close_count;
     int inline_emph_pending;
     int inline_emph_after_word;
+    int inline_emph_parenthesized;
     int inline_emph_streaming;
     int inline_emph_skip_spaces;
     char inline_emph_nested_delim;
@@ -245,6 +247,7 @@ typedef struct mdf_parser_impl {
 typedef struct mdf_table_filter mdf_table_filter;
 
 void mdf_allocator_normalize(mdf_allocator *allocator);
+void mdf_allocator_prepare(mdf_allocator *allocator);
 void mdf_memory_init(mdf_memory *memory, const mdf_allocator *backing, const mdf_memory_options *opts);
 void mdf_memory_destroy(mdf_memory *memory);
 mdf_allocator mdf_memory_allocator(mdf_memory *memory);

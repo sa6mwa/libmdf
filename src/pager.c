@@ -1,0 +1,2011 @@
+#include "mdf_internal.h"
+#include "pager_ratio.h"
+#include "render_internal.h"
+#include "unicode_casefold.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
+
+#define MDF_PAGER_RESIZE_DEBOUNCE_MS 250L
+#define MDF_PAGER_TERMINATION_SIGNAL_COUNT 7
+#define MDF_PAGER_MIN_RENDER_WIDTH 3
+
+typedef struct mdf_pager_buffer {
+    char *data;
+    size_t len;
+    size_t cap;
+    mdf_allocator allocator;
+} mdf_pager_buffer;
+
+typedef struct mdf_pager_buffer_source {
+    const mdf_pager_buffer *buffer;
+    size_t offset;
+} mdf_pager_buffer_source;
+
+typedef struct mdf_pager_view {
+    mdf_allocator allocator;
+    mdf_pager_buffer bytes;
+    mdf_pager_buffer searchable;
+    size_t *search_offsets;
+    size_t search_offset_cap;
+    size_t *lines;
+    size_t line_count;
+    size_t line_cap;
+} mdf_pager_view;
+
+typedef struct mdf_pager_reflow_state {
+    mdf_pager_view *view;
+    mdf_pager_buffer osc8_start;
+    mdf_pager_buffer sgr_start;
+    int width;
+    int styled;
+    int col;
+    int osc8_active;
+} mdf_pager_reflow_state;
+
+typedef struct mdf_pager_match {
+    size_t start;
+    size_t end;
+} mdf_pager_match;
+
+typedef struct mdf_pager_search {
+    mdf_allocator allocator;
+    mdf_pager_buffer query;
+    mdf_pager_match *matches;
+    size_t count;
+    size_t cap;
+    size_t selected;
+    int editing;
+    int active;
+} mdf_pager_search;
+
+typedef enum mdf_pager_key {
+    MDF_PAGER_KEY_NONE,
+    MDF_PAGER_KEY_QUIT,
+    MDF_PAGER_KEY_UP,
+    MDF_PAGER_KEY_DOWN,
+    MDF_PAGER_KEY_PAGE_UP,
+    MDF_PAGER_KEY_PAGE_DOWN,
+    MDF_PAGER_KEY_HOME,
+    MDF_PAGER_KEY_END,
+    MDF_PAGER_KEY_HALF_UP,
+    MDF_PAGER_KEY_HALF_DOWN
+} mdf_pager_key;
+
+#define MDF_PAGER_READ_INTERRUPTED (-2)
+
+typedef struct mdf_pager_termination_handlers {
+    struct sigaction old_actions[MDF_PAGER_TERMINATION_SIGNAL_COUNT];
+    size_t count;
+} mdf_pager_termination_handlers;
+
+static const int mdf_pager_termination_signals[MDF_PAGER_TERMINATION_SIGNAL_COUNT] = {
+    SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGTSTP, SIGTTIN, SIGTTOU
+};
+
+static volatile sig_atomic_t mdf_pager_winch_count;
+static volatile sig_atomic_t mdf_pager_termination_signal;
+
+#ifdef LIBMDF_PAGER_TESTING
+static volatile sig_atomic_t mdf_pager_test_fail_termination_handler_install;
+
+/* Test-only fault injection keeps the cleanup path deterministically
+ * observable without changing the public pager API or relying on host signal
+ * policy.  This symbol is compiled only into test builds. */
+void mdf_pager_test_set_termination_handler_install_failure(int enabled)
+{
+    mdf_pager_test_fail_termination_handler_install = enabled ? 1 : 0;
+}
+#endif
+
+static void mdf_pager_on_winch(int signal_number)
+{
+    (void)signal_number;
+    mdf_pager_winch_count++;
+}
+
+static void mdf_pager_on_termination(int signal_number)
+{
+    if (mdf_pager_termination_signal == 0) {
+        mdf_pager_termination_signal = signal_number;
+    }
+}
+
+static int mdf_pager_install_termination_handlers(mdf_pager_termination_handlers *handlers)
+{
+    struct sigaction action;
+    size_t i;
+
+#ifdef LIBMDF_PAGER_TESTING
+    if (mdf_pager_test_fail_termination_handler_install) {
+        errno = EPERM;
+        return -1;
+    }
+#endif
+    memset(handlers, 0, sizeof(*handlers));
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = mdf_pager_on_termination;
+    sigemptyset(&action.sa_mask);
+    for (i = 0; i < MDF_PAGER_TERMINATION_SIGNAL_COUNT; i++) {
+        if (sigaction(mdf_pager_termination_signals[i], &action, &handlers->old_actions[i]) != 0) {
+            while (i > 0) {
+                i--;
+                (void)sigaction(mdf_pager_termination_signals[i], &handlers->old_actions[i], NULL);
+            }
+            return -1;
+        }
+        handlers->count++;
+    }
+    return 0;
+}
+
+static void mdf_pager_restore_termination_handlers(const mdf_pager_termination_handlers *handlers)
+{
+    size_t i;
+
+    for (i = 0; i < handlers->count; i++) {
+        (void)sigaction(mdf_pager_termination_signals[i], &handlers->old_actions[i], NULL);
+    }
+}
+
+/* Keep the pager handlers from observing a signal after cleanup has chosen
+ * which one to re-raise.  Signals arriving while this mask is active remain
+ * pending and are delivered to the restored caller handlers on unmask. */
+static int mdf_pager_block_termination_signals(sigset_t *old_mask)
+{
+    sigset_t signals;
+    size_t i;
+
+    sigemptyset(&signals);
+    for (i = 0; i < MDF_PAGER_TERMINATION_SIGNAL_COUNT; i++) {
+        if (sigaddset(&signals, mdf_pager_termination_signals[i]) != 0) return -1;
+    }
+    return sigprocmask(SIG_BLOCK, &signals, old_mask);
+}
+
+static int mdf_pager_now(struct timespec *now)
+{
+    return clock_gettime(CLOCK_MONOTONIC, now) == 0 ? 0 : -1;
+}
+
+static long mdf_pager_resize_wait_ms(const struct timespec *last_winch)
+{
+    struct timespec now;
+    uintmax_t seconds;
+    long elapsed_ns;
+    long remaining_ns;
+
+    if (mdf_pager_now(&now) != 0 || now.tv_sec < last_winch->tv_sec) return 0;
+    seconds = (uintmax_t)now.tv_sec - (uintmax_t)last_winch->tv_sec;
+    if (seconds > 1) return 0;
+    if (seconds == 0) {
+        if (now.tv_nsec < last_winch->tv_nsec) return 0;
+        elapsed_ns = now.tv_nsec - last_winch->tv_nsec;
+    } else {
+        elapsed_ns = 1000000000L - last_winch->tv_nsec + now.tv_nsec;
+    }
+    if (elapsed_ns >= MDF_PAGER_RESIZE_DEBOUNCE_MS * 1000000L) return 0;
+    remaining_ns = MDF_PAGER_RESIZE_DEBOUNCE_MS * 1000000L - elapsed_ns;
+    return (remaining_ns + 999999L) / 1000000L;
+}
+
+static void mdf_pager_note_resize(sig_atomic_t *seen_winch, int *resize_pending,
+                                  struct timespec *last_winch)
+{
+    *seen_winch = mdf_pager_winch_count;
+    *resize_pending = 1;
+    if (mdf_pager_now(last_winch) != 0) {
+        last_winch->tv_sec = 0;
+        last_winch->tv_nsec = 0;
+    }
+}
+
+static void mdf_pager_buffer_destroy(mdf_pager_buffer *buffer)
+{
+    mdf_free_mem(&buffer->allocator, buffer->data, buffer->cap);
+    memset(buffer, 0, sizeof(*buffer));
+}
+
+static void mdf_pager_buffer_init_with_allocator(mdf_pager_buffer *buffer,
+                                                  const mdf_allocator *allocator)
+{
+    memset(buffer, 0, sizeof(*buffer));
+    if (allocator != NULL) {
+        buffer->allocator = *allocator;
+    }
+    mdf_allocator_normalize(&buffer->allocator);
+}
+
+static void mdf_pager_buffer_init(mdf_pager_buffer *buffer, const mdf_options *opts)
+{
+    mdf_pager_buffer_init_with_allocator(buffer, opts == NULL ? NULL : &opts->allocator);
+}
+
+static void *mdf_pager_array_realloc(mdf_allocator *allocator, void *ptr,
+                                     size_t old_count, size_t new_count, size_t element_size)
+{
+    if (old_count > (size_t)-1 / element_size || new_count > (size_t)-1 / element_size) {
+        return NULL;
+    }
+    return mdf_realloc_mem(allocator, ptr, old_count * element_size, new_count * element_size);
+}
+
+static int mdf_pager_buffer_append(mdf_pager_buffer *buffer, const char *src, size_t len)
+{
+    size_t required;
+    size_t next_cap;
+    char *next;
+
+    if (len > (size_t)-1 - buffer->len - 1) {
+        return -1;
+    }
+    required = buffer->len + len + 1;
+    if (required > buffer->cap) {
+        next_cap = buffer->cap == 0 ? 1024 : buffer->cap;
+        while (next_cap < required) {
+            if (next_cap > (size_t)-1 / 2) {
+                next_cap = required;
+                break;
+            }
+            next_cap *= 2;
+        }
+        next = (char *)mdf_realloc_mem(&buffer->allocator, buffer->data, buffer->cap, next_cap);
+        if (next == NULL) {
+            return -1;
+        }
+        buffer->data = next;
+        buffer->cap = next_cap;
+    }
+    if (len > 0) {
+        memcpy(buffer->data + buffer->len, src, len);
+        buffer->len += len;
+    }
+    buffer->data[buffer->len] = '\0';
+    return 0;
+}
+
+static int mdf_pager_buffer_append_byte(mdf_pager_buffer *buffer, unsigned char byte)
+{
+    char c;
+
+    c = (char)byte;
+    return mdf_pager_buffer_append(buffer, &c, 1);
+}
+
+static mdf_status mdf_pager_read_file(int fd, mdf_pager_buffer *out)
+{
+    char chunk[4096];
+    ssize_t n;
+
+    for (;;) {
+        n = read(fd, chunk, sizeof(chunk));
+        if (n > 0) {
+            if (mdf_pager_buffer_append(out, chunk, (size_t)n) != 0) return MDF_ERROR_NOMEM;
+            continue;
+        }
+        if (n == 0) return MDF_OK;
+        if (errno != EINTR) return MDF_ERROR_IO;
+    }
+}
+
+static mdf_status mdf_pager_read_source(mdf_source *source, mdf_pager_buffer *out)
+{
+    char chunk[4096];
+
+    for (;;) {
+        int err;
+        size_t n;
+
+        err = 0;
+        n = source->read(source->userdata, chunk, sizeof(chunk), &err);
+        if (n > sizeof(chunk) || err != 0) return MDF_ERROR_IO;
+        if (n == 0) return MDF_OK;
+        if (mdf_pager_buffer_append(out, chunk, n) != 0) return MDF_ERROR_NOMEM;
+    }
+}
+
+static size_t mdf_pager_buffer_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    mdf_pager_buffer_source *source;
+    size_t n;
+
+    source = (mdf_pager_buffer_source *)userdata;
+    if (source->offset >= source->buffer->len) {
+        *err = 0;
+        return 0;
+    }
+    n = source->buffer->len - source->offset;
+    if (n > cap) n = cap;
+    memcpy(dst, source->buffer->data + source->offset, n);
+    source->offset += n;
+    *err = 0;
+    return n;
+}
+
+static int mdf_pager_is_markdown_path(const char *path)
+{
+    const char *dot;
+
+    dot = strrchr(path, '.');
+    if (dot == NULL || dot[1] == '\0' || dot[2] == '\0' || dot[3] != '\0') {
+        return 0;
+    }
+    return (dot[1] == 'm' || dot[1] == 'M') && (dot[2] == 'd' || dot[2] == 'D');
+}
+
+static void mdf_pager_retain_emission_buffer(mdf_options *opts, mdf *renderer)
+{
+    mdf_impl *impl;
+
+    if (opts == NULL || renderer == NULL || renderer->impl == NULL ||
+        opts->emission_buffer.data == NULL || !opts->emission_buffer.take_ownership) {
+        return;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    if (!impl->emit_owns_buf) {
+        return;
+    }
+    opts->emission_buffer.data = impl->emit_buf;
+    opts->emission_buffer.cap = impl->emit_cap;
+    opts->emission_buffer.fixed = impl->emit_fixed_mode;
+    impl->emit_owns_buf = 0;
+    impl->emit_workspace_owned = 0;
+}
+
+static void mdf_pager_release_emission_buffer(mdf_options *opts)
+{
+    if (opts == NULL || opts->emission_buffer.data == NULL ||
+        !opts->emission_buffer.take_ownership) {
+        return;
+    }
+    mdf_free_mem(&opts->allocator, opts->emission_buffer.data, opts->emission_buffer.cap);
+    memset(&opts->emission_buffer, 0, sizeof(opts->emission_buffer));
+}
+
+static int mdf_pager_arguments_valid(const char *name, const mdf_options *render_options,
+                                     mdf_pager_format format)
+{
+    return name != NULL && name[0] != '\0' &&
+        (format == MDF_PAGER_FORMAT_AUTO || format == MDF_PAGER_FORMAT_TEXT ||
+         format == MDF_PAGER_FORMAT_MARKDOWN) &&
+        isatty(STDIN_FILENO) && isatty(STDOUT_FILENO) &&
+        (render_options == NULL || render_options->write_trace.emit == NULL);
+}
+
+static mdf_status mdf_pager_validate_options(const mdf_options *render_options)
+{
+    mdf_options opts;
+    mdf *renderer;
+    mdf_status st;
+
+    mdf_options_init(&opts);
+    if (render_options != NULL) opts = *render_options;
+    /* Validation must not consume a buffer the caller transfers to the pager. */
+    opts.emission_buffer.take_ownership = 0;
+    if (opts.margin_left >= 0 && opts.margin_right >= 0) {
+        if (opts.margin_left > INT_MAX - opts.margin_right - MDF_PAGER_MIN_RENDER_WIDTH) {
+            return MDF_ERROR_INVALID;
+        }
+        opts.width = opts.margin_left + opts.margin_right + MDF_PAGER_MIN_RENDER_WIDTH;
+    } else {
+        opts.width = MDF_PAGER_MIN_RENDER_WIDTH;
+    }
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
+    if (st == MDF_OK) renderer->destroy(renderer);
+    return st;
+}
+
+static int mdf_pager_render_width(const mdf_options *opts, int width)
+{
+    int minimum_width;
+
+    if (width < MDF_PAGER_MIN_RENDER_WIDTH) width = MDF_PAGER_MIN_RENDER_WIDTH;
+    if (opts == NULL || opts->margin_left < 0 || opts->margin_right < 0) return width;
+    if (opts->margin_left > INT_MAX - opts->margin_right - MDF_PAGER_MIN_RENDER_WIDTH) return width;
+    minimum_width = opts->margin_left + opts->margin_right + MDF_PAGER_MIN_RENDER_WIDTH;
+    return width >= minimum_width ? width : minimum_width;
+}
+
+static int mdf_pager_append_escape(mdf_pager_buffer *out, const char *src, size_t len, size_t *index)
+{
+    size_t i;
+
+    i = *index;
+    if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+        return -1;
+    }
+    i++;
+    if (i < len && src[i] == '[') {
+        if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+            return -1;
+        }
+        i++;
+        while (i < len) {
+            unsigned char byte;
+
+            byte = (unsigned char)src[i];
+            if (mdf_pager_buffer_append_byte(out, byte) != 0) {
+                return -1;
+            }
+            i++;
+            if (byte >= 0x40 && byte <= 0x7e) {
+                break;
+            }
+        }
+    } else if (i < len && src[i] == ']') {
+        if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+            return -1;
+        }
+        i++;
+        while (i < len) {
+            unsigned char byte;
+
+            byte = (unsigned char)src[i];
+            if (mdf_pager_buffer_append_byte(out, byte) != 0) {
+                return -1;
+            }
+            i++;
+            if (byte == '\a') {
+                break;
+            }
+            if (byte == 0x1b && i < len && src[i] == '\\') {
+                if (mdf_pager_buffer_append_byte(out, (unsigned char)src[i]) != 0) {
+                    return -1;
+                }
+                i++;
+                break;
+            }
+        }
+    }
+    *index = i;
+    return 0;
+}
+
+static int mdf_pager_escape_is_osc8_start(const char *src, size_t len)
+{
+    static const char prefix[] = "\033]8;;";
+    static const char close[] = "\033]8;;\033\\";
+
+    return len > sizeof(close) - 1 && len >= sizeof(prefix) - 1 &&
+        memcmp(src, prefix, sizeof(prefix) - 1) == 0;
+}
+
+static int mdf_pager_escape_is_osc8_close(const char *src, size_t len)
+{
+    static const char close[] = "\033]8;;\033\\";
+
+    return len == sizeof(close) - 1 && memcmp(src, close, sizeof(close) - 1) == 0;
+}
+
+static int mdf_pager_escape_is_sgr(const char *src, size_t len)
+{
+    return len >= 3 && src[0] == '\033' && src[1] == '[' && src[len - 1] == 'm';
+}
+
+static int mdf_pager_sgr_has_nonreset_parameter(const char *src, size_t len)
+{
+    size_t i;
+    int value;
+    int have_value;
+
+    if (!mdf_pager_escape_is_sgr(src, len)) return 0;
+    value = 0;
+    have_value = 0;
+    for (i = 2; i + 1 < len; i++) {
+        unsigned char byte;
+
+        byte = (unsigned char)src[i];
+        if (byte >= '0' && byte <= '9') {
+            value = value * 10 + (int)(byte - '0');
+            have_value = 1;
+            continue;
+        }
+        if (byte == ';') {
+            if (have_value && value != 0) return 1;
+            value = 0;
+            have_value = 0;
+            continue;
+        }
+        return 1;
+    }
+    return have_value && value != 0;
+}
+
+static int mdf_pager_sgr_has_reset_parameter(const char *src, size_t len)
+{
+    size_t i;
+    int value;
+    int have_value;
+
+    if (!mdf_pager_escape_is_sgr(src, len)) return 0;
+    if (len == 3) return 1;
+    value = 0;
+    have_value = 0;
+    for (i = 2; i + 1 < len; i++) {
+        unsigned char byte;
+
+        byte = (unsigned char)src[i];
+        if (byte >= '0' && byte <= '9') {
+            value = value * 10 + (int)(byte - '0');
+            have_value = 1;
+            continue;
+        }
+        if (byte == ';') {
+            if (!have_value || value == 0) return 1;
+            value = 0;
+            have_value = 0;
+            continue;
+        }
+        return 0;
+    }
+    return !have_value || value == 0;
+}
+
+static int mdf_pager_reflow_track_escape(mdf_pager_reflow_state *reflow, const char *src, size_t len)
+{
+    if (mdf_pager_escape_is_sgr(src, len)) {
+        if (mdf_pager_sgr_has_reset_parameter(src, len)) {
+            reflow->sgr_start.len = 0;
+        }
+        if (mdf_pager_sgr_has_nonreset_parameter(src, len) &&
+            mdf_pager_buffer_append(&reflow->sgr_start, src, len) != 0) {
+            return -1;
+        }
+    }
+    if (mdf_pager_escape_is_osc8_close(src, len)) {
+        reflow->osc8_active = 0;
+        return 0;
+    }
+    if (mdf_pager_escape_is_osc8_start(src, len)) {
+        reflow->osc8_start.len = 0;
+        if (mdf_pager_buffer_append(&reflow->osc8_start, src, len) != 0) return -1;
+        reflow->osc8_active = 1;
+    }
+    return 0;
+}
+
+static int mdf_pager_reflow_append_wrap(mdf_pager_reflow_state *reflow)
+{
+    static const char close[] = "\033]8;;\033\\";
+
+    if (reflow->osc8_active && mdf_pager_buffer_append(&reflow->view->bytes, close, sizeof(close) - 1) != 0) {
+        return -1;
+    }
+    if (mdf_pager_buffer_append_byte(&reflow->view->bytes, '\n') != 0) return -1;
+    if (reflow->osc8_active &&
+        mdf_pager_buffer_append(&reflow->view->bytes, reflow->osc8_start.data, reflow->osc8_start.len) != 0) {
+        return -1;
+    }
+    if (reflow->sgr_start.len > 0 &&
+        mdf_pager_buffer_append(&reflow->view->bytes, reflow->sgr_start.data, reflow->sgr_start.len) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int mdf_pager_append_text_byte(mdf_pager_buffer *out, unsigned char byte)
+{
+    if (byte >= 0x80 && byte <= 0x9f) {
+        if (mdf_pager_buffer_append(out, "M-", 2) != 0) return -1;
+        return mdf_pager_append_text_byte(out, (unsigned char)(byte - 0x80));
+    }
+    if (byte < 32 || byte == 127) {
+        if (mdf_pager_buffer_append_byte(out, '^') != 0 ||
+            mdf_pager_buffer_append_byte(out, byte == 127 ? '?' : (unsigned char)(byte + 64)) != 0) {
+            return -1;
+        }
+        return 0;
+    }
+    return mdf_pager_buffer_append_byte(out, byte);
+}
+
+static size_t mdf_pager_escape_end(const char *src, size_t len, size_t i)
+{
+    if (i + 1 >= len || src[i] != '\033') return i + 1;
+    i += 2;
+    if (src[i - 1] == '[') {
+        while (i < len) {
+            unsigned char byte;
+
+            byte = (unsigned char)src[i++];
+            if (byte >= 0x40 && byte <= 0x7e) break;
+        }
+    } else if (src[i - 1] == ']') {
+        while (i < len) {
+            if (src[i] == '\a') return i + 1;
+            if (src[i] == '\033' && i + 1 < len && src[i + 1] == '\\') return i + 2;
+            i++;
+        }
+    }
+    return i;
+}
+
+static int mdf_pager_view_build_searchable(mdf_pager_view *view)
+{
+    size_t i;
+
+    for (i = 0; i < view->bytes.len;) {
+        size_t start;
+        unsigned char byte;
+
+        start = i;
+        byte = (unsigned char)view->bytes.data[i];
+        if (byte == 0x1b) {
+            i = mdf_pager_escape_end(view->bytes.data, view->bytes.len, i);
+            continue;
+        }
+        if (byte == '\n') byte = ' ';
+        if (mdf_pager_buffer_append_byte(&view->searchable, byte) != 0) return -1;
+        if (view->searchable.len > view->search_offset_cap) {
+            size_t next_cap;
+            size_t *next;
+
+            next_cap = view->search_offset_cap == 0 ? 1024 : view->search_offset_cap;
+            while (next_cap < view->searchable.len) {
+                if (next_cap > (size_t)-1 / 2) return -1;
+                next_cap *= 2;
+            }
+            next = (size_t *)mdf_pager_array_realloc(&view->allocator, view->search_offsets,
+                                                      view->search_offset_cap, next_cap, sizeof(*next));
+            if (next == NULL) return -1;
+            view->search_offsets = next;
+            view->search_offset_cap = next_cap;
+        }
+        view->search_offsets[view->searchable.len - 1] = start;
+        i++;
+    }
+    return 0;
+}
+
+static int mdf_pager_search_equal(const char *haystack, size_t haystack_len, size_t at,
+                                  const char *needle, size_t needle_len, size_t *end)
+{
+    unsigned long haystack_folded[3];
+    unsigned long needle_folded[3];
+    unsigned long codepoint;
+    size_t haystack_offset;
+    size_t needle_offset;
+    size_t haystack_folded_len;
+    size_t needle_folded_len;
+    size_t haystack_folded_index;
+    size_t needle_folded_index;
+    size_t consumed;
+
+    haystack_offset = at;
+    needle_offset = 0;
+    haystack_folded_len = 0;
+    needle_folded_len = 0;
+    haystack_folded_index = 0;
+    needle_folded_index = 0;
+    for (;;) {
+        if (needle_folded_index == needle_folded_len) {
+            if (needle_offset == needle_len) {
+                if (haystack_folded_index != haystack_folded_len) return 0;
+                if (end != NULL) *end = haystack_offset;
+                return 1;
+            }
+            consumed = utf8_decode_codepoint(needle + needle_offset,
+                                              needle_len - needle_offset, &codepoint);
+            if (consumed == 0) return 0;
+            needle_offset += consumed;
+            needle_folded_len = mdf_unicode_casefold(codepoint, needle_folded);
+            needle_folded_index = 0;
+        }
+        if (haystack_folded_index == haystack_folded_len) {
+            if (haystack_offset == haystack_len) return 0;
+            consumed = utf8_decode_codepoint(haystack + haystack_offset,
+                                              haystack_len - haystack_offset, &codepoint);
+            if (consumed == 0) return 0;
+            haystack_offset += consumed;
+            haystack_folded_len = mdf_unicode_casefold(codepoint, haystack_folded);
+            haystack_folded_index = 0;
+        }
+        if (haystack_folded[haystack_folded_index] != needle_folded[needle_folded_index]) return 0;
+        haystack_folded_index++;
+        needle_folded_index++;
+    }
+}
+
+static size_t mdf_pager_view_visible_anchor(const mdf_pager_view *view, size_t top);
+
+static int mdf_pager_view_anchor_text(const mdf_pager_view *view, size_t top,
+                                      mdf_pager_buffer *anchor)
+{
+    size_t offset;
+
+    offset = mdf_pager_view_visible_anchor(view, top);
+    while (offset < view->searchable.len &&
+           (view->searchable.data[offset] == ' ' || view->searchable.data[offset] == '\t')) {
+        offset++;
+    }
+    while (offset < view->searchable.len && view->searchable.data[offset] != ' ' &&
+           view->searchable.data[offset] != '\t' && anchor->len < 64) {
+        if (mdf_pager_buffer_append_byte(anchor, (unsigned char)view->searchable.data[offset]) != 0) return -1;
+        offset++;
+    }
+    return 0;
+}
+
+static int mdf_pager_view_find_anchor(const mdf_pager_view *view, const mdf_pager_buffer *anchor,
+                                      size_t expected, size_t *offset)
+{
+    size_t i;
+    size_t best;
+    size_t best_distance;
+    int found;
+
+    if (anchor->len == 0) return 0;
+    found = 0;
+    best = 0;
+    best_distance = 0;
+    for (i = 0; i < view->searchable.len; i++) {
+        size_t distance;
+
+        if (!mdf_pager_search_equal(view->searchable.data, view->searchable.len, i,
+                                    anchor->data, anchor->len, NULL)) continue;
+        distance = i > expected ? i - expected : expected - i;
+        if (!found || distance < best_distance) {
+            found = 1;
+            best = i;
+            best_distance = distance;
+        }
+    }
+    if (found) *offset = best;
+    return found;
+}
+
+static void mdf_pager_search_destroy(mdf_pager_search *search)
+{
+    mdf_pager_buffer_destroy(&search->query);
+    mdf_free_mem(&search->allocator, search->matches, search->cap * sizeof(*search->matches));
+    memset(search, 0, sizeof(*search));
+}
+
+static void mdf_pager_search_init(mdf_pager_search *search, const mdf_options *opts)
+{
+    memset(search, 0, sizeof(*search));
+    if (opts != NULL) {
+        search->allocator = opts->allocator;
+    }
+    mdf_allocator_normalize(&search->allocator);
+    mdf_pager_buffer_init_with_allocator(&search->query, &search->allocator);
+}
+
+static int mdf_pager_search_add_match(mdf_pager_search *search, size_t start, size_t end)
+{
+    mdf_pager_match *next;
+    size_t next_cap;
+
+    if (search->count == search->cap) {
+        if (search->cap > (size_t)-1 / 2) return -1;
+        next_cap = search->cap == 0 ? 16 : search->cap * 2;
+        next = (mdf_pager_match *)mdf_pager_array_realloc(&search->allocator, search->matches,
+                                                           search->cap, next_cap, sizeof(*next));
+        if (next == NULL) return -1;
+        search->matches = next;
+        search->cap = next_cap;
+    }
+    search->matches[search->count].start = start;
+    search->matches[search->count].end = end;
+    search->count++;
+    return 0;
+}
+
+static int mdf_pager_search_refresh(mdf_pager_search *search, const mdf_pager_view *view)
+{
+    size_t i;
+
+    mdf_free_mem(&search->allocator, search->matches, search->cap * sizeof(*search->matches));
+    search->matches = NULL;
+    search->count = 0;
+    search->cap = 0;
+    search->selected = 0;
+    if (search->query.len == 0) return 0;
+    for (i = 0; i < view->searchable.len; i++) {
+        size_t searchable_end;
+
+        if (((unsigned char)view->searchable.data[i] & 0xc0) == 0x80) continue;
+        if (mdf_pager_search_equal(view->searchable.data, view->searchable.len, i,
+                                   search->query.data, search->query.len, &searchable_end)) {
+            size_t start;
+            size_t end;
+
+            start = view->search_offsets[i];
+            end = view->search_offsets[searchable_end - 1] + 1;
+            if (mdf_pager_search_add_match(search, start, end) != 0) return -1;
+        }
+    }
+    return 0;
+}
+
+static int mdf_pager_search_refresh_preserving_selection(mdf_pager_search *search,
+                                                          const mdf_pager_view *view)
+{
+    size_t selected;
+
+    selected = search->selected;
+    if (mdf_pager_search_refresh(search, view) != 0) return -1;
+    if (search->count == 0) {
+        search->selected = 0;
+    } else if (selected >= search->count) {
+        search->selected = search->count - 1;
+    } else {
+        search->selected = selected;
+    }
+    return 0;
+}
+
+static size_t mdf_pager_utf8_complete_prefix(const char *text, size_t len)
+{
+    size_t i;
+
+    for (i = 0; i < len;) {
+        unsigned char byte;
+        size_t expected;
+        size_t j;
+
+        byte = (unsigned char)text[i];
+        if (byte < 0x80) {
+            i++;
+            continue;
+        }
+        if (byte < 0xc2 || byte > 0xf4) {
+            i++;
+            continue;
+        }
+        expected = byte < 0xe0 ? 2 : (byte < 0xf0 ? 3 : 4);
+        if (i + expected > len) break;
+        for (j = 1; j < expected; j++) {
+            if (((unsigned char)text[i + j] & 0xc0) != 0x80) break;
+        }
+        if (j != expected) break;
+        i += expected;
+    }
+    return i;
+}
+
+static size_t mdf_pager_utf8_display_prefix(const char *text, size_t len, size_t columns)
+{
+    size_t i;
+    size_t used;
+
+    i = 0;
+    used = 0;
+    while (i < len) {
+        unsigned long codepoint;
+        size_t unit_len;
+        size_t unit_width;
+
+        unit_len = utf8_decode_codepoint(text + i, len - i, &codepoint);
+        if (unit_len == 0) break;
+        unit_width = utf8_display_width(codepoint);
+        if (unit_width > columns - used) break;
+        used += unit_width;
+        i += unit_len;
+    }
+    return i;
+}
+
+static size_t mdf_pager_utf8_display_width(const char *text, size_t len)
+{
+    size_t prefix;
+    size_t width;
+    size_t i;
+
+    prefix = mdf_pager_utf8_display_prefix(text, len, (size_t)-1);
+    width = 0;
+    for (i = 0; i < prefix;) {
+        unsigned long codepoint;
+        size_t unit_len;
+
+        unit_len = utf8_decode_codepoint(text + i, prefix - i, &codepoint);
+        if (unit_len == 0) break;
+        width += utf8_display_width(codepoint);
+        i += unit_len;
+    }
+    return width;
+}
+
+static int mdf_pager_status_append_sanitized(mdf_pager_buffer *out, const char *text, size_t len)
+{
+    size_t i;
+
+    i = 0;
+    while (i < len) {
+        unsigned char byte;
+
+        byte = (unsigned char)text[i];
+        if (byte < 32 || byte == 127 || (byte >= 0x80 && byte <= 0x9f)) {
+            if (mdf_pager_append_text_byte(out, byte) != 0) return -1;
+            i++;
+            continue;
+        }
+        if (byte < 0x80) {
+            if (mdf_pager_buffer_append_byte(out, byte) != 0) return -1;
+            i++;
+        } else {
+            unsigned long codepoint;
+            size_t unit_len;
+
+            unit_len = utf8_decode_codepoint(text + i, len - i, &codepoint);
+            if (unit_len == 0 || codepoint < 32 || (codepoint >= 127 && codepoint <= 159)) {
+                if (mdf_pager_buffer_append_byte(out, '?') != 0) return -1;
+                i++;
+                continue;
+            }
+            if (mdf_pager_buffer_append(out, text + i, unit_len) != 0) return -1;
+            i += unit_len;
+        }
+    }
+    return 0;
+}
+
+static int mdf_pager_sanitize_markdown(const mdf_pager_buffer *input, mdf_pager_buffer *out)
+{
+    size_t i;
+
+    for (i = 0; i < input->len;) {
+        unsigned char byte;
+        unsigned long codepoint;
+        size_t unit_len;
+
+        byte = (unsigned char)input->data[i];
+        if ((byte < 32 && byte != '\n' && byte != '\r' && byte != '\t') || byte == 127 ||
+            (byte >= 0x80 && byte <= 0x9f)) {
+            if (mdf_pager_append_text_byte(out, byte) != 0) return -1;
+            i++;
+            continue;
+        }
+        if (byte < 0x80) {
+            if (mdf_pager_buffer_append_byte(out, byte) != 0) return -1;
+            i++;
+            continue;
+        }
+        unit_len = utf8_decode_codepoint(input->data + i, input->len - i, &codepoint);
+        if (unit_len == 0) return -1;
+        if (unit_len == 1) {
+            if (mdf_pager_append_text_byte(out, byte) != 0) return -1;
+        } else if (codepoint >= 0x80 && codepoint <= 0x9f) {
+            if (mdf_pager_append_text_byte(out, (unsigned char)codepoint) != 0) return -1;
+        } else if (mdf_pager_buffer_append(out, input->data + i, unit_len) != 0) {
+            return -1;
+        }
+        i += unit_len;
+    }
+    return 0;
+}
+
+static size_t mdf_pager_utf8_character_count(const mdf_pager_buffer *text)
+{
+    size_t i;
+    size_t count;
+    size_t complete_len;
+
+    complete_len = mdf_pager_utf8_complete_prefix(text->data, text->len);
+    count = 0;
+    for (i = 0; i < complete_len; i++) {
+        if (((unsigned char)text->data[i] & 0xc0) != 0x80) count++;
+    }
+    return count;
+}
+
+static void mdf_pager_search_clear_matches(mdf_pager_search *search)
+{
+    mdf_free_mem(&search->allocator, search->matches, search->cap * sizeof(*search->matches));
+    search->matches = NULL;
+    search->count = 0;
+    search->cap = 0;
+    search->selected = 0;
+}
+
+/* Cancelling or replacing a query is part of the same pager session. Keep
+ * its configured allocator so subsequent live-search buffers obey the
+ * caller's ownership and allocation policy. */
+static void mdf_pager_search_reset(mdf_pager_search *search)
+{
+    mdf_pager_buffer_destroy(&search->query);
+    mdf_pager_search_clear_matches(search);
+    search->editing = 0;
+    search->active = 0;
+    mdf_pager_buffer_init_with_allocator(&search->query, &search->allocator);
+}
+
+static int mdf_pager_search_update_live(mdf_pager_search *search, const mdf_pager_view *view)
+{
+    if (mdf_pager_utf8_complete_prefix(search->query.data, search->query.len) != search->query.len) {
+        return 0;
+    }
+    if (mdf_pager_utf8_character_count(&search->query) < 3) {
+        mdf_pager_search_clear_matches(search);
+        search->active = 0;
+        return 0;
+    }
+    search->active = 1;
+    return mdf_pager_search_refresh(search, view);
+}
+
+static void mdf_pager_search_backspace(mdf_pager_search *search)
+{
+    if (search->query.len == 0) return;
+    search->query.len--;
+    while (search->query.len > 0 &&
+           ((unsigned char)search->query.data[search->query.len] & 0xc0) == 0x80) {
+        search->query.len--;
+    }
+    search->query.data[search->query.len] = '\0';
+}
+
+static int mdf_pager_reflow_chunk(mdf_pager_reflow_state *reflow, const char *src, size_t len)
+{
+    size_t i;
+    mdf_pager_view *view;
+    int width;
+    int styled;
+    int col;
+
+    view = reflow->view;
+    width = reflow->width;
+    styled = reflow->styled;
+    col = reflow->col;
+    i = 0;
+    while (i < len) {
+        unsigned char byte;
+        unsigned long codepoint;
+        size_t unit_len;
+        int unit_width;
+        int text_c1;
+
+        byte = (unsigned char)src[i];
+        /* Normalize CRLF only. A standalone carriage return in ordinary text
+         * is content and must take the same safe caret-notation path as every
+         * other C0 control. */
+        if (!styled && byte == '\r' && i + 1 < len && src[i + 1] == '\n') {
+            i++;
+            continue;
+        }
+        if (byte == '\n') {
+            if (mdf_pager_buffer_append_byte(&view->bytes, byte) != 0) return -1;
+            col = 0;
+            i++;
+            continue;
+        }
+        if (styled && byte == 0x1b) {
+            size_t escape_start;
+
+            escape_start = i;
+            if (mdf_pager_append_escape(&view->bytes, src, len, &i) != 0) return -1;
+            if (mdf_pager_reflow_track_escape(reflow, src + escape_start, i - escape_start) != 0) return -1;
+            continue;
+        }
+        if (byte == '\t') {
+            int spaces;
+
+            spaces = 8 - (col % 8);
+            while (spaces-- > 0) {
+                if (col >= width) {
+                    if (mdf_pager_reflow_append_wrap(reflow) != 0) return -1;
+                    col = 0;
+                }
+                if (mdf_pager_buffer_append_byte(&view->bytes, ' ') != 0) return -1;
+                col++;
+            }
+            i++;
+            continue;
+        }
+        text_c1 = 0;
+        {
+            unit_len = utf8_decode_codepoint(src + i, len - i, &codepoint);
+            if (unit_len == 0) return -1;
+            unit_width = (int)utf8_display_width(codepoint);
+            if (!styled && (byte < 32 || byte == 127)) unit_width = 2;
+            if (!styled && byte >= 0x80 && byte <= 0x9f) unit_width = 4;
+            if (!styled && codepoint >= 0x80 && codepoint <= 0x9f) {
+                text_c1 = 1;
+                unit_width = 4;
+            }
+        }
+        if (unit_width > 0 && col > 0 && (col >= width || col + unit_width > width)) {
+            if (mdf_pager_reflow_append_wrap(reflow) != 0) return -1;
+            col = 0;
+        }
+        if (styled) {
+            if (mdf_pager_buffer_append(&view->bytes, src + i, unit_len) != 0) return -1;
+        } else {
+            if (text_c1) {
+                if (mdf_pager_append_text_byte(&view->bytes, (unsigned char)codepoint) != 0) return -1;
+            } else if (unit_len == 1) {
+                if (mdf_pager_append_text_byte(&view->bytes, byte) != 0) return -1;
+            } else {
+                if (mdf_pager_buffer_append(&view->bytes, src + i, unit_len) != 0) return -1;
+            }
+        }
+        col += unit_width;
+        i += unit_len;
+    }
+    reflow->col = col;
+    return 0;
+}
+
+static int mdf_pager_reflow(mdf_pager_view *view, const char *src, size_t len, int width, int styled)
+{
+    mdf_pager_reflow_state reflow;
+
+    memset(&reflow, 0, sizeof(reflow));
+    reflow.view = view;
+    mdf_pager_buffer_init_with_allocator(&reflow.osc8_start, &view->allocator);
+    mdf_pager_buffer_init_with_allocator(&reflow.sgr_start, &view->allocator);
+    reflow.width = width < 1 ? 1 : width;
+    reflow.styled = styled;
+    if (mdf_pager_reflow_chunk(&reflow, src, len) != 0) {
+        mdf_pager_buffer_destroy(&reflow.osc8_start);
+        mdf_pager_buffer_destroy(&reflow.sgr_start);
+        return -1;
+    }
+    mdf_pager_buffer_destroy(&reflow.osc8_start);
+    mdf_pager_buffer_destroy(&reflow.sgr_start);
+    return 0;
+}
+
+static int mdf_pager_reflow_sink_write(void *userdata, const char *src, size_t len)
+{
+    return mdf_pager_reflow_chunk((mdf_pager_reflow_state *)userdata, src, len);
+}
+
+static void mdf_pager_view_destroy(mdf_pager_view *view)
+{
+    mdf_pager_buffer_destroy(&view->bytes);
+    mdf_pager_buffer_destroy(&view->searchable);
+    mdf_free_mem(&view->allocator, view->search_offsets,
+                 view->search_offset_cap * sizeof(*view->search_offsets));
+    mdf_free_mem(&view->allocator, view->lines, view->line_cap * sizeof(*view->lines));
+    memset(view, 0, sizeof(*view));
+}
+
+static void mdf_pager_view_init(mdf_pager_view *view, const mdf_options *opts)
+{
+    memset(view, 0, sizeof(*view));
+    if (opts != NULL) {
+        view->allocator = opts->allocator;
+    }
+    mdf_allocator_normalize(&view->allocator);
+    mdf_pager_buffer_init_with_allocator(&view->bytes, &view->allocator);
+    mdf_pager_buffer_init_with_allocator(&view->searchable, &view->allocator);
+}
+
+static int mdf_pager_view_add_line(mdf_pager_view *view, size_t offset)
+{
+    size_t next_cap;
+    size_t *next;
+
+    if (view->line_count == view->line_cap) {
+        next_cap = view->line_cap == 0 ? 128 : view->line_cap * 2;
+        if (next_cap < view->line_cap || next_cap > (size_t)-1 / sizeof(*next)) {
+            return -1;
+        }
+        next = (size_t *)mdf_pager_array_realloc(&view->allocator, view->lines,
+                                                  view->line_cap, next_cap, sizeof(*next));
+        if (next == NULL) {
+            return -1;
+        }
+        view->lines = next;
+        view->line_cap = next_cap;
+    }
+    view->lines[view->line_count++] = offset;
+    return 0;
+}
+
+static int mdf_pager_view_index(mdf_pager_view *view)
+{
+    size_t i;
+
+    if (mdf_pager_view_add_line(view, 0) != 0) {
+        return -1;
+    }
+    for (i = 0; i < view->bytes.len; i++) {
+        if (view->bytes.data[i] == '\n' && i + 1 < view->bytes.len &&
+            mdf_pager_view_add_line(view, i + 1) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static size_t mdf_pager_view_visible_anchor(const mdf_pager_view *view, size_t top)
+{
+    size_t offset;
+    size_t i;
+
+    if (view->line_count == 0 || view->searchable.len == 0) return 0;
+    if (top >= view->line_count) top = view->line_count - 1;
+    offset = view->lines[top];
+    for (i = 0; i < view->searchable.len; i++) {
+        if (view->search_offsets[i] >= offset) return i;
+    }
+    return view->searchable.len - 1;
+}
+
+static size_t mdf_pager_view_line_for_offset(const mdf_pager_view *view, size_t offset)
+{
+    size_t line;
+
+    if (view->line_count == 0) return 0;
+    for (line = 1; line < view->line_count; line++) {
+        if (view->lines[line] > offset) break;
+    }
+    return line - 1;
+}
+
+static size_t mdf_pager_view_top_for_anchor(const mdf_pager_view *view, size_t anchor)
+{
+    if (view->searchable.len == 0 || view->line_count == 0) return 0;
+    if (anchor >= view->searchable.len) anchor = view->searchable.len - 1;
+    return mdf_pager_view_line_for_offset(view, view->search_offsets[anchor]);
+}
+
+static int mdf_pager_window_size(int *columns, int *rows)
+{
+    struct winsize size;
+
+    memset(&size, 0, sizeof(size));
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0) {
+        *columns = 80;
+        *rows = 24;
+    } else {
+        *columns = size.ws_col == 0 ? 80 : (int)size.ws_col;
+        *rows = size.ws_row == 0 ? 24 : (int)size.ws_row;
+    }
+    if (*columns < 1) *columns = 1;
+    if (*rows < 2) *rows = 2;
+    return 0;
+}
+
+static int mdf_pager_write(const char *src, size_t len)
+{
+    size_t off;
+
+    off = 0;
+    while (off < len) {
+        ssize_t n;
+
+        n = write(STDOUT_FILENO, src + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) {
+                /* A job-control stop can interrupt a terminal write. Do not
+                 * retry after our handler has recorded it: leave the loop so
+                 * pager cleanup restores the terminal and re-raises it. */
+                if (mdf_pager_termination_signal != 0) return -1;
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0) return -1;
+        off += (size_t)n;
+    }
+    return 0;
+}
+
+static int mdf_pager_write_spaces(size_t count)
+{
+    static const char spaces[] = "                                                                ";
+
+    while (count > 0) {
+        size_t chunk;
+
+        chunk = count < sizeof(spaces) - 1 ? count : sizeof(spaces) - 1;
+        if (mdf_pager_write(spaces, chunk) != 0) return -1;
+        count -= chunk;
+    }
+    return 0;
+}
+
+static int mdf_pager_write_highlighted_range(const mdf_pager_view *view, size_t start, size_t end)
+{
+    size_t position;
+
+    position = start;
+    while (position < end) {
+        size_t next;
+
+        if ((unsigned char)view->bytes.data[position] == 0x1b) {
+            next = mdf_pager_escape_end(view->bytes.data, view->bytes.len, position);
+            if (next > end) next = end;
+            if (mdf_pager_write(view->bytes.data + position, next - position) != 0) return -1;
+            if (next > position + 1 && view->bytes.data[position + 1] == '[' &&
+                mdf_pager_write("\033[7m", strlen("\033[7m")) != 0) return -1;
+            position = next;
+            continue;
+        }
+        next = position + 1;
+        while (next < end && (unsigned char)view->bytes.data[next] != 0x1b) next++;
+        if (mdf_pager_write(view->bytes.data + position, next - position) != 0) return -1;
+        position = next;
+    }
+    return 0;
+}
+
+static int mdf_pager_draw_highlighted(const mdf_pager_view *view, const mdf_pager_search *search,
+                                      size_t start, size_t end)
+{
+    size_t position;
+    size_t match_index;
+
+    position = start;
+    for (match_index = 0; search != NULL && search->active && match_index < search->count; match_index++) {
+        size_t match_start;
+        size_t match_end;
+
+        if (search->matches[match_index].end <= position || search->matches[match_index].start >= end) continue;
+        match_start = search->matches[match_index].start > position ?
+            search->matches[match_index].start : position;
+        match_end = search->matches[match_index].end < end ? search->matches[match_index].end : end;
+        if (match_start > position &&
+            mdf_pager_write(view->bytes.data + position, match_start - position) != 0) return -1;
+        if (mdf_pager_write("\033[7m", strlen("\033[7m")) != 0 ||
+            mdf_pager_write_highlighted_range(view, match_start, match_end) != 0 ||
+            mdf_pager_write("\033[27m", strlen("\033[27m")) != 0) return -1;
+        position = match_end;
+    }
+    return position >= end || mdf_pager_write(view->bytes.data + position, end - position) == 0 ? 0 : -1;
+}
+
+static int mdf_pager_draw(const mdf_pager_view *view, const char *path, const mdf_options *opts,
+                          const mdf_pager_search *search, int columns, int rows, size_t top)
+{
+    const mdf_theme_style *theme;
+    size_t content_rows;
+    size_t row;
+    size_t max_top;
+    size_t available;
+    size_t path_len;
+    size_t path_width;
+    size_t search_len;
+    size_t search_width;
+    size_t body_width;
+    size_t percent_len;
+    size_t right_margin;
+    size_t padding;
+    int percent;
+    int result;
+    mdf_pager_buffer status_path;
+    mdf_pager_buffer search_status;
+    char percent_status[8];
+    char search_count_status[64];
+    int percent_status_len;
+
+    content_rows = (size_t)(rows - 1);
+    max_top = view->line_count > content_rows ? view->line_count - content_rows : 0;
+    percent = max_top == 0 || top >= max_top ? 100 : (int)((top * 100) / max_top);
+    if (mdf_pager_write("\033[H\033[2J", strlen("\033[H\033[2J")) != 0) return -1;
+    for (row = 0; row < content_rows; row++) {
+        size_t index;
+        size_t start;
+        size_t end;
+
+        if (mdf_pager_write("\033[K", strlen("\033[K")) != 0) return -1;
+        index = top + row;
+        if (index < view->line_count) {
+            start = view->lines[index];
+            end = index + 1 < view->line_count ? view->lines[index + 1] : view->bytes.len;
+            if (end > start && view->bytes.data[end - 1] == '\n') end--;
+            if (end > start && mdf_pager_draw_highlighted(view, search, start, end) != 0) return -1;
+        }
+        if (mdf_pager_write("\033[0m\r\n", strlen("\033[0m\r\n")) != 0) return -1;
+    }
+    mdf_pager_buffer_init(&status_path, opts);
+    mdf_pager_buffer_init(&search_status, opts);
+    if (search != NULL && search->editing) {
+        size_t query_len;
+
+        query_len = search->query.data == NULL ? 0 :
+            mdf_pager_utf8_complete_prefix(search->query.data, search->query.len);
+        if (mdf_pager_buffer_append(&search_status, "  /", strlen("  /")) != 0 ||
+            mdf_pager_status_append_sanitized(&search_status,
+                                              search->query.data == NULL ? "" : search->query.data,
+                                              query_len) != 0) {
+            result = -1;
+            goto done;
+        }
+    } else if (search != NULL && search->active) {
+        size_t query_len;
+        int count_len;
+
+        query_len = search->query.data == NULL ? 0 :
+            mdf_pager_utf8_complete_prefix(search->query.data, search->query.len);
+        count_len = snprintf(search_count_status, sizeof(search_count_status), "  %lu/%lu",
+                             (unsigned long)(search->count == 0 ? 0 : search->selected + 1),
+                             (unsigned long)search->count);
+        if (count_len < 0 || count_len >= (int)sizeof(search_count_status) ||
+            mdf_pager_buffer_append(&search_status, "  /", strlen("  /")) != 0 ||
+            mdf_pager_status_append_sanitized(&search_status,
+                                              search->query.data == NULL ? "" : search->query.data,
+                                              query_len) != 0 ||
+            mdf_pager_buffer_append(&search_status, search_count_status, (size_t)count_len) != 0) {
+            result = -1;
+            goto done;
+        }
+    }
+    if (mdf_pager_status_append_sanitized(&status_path, path, strlen(path)) != 0) {
+        result = -1;
+        goto done;
+    }
+    percent_status_len = snprintf(percent_status, sizeof(percent_status), "%d%%", percent);
+    if (percent_status_len < 0) {
+        result = -1;
+        goto done;
+    }
+    if (percent_status_len >= (int)sizeof(percent_status)) percent_status_len = (int)sizeof(percent_status) - 1;
+    percent_len = (size_t)percent_status_len;
+    if (percent_len > (size_t)columns) percent_len = (size_t)columns;
+    right_margin = (size_t)columns > percent_len ? 1 : 0;
+    available = (size_t)columns - percent_len - right_margin;
+    search_len = 0;
+    path_len = 0;
+    padding = 0;
+    if (available > 0) {
+        body_width = available - 1;
+        search_len = mdf_pager_utf8_display_prefix(search_status.data == NULL ? "" : search_status.data,
+                                                    search_status.len, body_width);
+        search_width = mdf_pager_utf8_display_width(search_status.data == NULL ? "" : search_status.data,
+                                                     search_len);
+        path_len = mdf_pager_utf8_display_prefix(status_path.data == NULL ? "" : status_path.data,
+                                                  status_path.len, body_width - search_width);
+        path_width = mdf_pager_utf8_display_width(status_path.data == NULL ? "" : status_path.data,
+                                                   path_len);
+        padding = body_width - path_width - search_width;
+    }
+    theme = mdf_theme_resolve(opts == NULL ? NULL : opts->theme_name);
+    if (theme == NULL) theme = mdf_theme_resolve("default");
+    if (mdf_pager_write("\033[7m", strlen("\033[7m")) != 0) {
+        result = -1;
+        goto done;
+    }
+    if (opts == NULL || !opts->boring) {
+        if (mdf_pager_write(theme->heading[0], strlen(theme->heading[0])) != 0) {
+            result = -1;
+            goto done;
+        }
+    }
+    if ((available > 0 && mdf_pager_write(" ", 1) != 0) ||
+        (path_len > 0 && mdf_pager_write(status_path.data, path_len) != 0) ||
+        (search_len > 0 && mdf_pager_write(search_status.data, search_len) != 0) ||
+        mdf_pager_write_spaces(padding) != 0 ||
+        mdf_pager_write(percent_status, percent_len) != 0 ||
+        mdf_pager_write_spaces(right_margin) != 0 ||
+        mdf_pager_write("\033[K\033[0m", strlen("\033[K\033[0m")) != 0) {
+        result = -1;
+        goto done;
+    }
+    result = 0;
+
+done:
+    mdf_pager_buffer_destroy(&status_path);
+    mdf_pager_buffer_destroy(&search_status);
+    return result;
+}
+
+static int mdf_pager_set_raw_mode(struct termios *saved)
+{
+    struct termios raw;
+
+    if (tcgetattr(STDIN_FILENO, saved) != 0) return -1;
+    raw = *saved;
+    raw.c_iflag &= (tcflag_t)~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    raw.c_oflag &= (tcflag_t)~OPOST;
+    raw.c_cflag |= CS8;
+    raw.c_lflag &= (tcflag_t)~(ECHO | ICANON | IEXTEN);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    return tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+static int mdf_pager_read_with_timeout(unsigned char *out, long milliseconds)
+{
+    fd_set reads;
+    struct timeval timeout;
+    int ready;
+    ssize_t n;
+
+    FD_ZERO(&reads);
+    FD_SET(STDIN_FILENO, &reads);
+    timeout.tv_sec = milliseconds / 1000L;
+    timeout.tv_usec = (milliseconds % 1000L) * 1000L;
+    ready = select(STDIN_FILENO + 1, &reads, NULL, NULL, &timeout);
+    if (ready < 0) return errno == EINTR ? MDF_PAGER_READ_INTERRUPTED : -1;
+    if (ready == 0) return 0;
+    n = read(STDIN_FILENO, out, 1);
+    if (n == 1) return 1;
+    if (n == 0) return 0;
+    return errno == EINTR ? MDF_PAGER_READ_INTERRUPTED : -1;
+}
+
+/* SIGWINCH may arrive after ESC (or ESC [) has already been consumed. Keep
+ * the partial escape sequence and resume its bounded read instead of turning
+ * the remaining bytes into unrelated pager input. */
+static int mdf_pager_read_sequence_byte(unsigned char *out, long milliseconds)
+{
+    int result;
+
+    do {
+        result = mdf_pager_read_with_timeout(out, milliseconds);
+    } while (result == MDF_PAGER_READ_INTERRUPTED);
+    return result;
+}
+
+static mdf_pager_key mdf_pager_read_key(unsigned char byte)
+{
+    unsigned char sequence[8];
+    size_t len;
+    int result;
+
+    if (byte == 'q') return MDF_PAGER_KEY_QUIT;
+    if (byte == 'j' || byte == '\r' || byte == '\n' || byte == 14) return MDF_PAGER_KEY_DOWN;
+    if (byte == 'k' || byte == 16) return MDF_PAGER_KEY_UP;
+    if (byte == ' ' || byte == 6) return MDF_PAGER_KEY_PAGE_DOWN;
+    if (byte == 'b' || byte == 2) return MDF_PAGER_KEY_PAGE_UP;
+    if (byte == 'd' || byte == 4) return MDF_PAGER_KEY_HALF_DOWN;
+    if (byte == 'u' || byte == 21) return MDF_PAGER_KEY_HALF_UP;
+    if (byte == 'g') return MDF_PAGER_KEY_HOME;
+    if (byte == 'G') return MDF_PAGER_KEY_END;
+    if (byte != 0x1b) return MDF_PAGER_KEY_NONE;
+    result = mdf_pager_read_sequence_byte(&byte, 25);
+    if (result != 1) return MDF_PAGER_KEY_QUIT;
+    if (byte != '[' && byte != 'O') return MDF_PAGER_KEY_NONE;
+    len = 0;
+    while (len < sizeof(sequence)) {
+        result = mdf_pager_read_sequence_byte(&byte, 10);
+        if (result != 1) break;
+        sequence[len++] = byte;
+        if ((byte >= 'A' && byte <= 'Z') || byte == '~') break;
+    }
+    if (len == 0) return MDF_PAGER_KEY_NONE;
+    if (sequence[len - 1] == 'A') return MDF_PAGER_KEY_UP;
+    if (sequence[len - 1] == 'B') return MDF_PAGER_KEY_DOWN;
+    if (sequence[len - 1] == 'H') return MDF_PAGER_KEY_HOME;
+    if (sequence[len - 1] == 'F') return MDF_PAGER_KEY_END;
+    if (sequence[len - 1] == '~' && len >= 2) {
+        if (sequence[0] == '5') return MDF_PAGER_KEY_PAGE_UP;
+        if (sequence[0] == '6') return MDF_PAGER_KEY_PAGE_DOWN;
+        if (sequence[0] == '1' || sequence[0] == '7') return MDF_PAGER_KEY_HOME;
+        if (sequence[0] == '4' || sequence[0] == '8') return MDF_PAGER_KEY_END;
+    }
+    return MDF_PAGER_KEY_NONE;
+}
+
+static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buffer *input,
+                                      mdf_options *opts, int markdown, int width)
+{
+    mdf_pager_buffer sanitized;
+    mdf_pager_buffer_source source_data;
+    mdf_pager_reflow_state reflow;
+    mdf *renderer;
+    mdf_options render_opts;
+    mdf_source source;
+    mdf_sink sink;
+    mdf_status st;
+
+    mdf_pager_view_destroy(view);
+    mdf_pager_view_init(view, opts);
+    if (!markdown) {
+        if (mdf_pager_reflow(view, input->data == NULL ? "" : input->data, input->len, width, 0) != 0 ||
+            mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0) {
+            return MDF_ERROR_NOMEM;
+        }
+        return MDF_OK;
+    }
+    mdf_options_init(&render_opts);
+    if (opts != NULL) render_opts = *opts;
+    render_opts.width = mdf_pager_render_width(&render_opts, width);
+    mdf_pager_buffer_init(&sanitized, opts);
+    if (mdf_pager_sanitize_markdown(input, &sanitized) != 0) {
+        mdf_pager_buffer_destroy(&sanitized);
+        return MDF_ERROR_NOMEM;
+    }
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, &render_opts, &renderer);
+    if (st != MDF_OK) {
+        mdf_pager_buffer_destroy(&sanitized);
+        return st;
+    }
+    memset(&source_data, 0, sizeof(source_data));
+    memset(&reflow, 0, sizeof(reflow));
+    mdf_pager_buffer_init_with_allocator(&reflow.osc8_start, &view->allocator);
+    mdf_pager_buffer_init_with_allocator(&reflow.sgr_start, &view->allocator);
+    source_data.buffer = &sanitized;
+    source.userdata = &source_data;
+    source.read = mdf_pager_buffer_source_read;
+    reflow.view = view;
+    reflow.width = width < 1 ? 1 : width;
+    reflow.styled = 1;
+    sink.userdata = &reflow;
+    sink.write = mdf_pager_reflow_sink_write;
+    st = renderer->render(renderer, &source, &sink);
+    mdf_pager_buffer_destroy(&reflow.osc8_start);
+    mdf_pager_buffer_destroy(&reflow.sgr_start);
+    if (st == MDF_OK &&
+        (mdf_pager_view_index(view) != 0 || mdf_pager_view_build_searchable(view) != 0)) {
+        st = MDF_ERROR_NOMEM;
+    }
+    mdf_pager_buffer_destroy(&sanitized);
+    mdf_pager_retain_emission_buffer(opts, renderer);
+    renderer->destroy(renderer);
+    return st;
+}
+
+static mdf_status mdf_pager_run(const char *name, const mdf_pager_buffer *input,
+                                const mdf_options *render_options, mdf_pager_format format)
+{
+    struct termios saved_termios;
+    struct sigaction old_winch;
+    struct sigaction winch_action;
+    sigset_t saved_termination_mask;
+    mdf_pager_termination_handlers termination_handlers;
+    mdf_pager_view view;
+    mdf_pager_search search;
+    mdf_options opts;
+    int markdown;
+    int columns;
+    int rows;
+    size_t top;
+    sig_atomic_t seen_winch;
+    struct timespec last_winch;
+    int resize_pending;
+    int entered_terminal;
+    int raw_mode;
+    int handler_installed;
+    int termination_handlers_installed;
+    int termination_signals_blocked;
+    int termination_signal = 0;
+    int redraw;
+    mdf_status result;
+
+    if (input == NULL || !mdf_pager_arguments_valid(name, render_options, format)) {
+        return MDF_ERROR_INVALID;
+    }
+    memset(&view, 0, sizeof(view));
+    memset(&search, 0, sizeof(search));
+    memset(&termination_handlers, 0, sizeof(termination_handlers));
+    entered_terminal = 0;
+    raw_mode = 0;
+    handler_installed = 0;
+    termination_handlers_installed = 0;
+    termination_signals_blocked = 0;
+    mdf_options_init(&opts);
+    if (render_options != NULL) opts = *render_options;
+    mdf_allocator_prepare(&opts.allocator);
+    mdf_pager_search_init(&search, &opts);
+    markdown = format == MDF_PAGER_FORMAT_MARKDOWN ||
+        (format == MDF_PAGER_FORMAT_AUTO && mdf_pager_is_markdown_path(name));
+    mdf_pager_termination_signal = 0;
+    if (mdf_pager_install_termination_handlers(&termination_handlers) != 0) {
+        result = MDF_ERROR_IO;
+        goto done;
+    }
+    termination_handlers_installed = 1;
+    if (mdf_pager_set_raw_mode(&saved_termios) != 0) {
+        result = MDF_ERROR_IO;
+        goto done;
+    }
+    raw_mode = 1;
+    memset(&winch_action, 0, sizeof(winch_action));
+    winch_action.sa_handler = mdf_pager_on_winch;
+    sigemptyset(&winch_action.sa_mask);
+    if (sigaction(SIGWINCH, &winch_action, &old_winch) != 0) {
+        result = MDF_ERROR_IO;
+        goto done;
+    }
+    handler_installed = 1;
+    if (mdf_pager_write("\033[?1049h\033[?25l", strlen("\033[?1049h\033[?25l")) != 0) {
+        result = MDF_ERROR_IO;
+        goto done;
+    }
+    entered_terminal = 1;
+    if (mdf_pager_termination_signal != 0) {
+        result = MDF_ERROR_IO;
+        goto done;
+    }
+    seen_winch = mdf_pager_winch_count;
+    mdf_pager_window_size(&columns, &rows);
+    result = mdf_pager_make_view(&view, input, &opts, markdown, columns);
+    if (result != MDF_OK) goto done;
+    top = 0;
+    resize_pending = mdf_pager_winch_count != seen_winch;
+    if (resize_pending) {
+        mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
+    }
+    redraw = 1;
+    for (;;) {
+        mdf_pager_key key;
+        size_t content_rows;
+        size_t max_top;
+        long wait_ms;
+        unsigned char ready_byte;
+        int ready;
+
+        if (mdf_pager_termination_signal != 0) {
+            result = MDF_ERROR_IO;
+            goto done;
+        }
+        if (redraw) {
+            if (mdf_pager_draw(&view, name, &opts, &search, columns, rows, top) != 0) {
+                result = MDF_ERROR_IO;
+                goto done;
+            }
+            redraw = 0;
+        }
+        if (mdf_pager_winch_count != seen_winch) {
+            mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
+        }
+        content_rows = (size_t)(rows - 1);
+        max_top = view.line_count > content_rows ? view.line_count - content_rows : 0;
+        wait_ms = 1000;
+        if (resize_pending) {
+            wait_ms = mdf_pager_resize_wait_ms(&last_winch);
+        }
+        ready = mdf_pager_read_with_timeout(&ready_byte, wait_ms);
+        if (mdf_pager_termination_signal != 0) {
+            result = MDF_ERROR_IO;
+            goto done;
+        }
+        if (mdf_pager_winch_count != seen_winch) {
+            mdf_pager_note_resize(&seen_winch, &resize_pending, &last_winch);
+            continue;
+        }
+        if (resize_pending && ready == 0) {
+            size_t anchor;
+            size_t expected;
+            size_t previous_searchable_len;
+            mdf_pager_buffer anchor_text;
+
+            mdf_pager_buffer_init(&anchor_text, &opts);
+            anchor = mdf_pager_view_visible_anchor(&view, top);
+            previous_searchable_len = view.searchable.len;
+            if (mdf_pager_view_anchor_text(&view, top, &anchor_text) != 0) {
+                mdf_pager_buffer_destroy(&anchor_text);
+                result = MDF_ERROR_NOMEM;
+                goto done;
+            }
+            mdf_pager_window_size(&columns, &rows);
+            result = mdf_pager_make_view(&view, input, &opts, markdown, columns);
+            if (result != MDF_OK) {
+                mdf_pager_buffer_destroy(&anchor_text);
+                goto done;
+            }
+            expected = mdf_pager_scale_anchor(anchor, view.searchable.len,
+                                               previous_searchable_len);
+            (void)mdf_pager_view_find_anchor(&view, &anchor_text, expected, &anchor);
+            top = mdf_pager_view_top_for_anchor(&view, anchor);
+            content_rows = (size_t)(rows - 1);
+            max_top = view.line_count > content_rows ? view.line_count - content_rows : 0;
+            if (top > max_top) top = max_top;
+            mdf_pager_buffer_destroy(&anchor_text);
+            if (search.active && mdf_pager_search_refresh_preserving_selection(&search, &view) != 0) {
+                result = MDF_ERROR_NOMEM;
+                goto done;
+            }
+            resize_pending = 0;
+            redraw = 1;
+            continue;
+        }
+        if (ready < 0) {
+            if (errno == EINTR) continue;
+            result = MDF_ERROR_IO;
+            goto done;
+        }
+        if (ready == 0) continue;
+        if (search.editing) {
+            if (ready_byte == '\r' || ready_byte == '\n') {
+                search.editing = 0;
+                search.active = search.query.len != 0 &&
+                    mdf_pager_utf8_complete_prefix(search.query.data, search.query.len) == search.query.len;
+                if (search.active && mdf_pager_search_refresh(&search, &view) != 0) {
+                    result = MDF_ERROR_NOMEM;
+                    goto done;
+                }
+                if (search.count != 0) {
+                    top = mdf_pager_view_line_for_offset(&view, search.matches[0].start);
+                }
+                redraw = 1;
+                continue;
+            }
+            if (ready_byte == 'q' || ready_byte == 0x1b) {
+                mdf_pager_search_reset(&search);
+                redraw = 1;
+                continue;
+            }
+            if (ready_byte == 8 || ready_byte == 127) {
+                mdf_pager_search_backspace(&search);
+                if (mdf_pager_search_update_live(&search, &view) != 0) {
+                    result = MDF_ERROR_NOMEM;
+                    goto done;
+                }
+                if (search.active && search.count != 0) {
+                    top = mdf_pager_view_line_for_offset(&view, search.matches[0].start);
+                }
+                redraw = 1;
+                continue;
+            }
+            if (ready_byte >= 32 && ready_byte != 127 &&
+                mdf_pager_buffer_append_byte(&search.query, ready_byte) != 0) {
+                result = MDF_ERROR_NOMEM;
+                goto done;
+            }
+            if (ready_byte >= 32 && ready_byte != 127) {
+                if (mdf_pager_utf8_complete_prefix(search.query.data, search.query.len) != search.query.len) {
+                    continue;
+                }
+                if (mdf_pager_search_update_live(&search, &view) != 0) {
+                    result = MDF_ERROR_NOMEM;
+                    goto done;
+                }
+                if (search.active && search.count != 0) {
+                    top = mdf_pager_view_line_for_offset(&view, search.matches[0].start);
+                }
+                redraw = 1;
+            }
+            continue;
+        }
+        if (search.active) {
+            if (ready_byte == 'q' || ready_byte == 0x1b) {
+                mdf_pager_search_reset(&search);
+                redraw = 1;
+                continue;
+            }
+            if (ready_byte == 'n' && search.count != 0) {
+                search.selected = (search.selected + 1) % search.count;
+                top = mdf_pager_view_line_for_offset(&view, search.matches[search.selected].start);
+                redraw = 1;
+                continue;
+            }
+            if ((ready_byte == 'p' || ready_byte == 'N') && search.count != 0) {
+                search.selected = search.selected == 0 ? search.count - 1 : search.selected - 1;
+                top = mdf_pager_view_line_for_offset(&view, search.matches[search.selected].start);
+                redraw = 1;
+                continue;
+            }
+        }
+        if (ready_byte == '/') {
+            mdf_pager_search_reset(&search);
+            search.editing = 1;
+            redraw = 1;
+            continue;
+        }
+        key = mdf_pager_read_key(ready_byte);
+        if (key == MDF_PAGER_KEY_QUIT) break;
+        if (key == MDF_PAGER_KEY_DOWN && top < max_top) {
+            top++;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_UP && top > 0) {
+            top--;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_PAGE_DOWN) {
+            top = top + content_rows > max_top ? max_top : top + content_rows;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_PAGE_UP) {
+            top = top > content_rows ? top - content_rows : 0;
+            redraw = 1;
+        }
+        else if (key == MDF_PAGER_KEY_HALF_DOWN) {
+            size_t amount;
+
+            amount = content_rows / 2;
+            if (amount == 0) amount = 1;
+            top = top + amount > max_top ? max_top : top + amount;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_HALF_UP) {
+            size_t amount;
+
+            amount = content_rows / 2;
+            if (amount == 0) amount = 1;
+            top = top > amount ? top - amount : 0;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_HOME) {
+            top = 0;
+            redraw = 1;
+        } else if (key == MDF_PAGER_KEY_END) {
+            top = max_top;
+            redraw = 1;
+        }
+    }
+    result = MDF_OK;
+
+done:
+    if (termination_handlers_installed &&
+        mdf_pager_block_termination_signals(&saved_termination_mask) == 0) {
+        termination_signals_blocked = 1;
+    }
+    if (entered_terminal) {
+        (void)mdf_pager_write("\033[0m\033[?25h\033[?1049l", strlen("\033[0m\033[?25h\033[?1049l"));
+    }
+    if (handler_installed) (void)sigaction(SIGWINCH, &old_winch, NULL);
+    if (raw_mode) (void)tcsetattr(STDIN_FILENO, TCSAFLUSH, &saved_termios);
+    if (termination_handlers_installed) {
+        termination_signal = mdf_pager_termination_signal;
+        mdf_pager_restore_termination_handlers(&termination_handlers);
+    }
+    if (termination_signals_blocked) {
+        (void)sigprocmask(SIG_SETMASK, &saved_termination_mask, NULL);
+    }
+    mdf_pager_search_destroy(&search);
+    mdf_pager_view_destroy(&view);
+    mdf_pager_release_emission_buffer(&opts);
+    if (termination_signal != 0) {
+        (void)kill(getpid(), (int)termination_signal);
+    }
+    return result;
+}
+
+mdf_status mdf_pager_file(const char *path, const mdf_options *render_options, mdf_pager_format format)
+{
+    struct stat st;
+    mdf_pager_buffer input;
+    mdf_options opts;
+    mdf_status result;
+    int fd;
+
+    if (!mdf_pager_arguments_valid(path, render_options, format)) {
+        return MDF_ERROR_INVALID;
+    }
+    result = mdf_pager_validate_options(render_options);
+    if (result != MDF_OK) return result;
+    fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        return MDF_ERROR_IO;
+    }
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        (void)close(fd);
+        return MDF_ERROR_INVALID;
+    }
+    mdf_options_init(&opts);
+    if (render_options != NULL) opts = *render_options;
+    mdf_allocator_prepare(&opts.allocator);
+    mdf_pager_buffer_init(&input, &opts);
+    result = mdf_pager_read_file(fd, &input);
+    if (close(fd) != 0 && result == MDF_OK) result = MDF_ERROR_IO;
+    if (result != MDF_OK) {
+        mdf_pager_buffer_destroy(&input);
+        return result;
+    }
+    result = mdf_pager_run(path, &input, &opts, format);
+    mdf_pager_buffer_destroy(&input);
+    return result;
+}
+
+mdf_status mdf_pager_source(const char *name, mdf_source *source,
+                            const mdf_options *render_options, mdf_pager_format format)
+{
+    mdf_pager_buffer input;
+    mdf_options opts;
+    mdf_status result;
+
+    if (source == NULL || source->read == NULL ||
+        !mdf_pager_arguments_valid(name, render_options, format)) {
+        return MDF_ERROR_INVALID;
+    }
+    result = mdf_pager_validate_options(render_options);
+    if (result != MDF_OK) return result;
+    mdf_options_init(&opts);
+    if (render_options != NULL) opts = *render_options;
+    mdf_allocator_prepare(&opts.allocator);
+    mdf_pager_buffer_init(&input, &opts);
+    result = mdf_pager_read_source(source, &input);
+    if (result != MDF_OK) {
+        mdf_pager_buffer_destroy(&input);
+        return result;
+    }
+    result = mdf_pager_run(name, &input, &opts, format);
+    mdf_pager_buffer_destroy(&input);
+    return result;
+}

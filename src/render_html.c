@@ -297,6 +297,11 @@ static int html_code_heading_style_level(mdf_impl *impl, int fg, int bold, int i
 {
     html_state code;
 
+    /* Deck fragments must never infer typography from an ANSI style collision:
+     * Horizon inline code otherwise becomes a body-sized heading. */
+    if (impl->html_fragment) {
+        return 0;
+    }
     html_parse_style_prefix(&code, mdf_theme_code_inline(impl));
     if (html_style_attrs_equal(&code, fg, bold, italic, underline)) {
         return html_style_heading_level(impl, fg, bold, italic, underline);

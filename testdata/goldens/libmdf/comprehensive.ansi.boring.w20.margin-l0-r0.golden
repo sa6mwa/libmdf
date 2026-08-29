@@ -136,8 +136,7 @@ inline code, links
 (https://example.com
 /deck), and
 autolinks like
-https:
-//example.com/
+https://example.com/
 autolink.
 
 # Lists

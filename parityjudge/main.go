@@ -462,6 +462,32 @@ func parseExcludeList(raw string) []string {
 	return out
 }
 
+type parityCaseExclude struct {
+	path  string
+	width int
+}
+
+func parseCaseExcludeList(raw string) (map[parityCaseExclude]struct{}, error) {
+	out := make(map[parityCaseExclude]struct{})
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		at := strings.LastIndex(part, "@")
+		if at <= 0 || at == len(part)-1 {
+			return nil, fmt.Errorf("invalid case exclusion %q; expected path@width", part)
+		}
+		width, err := strconv.Atoi(part[at+1:])
+		if err != nil || width < 1 {
+			return nil, fmt.Errorf("invalid case exclusion width in %q", part)
+		}
+		out[parityCaseExclude{path: filepath.Clean(part[:at]), width: width}] = struct{}{}
+	}
+	return out, nil
+}
+
+func caseExcluded(path string, width int, excludes map[parityCaseExclude]struct{}) bool {
+	_, ok := excludes[parityCaseExclude{path: filepath.Clean(path), width: width}]
+	return ok
+}
+
 func pathExcluded(path string, excludes []string) bool {
 	path = filepath.Clean(path)
 	for _, exclude := range excludes {
@@ -706,7 +732,7 @@ func compareLibmdfSuiteCase(mode string, tc paritySuiteCase, trace bool) error {
 	return nil
 }
 
-func compareLibmdfSuite(mode string, suite string, excludes []string, chunks []int, widths []int, optionSets []parityOptions, trace bool, jobs int) error {
+func compareLibmdfSuite(mode string, suite string, excludes []string, caseExcludes map[parityCaseExclude]struct{}, chunks []int, widths []int, optionSets []parityOptions, trace bool, jobs int) error {
 	files, err := collectMarkdownFiles(suite, excludes)
 	if err != nil {
 		return err
@@ -728,6 +754,9 @@ func compareLibmdfSuite(mode string, suite string, excludes []string, chunks []i
 				runWidths = []int{0}
 			}
 			for _, width := range runWidths {
+				if mode == "ansi" && caseExcluded(md, width, caseExcludes) {
+					continue
+				}
 				for _, opts := range optionSets {
 					if mode == "html" && opts.tableWire == mdf.TableWireASCII {
 						continue
@@ -748,6 +777,9 @@ func compareLibmdfSuite(mode string, suite string, excludes []string, chunks []i
 				}
 			}
 		}
+	}
+	if len(cases) == 0 {
+		return fmt.Errorf("no parity cases remain after exclusions for mode=%s suite=%s", mode, suite)
 	}
 	if jobs < 1 {
 		jobs = 1
@@ -809,6 +841,7 @@ func main() {
 	traceCompare := flag.Bool("trace-compare", false, "compare renderer-emission traces instead of final output")
 	suite := flag.String("suite", "", "run comparison over markdown files under directory")
 	excludeRaw := flag.String("exclude", "", "exclude markdown suite paths, separated by spaces or commas")
+	excludeCasesRaw := flag.String("exclude-cases", "", "exclude ANSI suite cases as path@width, separated by spaces or commas")
 	chunksRaw := flag.String("chunks", "", "chunk sizes for --suite, separated by spaces or commas")
 	widthsRaw := flag.String("widths", "", "ANSI widths for --suite, separated by spaces or commas")
 	themeRaw := flag.String("theme", "default", "theme for single render/compare")
@@ -879,7 +912,12 @@ func main() {
 				fmt.Fprintf(os.Stderr, "jobs: %v\n", err)
 				os.Exit(2)
 			}
-			if err := compareLibmdfSuite(*mode, *suite, parseExcludeList(*excludeRaw), chunks, widths, parityOptionSets(themes, borings, osc8s, tableBuffers, tableWires), *traceCompare, jobs); err != nil {
+			caseExcludes, err := parseCaseExcludeList(*excludeCasesRaw)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "exclude cases: %v\n", err)
+				os.Exit(2)
+			}
+			if err := compareLibmdfSuite(*mode, *suite, parseExcludeList(*excludeRaw), caseExcludes, chunks, widths, parityOptionSets(themes, borings, osc8s, tableBuffers, tableWires), *traceCompare, jobs); err != nil {
 				fmt.Fprintf(os.Stderr, "compare: %v\n", err)
 				os.Exit(1)
 			}

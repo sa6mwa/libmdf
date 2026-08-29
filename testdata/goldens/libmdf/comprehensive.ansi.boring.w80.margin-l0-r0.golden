@@ -61,8 +61,8 @@ laptop screens.
 # Inline Markdown
 
 Plain text can include emphasis, strong text, combined emphasis, inline code,
-links (https://example.com/deck), and autolinks like https:
-//example.com/autolink.
+links (https://example.com/deck), and autolinks like https://example.com/
+autolink.
 
 # Lists
 

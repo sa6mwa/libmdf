@@ -82,9 +82,12 @@ set(LIBMDF_SOURCES
   src/render_ansi.c
   src/render_ansi_blocks.c
   src/html_fonts.c
+  src/pager.c
   src/path.c
   src/render_html.c
-  src/render_parse.c)
+  src/render_parse.c
+  src/unicode_classify.c
+  src/unicode_casefold.c)
 
 function(libmdf_target_defaults target)
   target_include_directories(${target}
@@ -207,6 +210,44 @@ if(LIBMDF_BUILD_TESTS)
     add_test(NAME test_cmdf COMMAND test_cmdf $<TARGET_FILE:cmdf>)
     set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 30)
 
+    # Keep the pager fault injector in a private test library so default
+    # test-enabled builds never add it to installable static/shared targets.
+    add_library(mdf_pager_test STATIC EXCLUDE_FROM_ALL ${LIBMDF_SOURCES})
+    libmdf_target_defaults(mdf_pager_test)
+    target_compile_definitions(mdf_pager_test PRIVATE LIBMDF_PAGER_TESTING)
+
+    add_executable(test_pager tests/test_pager.c)
+    target_compile_features(test_pager PRIVATE c_std_90)
+    target_compile_definitions(test_pager PRIVATE _POSIX_C_SOURCE=200809L LIBMDF_PAGER_TESTING)
+    # Darwin places terminal resize signals and anonymous-mapping aliases
+    # behind its extension feature selector. The PTY integration test uses
+    # those native terminal interfaces on that target.
+    if(APPLE)
+      target_compile_definitions(test_pager PRIVATE _DARWIN_C_SOURCE)
+    endif()
+    target_include_directories(test_pager PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(test_pager PRIVATE mdf_pager_test)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      target_link_libraries(test_pager PRIVATE util)
+    endif()
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(test_pager PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME test_pager COMMAND test_pager $<TARGET_FILE:cmdf>)
+    # forkpty launches a child that immediately enters libmdf after the
+    # sanitizer runtime has created helper threads. That post-fork execution
+    # is outside ThreadSanitizer's supported process model; ASan and the
+    # normal integration gate cover the terminal pager instead.
+    set_tests_properties(test_pager PROPERTIES LABELS "integration;cli;pager;forkpty" TIMEOUT 30)
+
+    add_executable(test_pager_ratio tests/test_pager_ratio.c)
+    target_compile_features(test_pager_ratio PRIVATE c_std_90)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+      target_compile_options(test_pager_ratio PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    endif()
+    add_test(NAME test_pager_ratio COMMAND test_pager_ratio)
+    set_tests_properties(test_pager_ratio PROPERTIES LABELS "unit;pager" TIMEOUT 10)
+
     add_test(NAME chart_corpus
       COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_chart_corpus.sh
               $<TARGET_FILE:cmdf>
@@ -225,12 +266,28 @@ if(LIBMDF_BUILD_TESTS)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
+  foreach(LIBMDF_PRODUCTION_TARGET IN LISTS LIBMDF_EXPORT_TARGETS)
+    add_test(NAME ${LIBMDF_PRODUCTION_TARGET}_excludes_pager_test_hook
+      COMMAND ${CMAKE_COMMAND}
+              -DNM=${CMAKE_NM}
+              -DLIBRARY=$<TARGET_FILE:${LIBMDF_PRODUCTION_TARGET}>
+              -DSYMBOL=mdf_pager_test_set_termination_handler_install_failure
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_symbol_absent.cmake)
+    set_tests_properties(${LIBMDF_PRODUCTION_TARGET}_excludes_pager_test_hook PROPERTIES
+      LABELS "unit;api"
+      TIMEOUT 10)
+  endforeach()
+
   add_test(NAME header_self_sufficient
     COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${LIBMDF_GENERATED_INCLUDE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/header_self_sufficient.o)
   set_tests_properties(header_self_sufficient PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
   add_test(NAME version_source_archive COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_version_source.sh)
   set_tests_properties(version_source_archive PROPERTIES LABELS "unit;packaging" TIMEOUT 10)
+
+  add_test(NAME release_lifecycle COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release_lifecycle.sh)
+  set_tests_properties(release_lifecycle PROPERTIES LABELS "unit;lifecycle" TIMEOUT 10
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME release_privacy_negative COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release_privacy_negative.sh)
   set_tests_properties(release_privacy_negative PROPERTIES

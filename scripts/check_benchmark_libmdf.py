@@ -30,6 +30,8 @@ def run_benchmark(root, baseline, args, no_build):
         str(args.rounds),
         "--warmups",
         str(args.warmups),
+        "--repeat",
+        str(args.repeat),
         "--json",
     ]
     if no_build:
@@ -70,6 +72,7 @@ def main():
     parser.add_argument("--allowance", type=float, default=None, help="allowed regression fraction; default comes from baseline")
     parser.add_argument("--rounds", type=int, default=None, help="benchmark rounds; default comes from baseline")
     parser.add_argument("--warmups", type=int, default=None, help="benchmark warmups; default comes from baseline")
+    parser.add_argument("--repeat", type=int, default=None, help="real renders per sample; default comes from baseline")
     parser.add_argument("--attempts", type=int, default=3, help="number of serialized attempts; best median per path is compared")
     parser.add_argument("--no-lua", action="store_true", help="check only C API paths")
     args = parser.parse_args()
@@ -79,12 +82,15 @@ def main():
     allowance = baseline.get("allowance", 0.05) if args.allowance is None else args.allowance
     args.rounds = int(baseline.get("rounds", 200) if args.rounds is None else args.rounds)
     args.warmups = int(baseline.get("warmups", 20) if args.warmups is None else args.warmups)
+    args.repeat = int(baseline.get("repeat", 1) if args.repeat is None else args.repeat)
     if allowance < 0:
         raise SystemExit("--allowance must be >= 0")
     if args.rounds < 1:
         raise SystemExit("--rounds must be >= 1")
     if args.warmups < 0:
         raise SystemExit("--warmups must be >= 0")
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be >= 1")
     if args.attempts < 1:
         raise SystemExit("--attempts must be >= 1")
     if args.no_lua:
@@ -92,7 +98,7 @@ def main():
 
     print(
         f"benchmark baseline: {baseline_path.relative_to(root)}; "
-        f"rounds={args.rounds}; warmups={args.warmups}; attempts={args.attempts}; allowance={allowance:.1%}",
+        f"rounds={args.rounds}; warmups={args.warmups}; repeat={args.repeat}; attempts={args.attempts}; allowance={allowance:.1%}",
         file=sys.stderr,
     )
     best = {}

@@ -77,7 +77,6 @@ absorb container prefixes or chart rows.
 
 Container link
 (https://example.com/container-chart)
-and bare https:
-//example.com/container-chart/autolink
-should both remain safe in HTML and deck
-output.
+and bare https://example.com/container-chart/
+autolink should both remain safe in HTML
+and deck output.

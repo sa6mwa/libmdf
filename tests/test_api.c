@@ -2969,8 +2969,8 @@ int main(void)
     out = NULL;
     st = renderer->render_cstr(renderer, "[ref1]: https://example.com \"Example\"\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "narrow reflink-style url render");
-    fails += expect(strstr(out, "[ref1]: https:\n//example.com\n\"Example\"") != NULL,
-                    "narrow reflink-style url prefers scheme boundary split");
+    fails += expect(strstr(out, "[ref1]: https://\nexample.com\n\"Example\"") != NULL,
+                    "narrow reflink-style url keeps its scheme delimiter together");
     renderer->string_free(renderer, out);
     out = NULL;
     opts.boring = 0;
@@ -3014,8 +3014,8 @@ int main(void)
     out = NULL;
     st = renderer->render_cstr(renderer, "[https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n", &out);
     fails += expect(st == MDF_OK && out != NULL, "styled narrow url label render");
-    fails += expect(strstr(out, "\033[4m\033[1;34mhttps://pkt.systems/centau\033[0m\n\033[4m\033[1;34mr.md\033[0m") != NULL,
-                    "url-shaped link label keeps prefix chunk on the first wrapped line");
+    fails += expect(strstr(out, "\033[4m\033[1;34mhttps://pkt.systems/\n") != NULL,
+                    "url-shaped link label keeps its scheme delimiter together");
     renderer->string_free(renderer, out);
     out = NULL;
     st = renderer->render_cstr(renderer, "Inline HTML: <span class=\"note\">note</span> and <strong>strong</strong>.\n", &out);

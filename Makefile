@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix finalize-slice prerelease prerelease-hardening release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix release-pipeline finalize-slice prerelease prerelease-hardening lifecycle-version-contract release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
@@ -10,9 +10,9 @@ help:
 	@printf '%s\n' '  make build                  Build static cmdf for local install'
 	@printf '%s\n' '  make build-debug            Configure and build debug preset'
 	@printf '%s\n' '  make build-release          Configure and build host release preset'
-	@printf '%s\n' '  make benchmark              Benchmark C libmdf and Lua binding ANSI/HTML/deck paths'
+	@printf '%s\n' '  make benchmark              Benchmark C libmdf and Lua binding ANSI/HTML rendering paths'
 	@printf '%s\n' '  make benchmark-cmdf         Benchmark C cmdf and cmdf.lua UX paths'
-	@printf '%s\n' '  make bench-check            Fail if C/Lua ANSI, HTML, or deck medians regress >5%'
+	@printf '%s\n' '  make bench-check            Fail if C/Lua ANSI or HTML medians regress >5%'
 	@printf '%s\n' '  make golden-update          Regenerate libmdf API output goldens'
 	@printf '%s\n' '  make golden-test            Verify libmdf API output goldens'
 	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
@@ -41,9 +41,10 @@ help:
 	@printf '%s\n' '  make verify-release-archives Verify release archive checks'
 	@printf '%s\n' '  make release-matrix         Build all configured release targets'
 	@printf '%s\n' '  make finalize-slice         Run format and local test gate'
-	@printf '%s\n' '  make prerelease             Run deterministic prerelease gate, including full hardening'
-	@printf '%s\n' '  make prerelease-hardening   Run prerelease plus release matrix'
-	@printf '%s\n' '  make release                Run full local release gate'
+	@printf '%s\n' '  make prerelease             Run the release proof graph without an initial clean'
+	@printf '%s\n' '  make prerelease-hardening   Alias for the complete prerelease proof graph'
+	@printf '%s\n' '  make lifecycle-version-contract Verify lightweight-tag release version handling'
+	@printf '%s\n' '  make release                Run the clean final release gate'
 	@printf '%s\n' '  make print-release-version  Print packaging version'
 	@printf '%s\n' '  make format                 Format project-owned C sources'
 	@printf '%s\n' '  make cross-build            Build configured cross targets'
@@ -190,11 +191,23 @@ release-matrix:
 
 finalize-slice: format test
 
-prerelease: format test-hardening package-source-smoke
+release-pipeline:
+	+@$(MAKE) format
+	+@$(MAKE) test-hardening
+	+@$(MAKE) package-source-smoke
+	+@$(MAKE) release-matrix
 
-prerelease-hardening: prerelease release-matrix
+prerelease: release-pipeline
 
-release: clean prerelease-hardening
+prerelease-hardening: prerelease
+
+lifecycle-version-contract:
+	@scripts/lifecycle_version_contract.sh
+
+release:
+	+@$(MAKE) lifecycle-version-contract
+	+@$(MAKE) clean
+	+@$(MAKE) release-pipeline
 
 print-release-version:
 	@scripts/release_version.sh

@@ -1293,6 +1293,38 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "html styled link labels create succeeds");
+    st = inst->render_cstr(inst,
+                           "[`code`](https://example.com) [*emphasis*](https://example.com) [**strong**](https://example.com)\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "html styled link labels render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "<a href=\"https://example.com\"") != NULL &&
+                    strstr(out, "`code`") == NULL &&
+                    strstr(out, "*emphasis*") == NULL &&
+                    strstr(out, "**strong**") == NULL,
+                    "html styled link labels consume Markdown delimiters");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.theme_name = "ayu-light";
+    st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "ayu-light html inline code renderer create succeeds");
+    st = inst->render_cstr(inst, "Use `mdf`.\n", &out);
+    fails += expect(st == MDF_OK && out != NULL, "ayu-light html inline code render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "color:rgb(135,175,175);font-size:12pt;font-weight:700;\">mdf</span>") != NULL,
+                    "ayu-light html inline code retains its body-sized heading style");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck lower heading create succeeds");
     st = inst->render_cstr(inst,
@@ -1331,6 +1363,27 @@ int main(void)
                     strstr(out, "target=\"_blank\"") == NULL &&
                     strstr(out, "rel=\"noopener noreferrer\"") == NULL,
                     "html normal links do not force a new tab");
+    inst->string_free(inst, out);
+    out = NULL;
+    inst->destroy(inst);
+    inst = NULL;
+
+    mdf_options_init(&opts);
+    opts.theme_name = "horizon";
+    st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "horizon html deck styled link labels create succeeds");
+    st = inst->render_cstr(inst,
+                           "# Horizon\n\nUse `operationId`; [`code`](https://example.com) [*emphasis*](https://example.com) [**strong**](https://example.com)\n",
+                           &out);
+    fails += expect(st == MDF_OK && out != NULL, "horizon html deck styled link labels render succeeds");
+    fails += expect(out != NULL &&
+                    strstr(out, "`operationId`") == NULL &&
+                    strstr(out, "*emphasis*") == NULL &&
+                    strstr(out, "**strong**") == NULL,
+                    "horizon html deck styled link labels consume Markdown delimiters");
+    fails += expect(out != NULL &&
+                    strstr(out, "color:rgb(255,135,95);font-size:12pt;font-weight:700;") == NULL,
+                    "horizon html deck inline code is not mistaken for a heading");
     inst->string_free(inst, out);
     out = NULL;
     inst->destroy(inst);
@@ -2608,6 +2661,47 @@ int main(void)
             st = inst->render_cstr(inst, "https://example.com/abcdefghijklmnopqrstuvwxyz0123456789\n", &out);
             fails += expect(st != MDF_OK && out == NULL,
                             "direct emission path honors tiny fixed emission buffer");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+    }
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    {
+        char fixed_emit[64];
+        char source[1024];
+        size_t source_len;
+        size_t level;
+
+        source_len = 0;
+        source[source_len++] = '[';
+        for (level = 1; level <= 17; level++) {
+            memset(source + source_len, '*', level);
+            source_len += level;
+            source[source_len++] = 'a';
+            source[source_len++] = '-';
+        }
+        memset(source + source_len, 'x', 256);
+        source_len += 256;
+        for (level = 17; level > 0; level--) {
+            source[source_len++] = '-';
+            source[source_len++] = 'b';
+            memset(source + source_len, '*', level);
+            source_len += level;
+        }
+        memcpy(source + source_len, "](https://x)\n", sizeof("](https://x)\n"));
+
+        opts.emission_buffer.data = fixed_emit;
+        opts.emission_buffer.cap = sizeof(fixed_emit);
+        opts.emission_buffer.fixed = 1;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "ansi create accepts fixed emission buffer for bounded link-label fallback");
+        if (inst != NULL) {
+            st = inst->render_cstr(inst, source, &out);
+            fails += expect(st != MDF_OK && out == NULL,
+                            "bounded link-label fallback does not split an oversized emission decision");
             inst->destroy(inst);
             inst = NULL;
         }

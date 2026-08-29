@@ -82,6 +82,7 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_owned_inline_style[0] = '\0';
     impl->inline_emph_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, inline_emph_count, inline_emph_after_word);
+    impl->inline_emph_parenthesized = 0;
     impl->inline_emph_streaming = 0;
     impl->inline_emph_skip_spaces = 0;
     impl->inline_emph_nested_delim = 0;
@@ -117,6 +118,23 @@ void mdf_allocator_normalize(mdf_allocator *allocator)
     if (allocator->realloc == NULL && allocator->alloc == default_alloc && allocator->free == default_free) {
         allocator->realloc = default_realloc;
     }
+}
+
+void mdf_allocator_prepare(mdf_allocator *allocator)
+{
+    if (allocator == NULL) {
+        return;
+    }
+    /* mdf_options_init installs the libc realloc hook. If callers then
+     * replace only alloc/free, that inherited hook cannot safely reallocate
+     * storage owned by their allocator. Perform this once when options enter
+     * the library, not on every allocation in a renderer hot path. */
+    if (allocator->realloc == default_realloc &&
+        ((allocator->alloc != NULL && allocator->alloc != default_alloc) ||
+         (allocator->free != NULL && allocator->free != default_free))) {
+        allocator->realloc = NULL;
+    }
+    mdf_allocator_normalize(allocator);
 }
 
 void *mdf_alloc(mdf_allocator *allocator, size_t size)
@@ -2452,12 +2470,7 @@ static void mdf_options_resolve(const mdf_options *opts, mdf_options *resolved)
     default_html_content_width_ch = resolved->html_content_width_ch;
     if (opts != NULL) {
         *resolved = *opts;
-        if (resolved->allocator.realloc == default_realloc &&
-            ((resolved->allocator.alloc != NULL && resolved->allocator.alloc != default_alloc) ||
-             (resolved->allocator.free != NULL && resolved->allocator.free != default_free))) {
-            resolved->allocator.realloc = NULL;
-        }
-        mdf_allocator_normalize(&resolved->allocator);
+        mdf_allocator_prepare(&resolved->allocator);
     }
     if (resolved->width <= 0) {
         resolved->width = default_width;

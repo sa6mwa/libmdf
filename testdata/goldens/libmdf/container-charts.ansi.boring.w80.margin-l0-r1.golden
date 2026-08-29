@@ -78,6 +78,6 @@ container prefixes or chart rows.
 │ lazy quote     │ bar        │ boundary detection  │
 └────────────────┴────────────┴─────────────────────┘
 
-Container link (https://example.com/container-chart) and bare https:
-//example.com/container-chart/autolink should both remain safe in HTML and deck
+Container link (https://example.com/container-chart) and bare https://
+example.com/container-chart/autolink should both remain safe in HTML and deck
 output.

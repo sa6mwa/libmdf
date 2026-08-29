@@ -79,8 +79,8 @@ and laptop screens.
 Plain text can include emphasis, strong
 text, combined emphasis, inline code,
 links (https://example.com/deck), and
-autolinks like https:
-//example.com/autolink.
+autolinks like https://example.com/
+autolink.
 
 # Lists
 

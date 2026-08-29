@@ -119,3 +119,77 @@ container-charts.deck.default tests/golden-fixtures/container-charts.md --deck
 container-charts.deck.w42 tests/golden-fixtures/container-charts.md --deck -w 42
 container-charts.deck.slide-numbers.fade tests/golden-fixtures/container-charts.md --deck --slide-numbers -x fade
 container-charts.deck.boring tests/golden-fixtures/container-charts.md --deck --boring
+url-wrap-centaur.ansi.styled.w20.margin-l0-r0 testdata/centaur-post.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-centaur.ansi.styled.w40.margin-l10-r10 testdata/centaur-post.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-centaur.ansi.boring.w20.margin-l0-r0 testdata/centaur-post.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-centaur.ansi.boring.w40.margin-l10-r10 testdata/centaur-post.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-frontmatter2.ansi.styled.w20.margin-l0-r0 testdata/frontmatter2.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-frontmatter2.ansi.styled.w40.margin-l10-r10 testdata/frontmatter2.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-frontmatter2.ansi.boring.w20.margin-l0-r0 testdata/frontmatter2.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-frontmatter2.ansi.boring.w40.margin-l10-r10 testdata/frontmatter2.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-linkify.ansi.styled.w20.margin-l0-r0 testdata/future/linkify.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.styled.w40.margin-l10-r10 testdata/future/linkify.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-linkify.ansi.boring.w20.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w40.margin-l10-r10 testdata/future/linkify.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-linkify.ansi.styled.w40.margin-l0-r0 testdata/future/linkify.md --ansi -w 40 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w40.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.styled.w80.margin-l0-r0 testdata/future/linkify.md --ansi -w 80 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w80.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.styled.w100.margin-l0-r0 testdata/future/linkify.md --ansi -w 100 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w100.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 100 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.styled.w120.margin-l0-r0 testdata/future/linkify.md --ansi -w 120 --margin-left 0 --margin-right 0
+url-wrap-linkify.ansi.boring.w120.margin-l0-r0 testdata/future/linkify.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w20.margin-l0-r0 testdata/future/reflinks.md --ansi -w 20 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w40.margin-l10-r10 testdata/future/reflinks.md --ansi -w 40 --margin-left 10 --margin-right 10
+url-wrap-reflinks.ansi.boring.w20.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w40.margin-l10-r10 testdata/future/reflinks.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+url-wrap-reflinks.ansi.styled.w40.margin-l0-r0 testdata/future/reflinks.md --ansi -w 40 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w40.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w80.margin-l0-r0 testdata/future/reflinks.md --ansi -w 80 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w80.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w100.margin-l0-r0 testdata/future/reflinks.md --ansi -w 100 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w100.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 100 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.styled.w120.margin-l0-r0 testdata/future/reflinks.md --ansi -w 120 --margin-left 0 --margin-right 0
+url-wrap-reflinks.ansi.boring.w120.margin-l0-r0 testdata/future/reflinks.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.styled.w20.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 20 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.styled.w20.margin-l2-r0 testdata/styled-link-labels.md --ansi -w 20 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.styled.w20.margin-l0-r1 testdata/styled-link-labels.md --ansi -w 20 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.styled.w40.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 40 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.styled.w40.margin-l2-r0 testdata/styled-link-labels.md --ansi -w 40 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.styled.w40.margin-l0-r1 testdata/styled-link-labels.md --ansi -w 40 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.styled.w40.margin-l4-r6 testdata/styled-link-labels.md --ansi -w 40 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.styled.w80.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 80 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.styled.w80.margin-l2-r0 testdata/styled-link-labels.md --ansi -w 80 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.styled.w80.margin-l0-r1 testdata/styled-link-labels.md --ansi -w 80 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.styled.w80.margin-l4-r6 testdata/styled-link-labels.md --ansi -w 80 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.styled.w80.margin-l20-r20 testdata/styled-link-labels.md --ansi -w 80 --margin-left 20 --margin-right 20
+styled-link-labels.ansi.styled.w120.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 120 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.styled.w120.margin-l2-r0 testdata/styled-link-labels.md --ansi -w 120 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.styled.w120.margin-l0-r1 testdata/styled-link-labels.md --ansi -w 120 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.styled.w120.margin-l4-r6 testdata/styled-link-labels.md --ansi -w 120 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.styled.w120.margin-l20-r20 testdata/styled-link-labels.md --ansi -w 120 --margin-left 20 --margin-right 20
+styled-link-labels.ansi.boring.w20.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.boring.w20.margin-l2-r0 testdata/styled-link-labels.md --ansi --boring -w 20 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.boring.w20.margin-l0-r1 testdata/styled-link-labels.md --ansi --boring -w 20 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.boring.w40.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.boring.w40.margin-l2-r0 testdata/styled-link-labels.md --ansi --boring -w 40 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.boring.w40.margin-l0-r1 testdata/styled-link-labels.md --ansi --boring -w 40 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.boring.w40.margin-l4-r6 testdata/styled-link-labels.md --ansi --boring -w 40 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.boring.w80.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.boring.w80.margin-l2-r0 testdata/styled-link-labels.md --ansi --boring -w 80 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.boring.w80.margin-l0-r1 testdata/styled-link-labels.md --ansi --boring -w 80 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.boring.w80.margin-l4-r6 testdata/styled-link-labels.md --ansi --boring -w 80 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.boring.w80.margin-l20-r20 testdata/styled-link-labels.md --ansi --boring -w 80 --margin-left 20 --margin-right 20
+styled-link-labels.ansi.boring.w120.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.boring.w120.margin-l2-r0 testdata/styled-link-labels.md --ansi --boring -w 120 --margin-left 2 --margin-right 0
+styled-link-labels.ansi.boring.w120.margin-l0-r1 testdata/styled-link-labels.md --ansi --boring -w 120 --margin-left 0 --margin-right 1
+styled-link-labels.ansi.boring.w120.margin-l4-r6 testdata/styled-link-labels.md --ansi --boring -w 120 --margin-left 4 --margin-right 6
+styled-link-labels.ansi.boring.w120.margin-l20-r20 testdata/styled-link-labels.md --ansi --boring -w 120 --margin-left 20 --margin-right 20
+styled-link-labels.html.default testdata/styled-link-labels.md --html
+styled-link-labels.html.w42 testdata/styled-link-labels.md --html -w 42
+styled-link-labels.deck.default testdata/styled-link-labels.md --deck
+styled-link-labels.deck.w42 testdata/styled-link-labels.md --deck -w 42
+styled-link-labels.deck.slide-numbers.fade testdata/styled-link-labels.md --deck --slide-numbers -x fade
+styled-link-labels.deck.boring testdata/styled-link-labels.md --deck --boring
+styled-link-labels.ansi.styled.w100.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 100 --margin-left 0 --margin-right 0
+styled-link-labels.ansi.boring.w100.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 100 --margin-left 0 --margin-right 0

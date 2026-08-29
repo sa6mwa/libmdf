@@ -39,8 +39,40 @@ BORINGS=${LIBMDF_PARITY_BORINGS:-$DEFAULT_BORINGS}
 OSC8S=${LIBMDF_PARITY_OSC8S:-$DEFAULT_OSC8S}
 TABLE_BUFFERS=${LIBMDF_PARITY_TABLE_BUFFERS:-$DEFAULT_TABLE_BUFFERS}
 TABLE_WIRES=${LIBMDF_PARITY_TABLE_WIRES:-$DEFAULT_TABLE_WIRES}
-EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-"$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus"}
-STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
+DEFAULT_EXCLUDES="$ROOT/testdata/chart-corpus $ROOT/testdata/deck-corpus"
+DEFAULT_HTML_EXCLUDES=$DEFAULT_EXCLUDES
+DEFAULT_CASE_EXCLUDES=
+# Deliberate project contract exceptions are narrow and all have matching
+# libmdf goldens. ANSI/trace exceptions are width-specific; HTML exceptions
+# exclude only the named fixture from final-output comparison.
+while read -r parity_kind parity_path parity_width extra; do
+  case "$parity_kind" in
+    ''|'#'*) continue ;;
+    ansi|trace)
+      if [ -n "${extra:-}" ] || ! printf '%s\n' "$parity_width" | grep -Eq '^[1-9][0-9]*$'; then
+        printf '%s\n' "invalid ANSI/trace parity exception: $parity_kind $parity_path $parity_width${extra:+ $extra}" >&2
+        exit 2
+      fi
+      ;;
+    html)
+      if [ -n "${parity_width:-}" ] || [ -n "${extra:-}" ]; then
+        printf '%s\n' "invalid HTML parity exception: $parity_kind $parity_path${parity_width:+ $parity_width}${extra:+ $extra}" >&2
+        exit 2
+      fi
+      DEFAULT_HTML_EXCLUDES="${DEFAULT_HTML_EXCLUDES}${DEFAULT_HTML_EXCLUDES:+ }$ROOT/$parity_path"
+      continue
+      ;;
+    *)
+      printf '%s\n' "invalid parity exception kind: $parity_kind" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$parity_kind" = ansi ]; then
+    DEFAULT_CASE_EXCLUDES="${DEFAULT_CASE_EXCLUDES}${DEFAULT_CASE_EXCLUDES:+ }$ROOT/$parity_path@$parity_width"
+  fi
+done < "$ROOT/testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt"
+CASE_EXCLUDES=${LIBMDF_PARITY_CASE_EXCLUDES:-$DEFAULT_CASE_EXCLUDES}
+STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/unicode_classify.c" "$ROOT/src/unicode_classify.h" "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
 child_pid=
 
 cleanup_child() {
@@ -68,9 +100,11 @@ trap 'cleanup_child; exit 143' TERM HUP
 
 if [ "$MODE" = "ansi" ] || [ "$MODE" = "html" ]; then
   if [ "$MODE" = "ansi" ]; then
-    run_child "$JUDGE" -mode ansi -compare-libmdf -suite "$ROOT/testdata" -exclude "$EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
+    EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-$DEFAULT_EXCLUDES}
+    run_child "$JUDGE" -mode ansi -compare-libmdf -suite "$ROOT/testdata" -exclude "$EXCLUDES" -exclude-cases "$CASE_EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
       -themes "$THEMES" -borings "$BORINGS" -osc8s "$OSC8S" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"
   else
+    EXCLUDES=${LIBMDF_PARITY_EXCLUDES:-$DEFAULT_HTML_EXCLUDES}
     run_child "$JUDGE" -mode html -compare-libmdf -suite "$ROOT/testdata" -exclude "$EXCLUDES" -chunks "$CHUNKS" \
       -themes "$THEMES" -borings "$BORINGS" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"
   fi

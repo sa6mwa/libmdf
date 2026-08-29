@@ -3,8 +3,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
-#define MAX_RECORDS 1024
+#define MAX_RECORDS 65536
+
+/* The normal build is the performance gate. Memory/thread sanitizers
+ * instrument every access, so keep the same regression fixture there with a
+ * bounded but sanitizer-appropriate CPU budget. */
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(memory_sanitizer)
+#define CONTRACT_TIMING_MULTIPLIER 3
+#endif
+#endif
+#ifndef CONTRACT_TIMING_MULTIPLIER
+#define CONTRACT_TIMING_MULTIPLIER 1
+#endif
 
 typedef struct chunk_source {
     const char *src;
@@ -28,6 +41,11 @@ typedef struct capture {
     size_t out_cap;
     int failed;
 } capture;
+
+typedef struct count_sink {
+    size_t bytes;
+    int failed;
+} count_sink;
 
 static int expect(int cond, const char *msg)
 {
@@ -123,6 +141,20 @@ static int capture_trace(void *userdata, mdf_format format, const char *src, siz
     return 0;
 }
 
+static int count_write(void *userdata, const char *src, size_t len)
+{
+    count_sink *count;
+
+    (void)src;
+    count = (count_sink *)userdata;
+    if (len > (size_t)-1 - count->bytes) {
+        count->failed = 1;
+        return -1;
+    }
+    count->bytes += len;
+    return 0;
+}
+
 static void capture_free(capture *cap)
 {
     size_t i;
@@ -183,6 +215,34 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     source.read = chunk_read;
     sink.userdata = cap;
     sink.write = capture_write;
+    st = inst->render(inst, &source, &sink);
+    inst->destroy(inst);
+    return st;
+}
+
+static mdf_status render_count(mdf_format format, mdf_options *opts, const char *markdown,
+                               size_t chunk, count_sink *count)
+{
+    mdf *inst;
+    mdf_source source;
+    mdf_sink sink;
+    chunk_source source_data;
+    mdf_status st;
+
+    inst = NULL;
+    memset(count, 0, sizeof(*count));
+    st = mdf_create(format, opts, &inst);
+    if (st != MDF_OK) {
+        return st;
+    }
+    source_data.src = markdown;
+    source_data.len = strlen(markdown);
+    source_data.off = 0;
+    source_data.chunk = chunk;
+    source.userdata = &source_data;
+    source.read = chunk_read;
+    sink.userdata = count;
+    sink.write = count_write;
     st = inst->render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
@@ -280,6 +340,19 @@ static int expect_no_write_contains(const capture *cap, const char *needle, cons
         }
     }
     return 0;
+}
+
+static int expect_write_contains(const capture *cap, const char *needle, const char *msg)
+{
+    size_t i;
+
+    for (i = 0; i < cap->write_count; i++) {
+        if (record_contains(&cap->writes[i], needle)) {
+            return 0;
+        }
+    }
+    fprintf(stderr, "FAIL: %s\n", msg);
+    return 1;
 }
 
 static char *strip_ansi(const char *src)
@@ -578,6 +651,66 @@ static int test_margin_contract(void)
     fails += expect_no_styled_line_without_margin(cap.out, "ansi styles never precede left margin");
     fails += expect_contains(cap.out, "\033]8;;https://agilemanifesto.org/\033\\",
                              "osc8 link remains present inside styled margin render");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 37;
+    opts.margin_left = 10;
+    opts.margin_right = 10;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "1. An invented schedule keeps (*quiet executor mode*).\n",
+                        1,
+                        &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "styled parenthetical emphasis margin render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "styled parenthetical emphasis margin writes match traces");
+    fails += expect_contains(cap.out, "mode\033[0m).",
+                             "styled parenthetical emphasis resets before terminal punctuation");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "styled parenthetical emphasis margin output can be stripped");
+        if (plain != NULL) {
+            fails += expect_contains(plain, "mode).\n",
+                                     "styled parenthetical emphasis keeps terminal punctuation together");
+            fails += expect_not_contains(plain, ")\n             .",
+                                        "styled parenthetical emphasis does not orphan terminal punctuation");
+            free(plain);
+        }
+    }
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 6;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "(*quiet executor mode*).foo\n",
+                        1,
+                        &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "narrow styled parenthetical emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "narrow styled parenthetical emphasis writes match traces");
+    fails += expect_contains(cap.out, "mode\033[0m",
+                             "narrow styled parenthetical emphasis resets after its final word");
+    fails += expect_not_contains(cap.out, "mode).foo\033[0m",
+                                 "narrow parenthetical punctuation is never emitted inside emphasis");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "narrow styled parenthetical emphasis output can be stripped");
+        if (plain != NULL) {
+            fails += expect_contains(plain, ").foo",
+                                     "narrow styled parenthetical emphasis preserves terminal punctuation");
+            free(plain);
+        }
+    }
     capture_free(&cap);
     return fails;
 }
@@ -919,6 +1052,37 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     mdf_options_init(&opts);
     opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "(_*_)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi parenthesized nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi parenthesized nested emphasis writes match traces");
+    fails += expect_output_equals(&cap, "(*)\n",
+                                  "ansi parenthesized nested emphasis preserves visible character order");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "(_*_)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "styled ansi parenthesized nested emphasis render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "styled ansi parenthesized nested emphasis writes match traces");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "styled ansi parenthesized nested emphasis output can be stripped");
+        if (plain != NULL) {
+            fails += expect(strcmp(plain, "(*)\n") == 0,
+                            "styled ansi parenthesized nested emphasis preserves visible character order");
+            free(plain);
+        }
+    }
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
     opts.width = 7;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested underscore wrapped render succeeds");
@@ -1176,6 +1340,302 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[`link`](http://link.example) [*em*](http://link.example) [**strong**](http://link.example)\n",
+                        1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi osc8 styled link labels render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi osc8 styled link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;http://link.example\033\\", "ansi osc8 styled link labels retain their destination");
+    fails += expect_contains(cap.out,
+                             "\033]8;;http://link.example\033\\\033[4m\033[1;34m\033[35mlink",
+                             "ansi osc8 inline-code link label is clickable before its code text");
+    fails += expect_not_contains(cap.out, "`link`", "ansi osc8 inline-code link label consumes code delimiters");
+    fails += expect_not_contains(cap.out, "*em*", "ansi osc8 emphasized link label consumes emphasis delimiters");
+    fails += expect_not_contains(cap.out, "**strong**", "ansi osc8 strong link label consumes strong delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[`code` and *em*](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi osc8 mixed code and emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi osc8 mixed link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;http://link.example\033\\", "ansi osc8 mixed link label retains its destination");
+    fails += expect_not_contains(cap.out, "`code`", "ansi mixed link label consumes code delimiters");
+    fails += expect_not_contains(cap.out, "*em*", "ansi mixed link label parses emphasis after code");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[plain `code` and *em*](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi osc8 plain-prefixed mixed link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi osc8 plain-prefixed mixed link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;http://link.example\033\\", "ansi osc8 plain-prefixed mixed link label retains its destination");
+    fails += expect_not_contains(cap.out, "`code`", "ansi plain-prefixed mixed link label consumes code delimiters");
+    fails += expect_not_contains(cap.out, "*em*", "ansi plain-prefixed mixed link label consumes emphasis delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[plain *em* tail](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi styled link label tail render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi styled link label tail writes match traces");
+    fails += expect_contains(cap.out, "em \033[0m\033[4m\033[1;34mtail",
+                             "ansi styled link label resets emphasis before its plain tail");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[foo_bar_baz](http://link.example) [escaped \\*stars\\*](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi literal-delimiter link labels render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi literal-delimiter link label writes match traces");
+    fails += expect_contains(cap.out, "foo_bar_baz", "ansi intraword underscore link label remains literal");
+    fails += expect_contains(cap.out, "\\*stars\\*", "ansi escaped emphasis delimiters remain literal in link labels");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[\302\253_foo_\302\273](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi unicode-punctuation underscore link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi unicode-punctuation link-label writes match traces");
+    fails += expect_output_equals(&cap, "\302\253foo\302\273 (https://x)\n",
+                                  "ansi unicode punctuation flanks underscore emphasis in link labels");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo\\* literal](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped emphasis closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi escaped emphasis closer link label writes match traces");
+    fails += expect_contains(cap.out, "*foo\\* literal", "ansi escaped emphasis closer remains literal in link labels");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[x *foo `*` bar* y](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi emphasis around code-span delimiter link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi emphasis around code-span delimiter link label writes match traces");
+    fails += expect_output_equals(&cap, "x foo * bar y (https://x)\n",
+                                  "ansi link-label emphasis ignores delimiters inside code spans");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[***both***](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple-emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi triple-emphasis link label writes match traces");
+    fails += expect_output_equals(&cap, "both (https://x)\n",
+                                  "ansi triple-emphasis link label consumes nested delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[***foo**](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi shorter closer triple-emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi shorter closer triple-emphasis link-label writes match traces");
+    fails += expect_output_equals(&cap, "*foo (https://x)\n",
+                                  "ansi shorter closer preserves CommonMark literal opener prefix");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo**](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi longer emphasis closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi longer emphasis closer link label writes match traces");
+    fails += expect_output_equals(&cap, "foo (https://x)\n",
+                                  "ansi longer emphasis closer link label consumes its closing run");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[`a  b`](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi code link label with repeated spaces render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi code link label repeated-space writes match traces");
+    fails += expect_output_equals(&cap, "a  b (https://x)\n",
+                                  "ansi code link label preserves repeated interior spaces");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[*a **b** c*](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi nested emphasis link label with longer inner runs renders succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi nested emphasis link-label writes match traces");
+    fails += expect_output_equals(&cap, "a b c (https://x)\n",
+                                  "ansi outer emphasis ignores nested closer runs");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 100;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "[https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n",
+                        1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi URL link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi URL link-label writes match traces");
+    fails += expect_write_contains(&cap, "//pkt.systems/centaur.md",
+                                   "ansi URL link label emits its URL tail as one decision");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 20;
+    st = render_capture(MDF_FORMAT_ANSI, &opts,
+                        "# [https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n",
+                        1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi wrapped URL link label in heading renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi wrapped URL link label heading writes match traces");
+    fails += expect_contains(cap.out,
+                             "\033[4m\033[1;34mhttps://\033[0m\n  \033[4m\033[1;34mpkt.systems/\033[0m\n  \033[4m\033[1;34mcentaur.md\033[0m",
+                             "ansi wrapped URL link label reapplies link styling after every row reset");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[https://x](u)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi narrow URL link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi narrow URL link-label writes match traces");
+    fails += expect_contains(cap.out, "https://",
+                             "ansi narrow URL link label keeps its scheme delimiter together");
+    fails += expect_not_contains(cap.out, "https:\n//",
+                                 "ansi narrow URL link label does not split after its scheme");
+    fails += expect_not_contains(cap.out, "https\n://",
+                                 "ansi narrow URL link label does not split before its scheme delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "https://x\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi narrow streamed URL render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi narrow streamed URL writes match traces");
+    fails += expect_contains(cap.out, "https://",
+                             "ansi narrow streamed URL keeps its scheme delimiter together");
+    fails += expect_not_contains(cap.out, "https:\n//",
+                                 "ansi narrow streamed URL does not split after its scheme");
+    fails += expect_not_contains(cap.out, "https\n://",
+                                 "ansi narrow streamed URL does not split before its scheme delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "ftp://x git://x\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi narrow streamed non-HTTP URI render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi narrow streamed non-HTTP URI writes match traces");
+    fails += expect_contains(cap.out, "ftp://",
+                             "ansi narrow streamed FTP URI keeps its scheme delimiter together");
+    fails += expect_contains(cap.out, "git://",
+                             "ansi narrow streamed Git URI keeps its scheme delimiter together");
+    fails += expect_not_contains(cap.out, "ftp:\n//",
+                                 "ansi narrow streamed FTP URI does not split after its scheme");
+    fails += expect_not_contains(cap.out, "git:\n//",
+                                 "ansi narrow streamed Git URI does not split after its scheme");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 5;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "foo:/barbaz\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi streamed incomplete URI delimiter renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi streamed incomplete URI delimiter writes match traces");
+    fails += expect_output_equals(&cap, "foo:\n/barb\naz\n",
+                                  "ansi incomplete URI delimiter retains the ordinary colon boundary");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 4;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "foo:/", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi EOF incomplete URI delimiter renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi EOF incomplete URI delimiter writes match traces");
+    fails += expect_output_equals(&cap, "foo:\n/\n",
+                                  "ansi EOF incomplete URI delimiter retains its slash");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "note:longword\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi streamed ordinary colon text renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi streamed ordinary colon text writes match traces");
+    {
+        static const char *const expected[] = {"note:", "longword", "\n"};
+
+        fails += expect_write_sequence(&cap, expected, 3,
+                                       "ansi ordinary colon remains a punctuation boundary");
+    }
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.osc8 = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi nested emphasis link label writes match traces");
+    fails += expect_contains(cap.out, "\033]8;;https://x\033\\", "ansi nested emphasis link label retains its destination");
+    fails += expect_not_contains(cap.out, "**b *c* d**", "ansi nested emphasis link label consumes nested delimiters");
+    fails += expect_not_contains(cap.out, "*c*", "ansi nested emphasis link label consumes inner delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[` foo `](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi padded code link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi padded code link label writes match traces");
+    fails += expect_contains(cap.out, "foo (https://x)", "ansi padded code link label normalizes boundary spaces");
+    fails += expect_not_contains(cap.out, " foo ", "ansi padded code link label removes one boundary space");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi malformed code link label writes match traces");
+    fails += expect_contains(cap.out, "``foo```", "ansi malformed code link label preserves mismatched delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo``bar``](http://link.example)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0, "ansi internal code closer link label render succeeds");
+    fails += expect_trace_matches_writes(&cap, "ansi internal code closer link label writes match traces");
+    fails += expect_contains(cap.out, "foobar``", "ansi link label honors its first code-span closer");
+    fails += expect_not_contains(cap.out, "``foo``bar``", "ansi link label consumes only the opening code delimiter");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_***both***_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple nested emphasis render succeeds");
@@ -1184,6 +1644,275 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     fails += expect_not_contains(cap.out, "*both", "ansi triple nested emphasis consumes opening delimiters");
     fails += expect_not_contains(cap.out, "both*", "ansi triple nested emphasis consumes closing delimiters");
     capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "[****foo****](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi long emphasis-run link label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi long emphasis-run link label writes match traces");
+    fails += expect_output_equals(&cap, "foo (https://x)\n",
+                                  "ansi long emphasis-run link label consumes matching delimiters");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.width = 40;
+    opts.margin_left = 10;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "([this label](./x))\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "ansi parenthesized link label with margin renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "ansi parenthesized link label with margin writes match traces");
+    {
+        char *plain;
+
+        plain = strip_ansi(cap.out);
+        fails += expect(plain != NULL,
+                        "ansi parenthesized link label with margin output can be stripped");
+        if (plain != NULL) {
+            fails += expect(strcmp(plain, "          (this label (./x))\n") == 0,
+                            "ansi parenthesized link label with margin retains its prefix");
+            free(plain);
+        }
+    }
+    capture_free(&cap);
+
+    {
+        static const char prefix[] = "([";
+        static const char suffix[] = "](https://x))\n";
+        const size_t label_len = 9000;
+        size_t source_len;
+        char *source;
+
+        source_len = sizeof(prefix) - 1 + label_len + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large parenthesized link-label fixture allocates");
+        if (source != NULL) {
+            memcpy(source, prefix, sizeof(prefix) - 1);
+            memset(source + sizeof(prefix) - 1, 'x', label_len);
+            memcpy(source + sizeof(prefix) - 1 + label_len, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large parenthesized link-label render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large parenthesized link-label writes match traces");
+            fails += expect_contains(cap.out, "(xxxxx",
+                                     "large parenthesized link-label emits its opening parenthesis");
+            capture_free(&cap);
+            free(source);
+        }
+    }
+
+    {
+        static const char prefix[] = "([";
+        static const char suffix[] = "](https://x))\n";
+        const size_t label_len = 8190;
+        size_t source_len;
+        char *source;
+
+        source_len = sizeof(prefix) - 1 + label_len + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL,
+                        "oversized styled parenthesized link-label fixture allocates");
+        if (source != NULL) {
+            memcpy(source, prefix, sizeof(prefix) - 1);
+            memset(source + sizeof(prefix) - 1, 'x', label_len);
+            memcpy(source + sizeof(prefix) - 1 + label_len, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.osc8 = 0;
+            opts.width = 10000;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, 1, &cap);
+            fails += expect(st == MDF_ERROR_NOMEM && cap.failed == 0,
+                            "oversized styled parenthesized link-label reports NOMEM");
+            fails += expect(cap.write_count == 0 && cap.trace_count == 0,
+                            "oversized styled parenthesized link-label emits nothing");
+            capture_free(&cap);
+            free(source);
+        }
+    }
+
+    mdf_options_init(&opts);
+    opts.width = 40;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "([this label](./x))\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "parenthesized styled link-label render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "parenthesized styled link-label writes match traces");
+    fails += expect_write_contains(&cap, "(\033[4m\033[1;34mthis",
+                                   "parenthesized styled link-label keeps its opening parenthesis with the first word");
+    capture_free(&cap);
+
+    {
+        static const char suffix[] = "](https://x)\n";
+        char source[128];
+        char *emission_buffer;
+        size_t offset;
+        size_t i;
+
+        offset = 0;
+        source[offset++] = '[';
+        for (i = 0; i < 16; i++) {
+            source[offset++] = (i & 1) == 0 ? '*' : '_';
+        }
+        source[offset++] = 'x';
+        for (i = 16; i > 0; i--) {
+            source[offset++] = ((i - 1) & 1) == 0 ? '*' : '_';
+        }
+        memcpy(source + offset, suffix, sizeof(suffix));
+        emission_buffer = (char *)malloc(512);
+        fails += expect(emission_buffer != NULL,
+                        "nested styled link-label emission buffer allocates");
+        if (emission_buffer != NULL) {
+            mdf_options_init(&opts);
+            opts.osc8 = 0;
+            opts.emission_buffer.data = emission_buffer;
+            opts.emission_buffer.cap = 512;
+            opts.emission_buffer.fixed = 1;
+            opts.emission_buffer.take_ownership = 1;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, 1, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "nested styled link-label uses the configured emission buffer");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "nested styled link-label keeps emission identity");
+            fails += expect_contains(cap.out, "x",
+                                     "nested styled link-label preserves visible content");
+            capture_free(&cap);
+        }
+    }
+
+    {
+        static const char suffix[] = "](https://x)\n";
+        const size_t delimiters = 100000;
+        size_t source_len;
+        char *source;
+        count_sink count;
+        clock_t started;
+        clock_t elapsed;
+
+        source_len = 1 + delimiters + 1 + delimiters + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "deep nested link-label emphasis fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            memset(source + 1, '*', delimiters);
+            source[1 + delimiters] = 'x';
+            memset(source + 2 + delimiters, '*', delimiters);
+            memcpy(source + 2 + delimiters + delimiters, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 0;
+            started = clock();
+            st = render_count(MDF_FORMAT_ANSI, &opts, source, source_len, &count);
+            elapsed = clock() - started;
+            fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
+                            "deep nested link-label emphasis render succeeds");
+            fails += expect(elapsed != (clock_t)-1 && elapsed <
+                            2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC,
+                            "deep nested link-label emphasis remains bounded");
+            free(source);
+        }
+    }
+
+    {
+        static const char suffix[] = "literal](https://x)\n";
+        const size_t repeats = 1000;
+        size_t source_len;
+        size_t offset;
+        size_t i;
+        char *source;
+        count_sink count;
+        clock_t started;
+        clock_t elapsed;
+
+        source_len = 1 + (repeats * (repeats + 1)) / 2 + repeats + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large malformed code link-label fixture allocates");
+        if (source != NULL) {
+            offset = 0;
+            source[offset++] = '[';
+            for (i = 1; i <= repeats; i++) {
+                memset(source + offset, '`', i);
+                offset += i;
+                source[offset++] = 'a';
+            }
+            memcpy(source + offset, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            started = clock();
+            st = render_count(MDF_FORMAT_ANSI, &opts, source, source_len, &count);
+            elapsed = clock() - started;
+            fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
+                            "large malformed code link-label render succeeds");
+            fails += expect(elapsed != (clock_t)-1 && elapsed <
+                            2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC,
+                            "large malformed code link-label remains bounded");
+            free(source);
+        }
+    }
+
+    {
+        static const char suffix[] = "](https://x)\n";
+        static const char unit[] = "*a,";
+        const size_t repeats = 6000;
+        size_t source_len;
+        size_t i;
+        char *source;
+
+        source_len = 1 + repeats * (sizeof(unit) - 1) + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large unmatched link-label emphasis fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            for (i = 0; i < repeats; i++) {
+                memcpy(source + 1 + i * (sizeof(unit) - 1), unit, sizeof(unit) - 1);
+            }
+            memcpy(source + 1 + repeats * (sizeof(unit) - 1), suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large unmatched link-label emphasis render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large unmatched link-label emphasis writes match traces");
+            fails += expect_contains(cap.out, "*a,*a",
+                                     "large unmatched link-label emphasis remains literal");
+            capture_free(&cap);
+            free(source);
+        }
+    }
+
+    {
+        static const char suffix[] = "literal](https://x)\n";
+        const size_t backticks = 30000;
+        size_t source_len;
+        char *source;
+
+        source_len = 1 + backticks + sizeof(suffix);
+        source = (char *)malloc(source_len);
+        fails += expect(source != NULL, "large unmatched link-label code fixture allocates");
+        if (source != NULL) {
+            source[0] = '[';
+            memset(source + 1, '`', backticks);
+            memcpy(source + 1 + backticks, suffix, sizeof(suffix));
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "large unmatched link-label code render succeeds");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "large unmatched link-label code writes match traces");
+            fails += expect_contains(cap.out, "````",
+                                     "large unmatched link-label code delimiters remain literal");
+            capture_free(&cap);
+            free(source);
+        }
+    }
     return fails;
 }
 

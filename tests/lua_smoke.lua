@@ -109,6 +109,8 @@ do
   assert(not generated:match("detect_html_title"), "cmdf.lua must not own HTML title detection")
   assert(not generated:match('read%(1%)'), "cmdf.lua must not perform byte-level title prescan reads")
   assert(not generated:match("mdf%.render%("), "cmdf.lua must not materialize full output")
+  assert(generated:find("mdf.pager(input_path, opts)", 1, true),
+         "cmdf.lua delegates --pager to the Lua library")
   assert(not generated:match("os%.clock%("), "cmdf.lua simulate delay must not busy-wait")
   assert(generated:find("sleep %.9f", 1, true), "cmdf.lua simulate delay uses wall-clock sleep")
   assert(generated:find("local simulated_reads = 0", 1, true),
@@ -129,7 +131,25 @@ assert(type(mdf.token.CHART_BLOCK) == "number", "lua facade exposes chart block 
 assert(#mdf.theme_names() > 0, "lua facade exposes theme_names")
 assert(mdf.theme_exists("default"), "lua facade exposes theme_exists")
 assert(type(mdf.terminal_width(-1, 77)) == "number", "lua facade exposes terminal_width")
+assert(type(mdf.pager) == "function", "lua facade exposes pager")
 assert(mdf.paths_alias("same-path", "same-path"), "lua facade exposes path alias checks")
+
+do
+  local path = os.tmpname() .. ".txt"
+  local f = assert(io.open(path, "wb"))
+  f:write("# pager override\n")
+  f:close()
+  local pager_ok, pager_err = pcall(mdf.pager, path, { format = "text/markdown" })
+  assert(not pager_ok and tostring(pager_err):match("mdf_pager: invalid argument"),
+         "lua pager assumes UTF-8 for the bare HTTP markdown media type before rejecting a non-terminal session")
+  pager_ok, pager_err = pcall(mdf.pager, path, { format = "Text/Markdown; charset=utf-8" })
+  assert(not pager_ok and tostring(pager_err):match("mdf_pager: invalid argument"),
+         "lua pager accepts parameterized HTTP markdown media types before rejecting a non-terminal session")
+  pager_ok, pager_err = pcall(mdf.pager, path, { format = "t" })
+  assert(not pager_ok and tostring(pager_err):match("pager format must be"),
+         "lua pager rejects short invalid format strings before pager startup")
+  os.remove(path)
+end
 
 local out = mdf.render("# Lua\n\nbody\n", { boring = true })
 assert(out:match("Lua"), out)

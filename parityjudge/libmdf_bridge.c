@@ -10,6 +10,7 @@
 #include "../src/render_ansi.c"
 #include "../src/render_parse.c"
 #include "../src/html_fonts.c"
+#include "../src/unicode_classify.c"
 
 typedef struct bridge_source {
     const char *data;

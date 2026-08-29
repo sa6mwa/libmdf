@@ -76,22 +76,17 @@ def print_ratios(results):
     print()
     print("| ratio | value |")
     print("| --- | ---: |")
-    for impl in ("C API", "Lua API"):
-        html = by_key.get((impl, "html"))
-        deck = by_key.get((impl, "deck"))
-        if html and deck and html["stats"]["median"] > 0:
-            print(f"| {impl} deck/html median | {deck['stats']['median'] / html['stats']['median']:.2f}x |")
-    for mode in ("ansi", "html", "deck"):
+    for mode in ("ansi", "html"):
         c = by_key.get(("C API", mode))
         lua = by_key.get(("Lua API", mode))
         if c and lua and c["stats"]["median"] > 0:
             print(f"| Lua API/C API {mode} median | {lua['stats']['median'] / c['stats']['median']:.2f}x |")
 
 
-def benchmark_case(case, root, rounds, warmups):
+def benchmark_case(case, root, rounds, warmups, repeats):
     for _ in range(warmups):
         time_command(case["cmd"], root, case.get("env"))
-    samples = [time_command(case["cmd"], root, case.get("env")) for _ in range(rounds)]
+    samples = [time_command(case["cmd"], root, case.get("env")) / repeats for _ in range(rounds)]
     return {
         "impl": case["impl"],
         "mode": case["mode"],
@@ -118,9 +113,10 @@ def lua_env(root):
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description="Benchmark libmdf C API and Lua binding render paths.")
-    parser.add_argument("--input", default="testdata/deck-corpus/comprehensive.md")
+    parser.add_argument("--input", default="testdata/code-review-is-a-dead-end.md")
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--warmups", type=int, default=2)
+    parser.add_argument("--repeat", type=int, default=1, help="real renders per timed sample")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--no-lua", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -130,6 +126,8 @@ def main():
         raise SystemExit("--rounds must be >= 1")
     if args.warmups < 0:
         raise SystemExit("--warmups must be >= 0")
+    if args.repeat < 1:
+        raise SystemExit("--repeat must be >= 1")
 
     fixture = (root / args.input).resolve()
     if not fixture.is_file():
@@ -145,9 +143,8 @@ def main():
         raise SystemExit(f"libmdf benchmark renderer not found: {render}")
 
     cases = [
-        {"impl": "C API", "mode": "ansi", "cmd": [str(render), "--ansi", "-w", "80", str(fixture)]},
-        {"impl": "C API", "mode": "html", "cmd": [str(render), "--html", str(fixture)]},
-        {"impl": "C API", "mode": "deck", "cmd": [str(render), "--deck", str(fixture)]},
+        {"impl": "C API", "mode": "ansi", "cmd": [str(render), "--ansi", "-w", "80", "--repeat", str(args.repeat), str(fixture)]},
+        {"impl": "C API", "mode": "html", "cmd": [str(render), "--html", "--repeat", str(args.repeat), str(fixture)]},
     ]
 
     if not args.no_lua:
@@ -155,18 +152,17 @@ def main():
         lua_render = root / "scripts/benchmark_lua_render.lua"
         cases.extend(
             [
-                {"impl": "Lua API", "mode": "ansi", "cmd": ["lua", str(lua_render), "--ansi", "-w", "80", str(fixture)], "env": env},
-                {"impl": "Lua API", "mode": "html", "cmd": ["lua", str(lua_render), "--html", str(fixture)], "env": env},
-                {"impl": "Lua API", "mode": "deck", "cmd": ["lua", str(lua_render), "--deck", str(fixture)], "env": env},
+                {"impl": "Lua API", "mode": "ansi", "cmd": ["lua", str(lua_render), "--ansi", "-w", "80", "--repeat", str(args.repeat), str(fixture)], "env": env},
+                {"impl": "Lua API", "mode": "html", "cmd": ["lua", str(lua_render), "--html", "--repeat", str(args.repeat), str(fixture)], "env": env},
             ]
         )
 
     results = []
     for case in cases:
         print(f"benchmarking {case['impl']} {case['mode']}...", file=sys.stderr)
-        results.append(benchmark_case(case, root, args.rounds, args.warmups))
+        results.append(benchmark_case(case, root, args.rounds, args.warmups, args.repeat))
 
-    payload = {"input": str(fixture), "rounds": args.rounds, "warmups": args.warmups, "results": results}
+    payload = {"input": str(fixture), "rounds": args.rounds, "warmups": args.warmups, "repeat": args.repeat, "results": results}
     if args.json:
         print(json.dumps(payload, indent=2))
     else:

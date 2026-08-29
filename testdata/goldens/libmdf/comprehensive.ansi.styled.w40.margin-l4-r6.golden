@@ -95,8 +95,8 @@
     [1m[3m[1;35mcombined emphasis[0m, 
     [35minline code[0m, [4m[1;34mlinks[0m
     ([90mhttps://example.com/deck[0m),
-    and autolinks like https:
-    //example.com/autolink.
+    and autolinks like https://
+    example.com/autolink.
 
     [1;32m# [0m[1;32mLists[0m
 
