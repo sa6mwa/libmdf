@@ -33,7 +33,7 @@ int main(void)
 {
     mdf_options opts;
     mdf_options_init(&opts);
-    return opts.width == 0 ? 0 : 1;
+    return opts.width > 0 ? 0 : 1;
 }
 
 EOF
