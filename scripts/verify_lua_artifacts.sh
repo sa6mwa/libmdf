@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
@@ -14,11 +14,6 @@ test -f "$ARCHIVE"
 test -f "$ROCKSPEC"
 test -f "$SRCROCK"
 test -f "$HOST_ARTIFACT"
-LUA_VERSION=$(lua -e 'io.write(_VERSION)' 2>/dev/null || true)
-if [ "$LUA_VERSION" != "Lua 5.5" ]; then
-  printf '%s\n' "libmdf Lua artifact verification supports Lua 5.5; found ${LUA_VERSION:-no lua runtime}" >&2
-  exit 1
-fi
 grep -F -q 'dependencies = { "lua >= 5.5, < 5.6" }' "$ROCKSPEC"
 
 if grep -R -n -e "$ROOT" -e '/home/' -e '/tmp/' "$ROCKSPEC" >/dev/null; then
@@ -71,11 +66,15 @@ grep -F -q 'dependencies = { "lua >= 5.5, < 5.6" }' "$TMP/srcrock/libmdf-$VERSIO
 
 tar -C "$TMP/sdk" -xzf "$HOST_ARTIFACT"
 sdk_root=$(find "$TMP/sdk" -mindepth 1 -maxdepth 1 -type d)
+LUA_ROOT="$TMP/runtime"
+bash "$ROOT/scripts/build_lua_runtime.sh" "$sdk_root/lib" "$LUA_ROOT"
+eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+CC="$LIBMDF_BOOTLIN_CC"
 (
   cd "$DIST"
-  luarocks --tree "$TMP/tree" install "$SRCROCK" MDF_DIR="$sdk_root"
+  luarocks --lua-dir "$LUA_ROOT" --lua-version 5.5 --tree "$TMP/tree" install "$SRCROCK" \
+    MDF_DIR="$sdk_root" CC="$CC" LD="$CC" CFLAGS="-O2 -fPIC -Wall -Wextra -Werror" LUA_INCDIR="$LUA_ROOT/include"
 )
 LUA_PATH="$TMP/tree/share/lua/5.5/?.lua;$TMP/tree/share/lua/5.5/?/init.lua;;" \
 LUA_CPATH="$TMP/tree/lib/lua/5.5/?.so;;" \
-LD_LIBRARY_PATH="$sdk_root/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-lua -e 'local mdf = require("libmdf"); local out = mdf.render("# LuaRock\n", { boring = true }); assert(out:match("LuaRock"))'
+"$LUA_ROOT/bin/lua" -e 'local mdf = require("libmdf"); local out = mdf.render("# LuaRock\n", { boring = true }); assert(out:match("LuaRock"))'

@@ -146,6 +146,11 @@ LIBMDF_CMDF_STATIC_RUNTIME=ON|OFF
 The project presets and `Makefile` targets are the preferred local entry points
 for development and release builds.
 
+On Linux, `cmake --install` excludes the development `cmdf`, whose interpreter
+and RPATH refer to the local Bootlin collection. To install the CLI, use
+`make install` or configure `LIBMDF_CMDF_STATIC_RUNTIME=ON` together with
+`LIBMDF_INSTALL_BINARY=ON`. That executable is fully static and relocatable.
+
 ## pkg-config
 
 The SDK also ships relocatable pkg-config metadata. On Linux, use it with the
@@ -532,6 +537,16 @@ cmdf --deck --slide-numbers -x fade -o deck.html testdata/deck-corpus/comprehens
 ## Lua
 
 Lua bindings currently target Lua 5.5 only.
+
+Local tests and benchmarks build a pinned Lua 5.5.1 interpreter from the
+[official Lua source archive](https://www.lua.org/ftp/) using Bootlin. Its
+private loader and RPATH resolve both libc and the installed development SDK.
+`make lua-rock` builds this interpreter at `build/lua-runtime/bin/lua` and
+compiles the binding with the same compiler and Lua headers. Host LuaRocks
+remains package tooling. Use `make lua-env` for the local interpreter and module
+paths; no dependency `LD_LIBRARY_PATH` export is needed. The Lua source archive
+is checksum-verified in the shared `CPKT_DEPENDENCY_CACHE`; the interpreter and
+its build files remain under `build/` and are not shipped.
 
 ```lua
 local mdf = require("libmdf")

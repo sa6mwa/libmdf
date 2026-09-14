@@ -101,12 +101,8 @@ def benchmark_case(case, root, rounds, warmups, repeats):
 def lua_env(root):
     env = os.environ.copy()
     tree = root / "build/luarocks/tree"
-    prefix = root / "build/luarocks/libmdf-prefix"
-    debug_lib = root / "build/debug"
     env["LUA_PATH"] = f"{tree}/share/lua/5.5/?.lua;{tree}/share/lua/5.5/?/init.lua;;"
     env["LUA_CPATH"] = f"{tree}/lib/lua/5.5/?.so;;"
-    existing = env.get("LD_LIBRARY_PATH")
-    env["LD_LIBRARY_PATH"] = f"{debug_lib}:{prefix}/lib" + (f":{existing}" if existing else "")
     return env
 
 
@@ -150,10 +146,11 @@ def main():
     if not args.no_lua:
         env = lua_env(root)
         lua_render = root / "scripts/benchmark_lua_render.lua"
+        lua = str(root / "build/lua-runtime/bin/lua")
         cases.extend(
             [
-                {"impl": "Lua API", "mode": "ansi", "cmd": ["lua", str(lua_render), "--ansi", "-w", "80", "--repeat", str(args.repeat), str(fixture)], "env": env},
-                {"impl": "Lua API", "mode": "html", "cmd": ["lua", str(lua_render), "--html", "--repeat", str(args.repeat), str(fixture)], "env": env},
+                {"impl": "Lua API", "mode": "ansi", "cmd": [lua, str(lua_render), "--ansi", "-w", "80", "--repeat", str(args.repeat), str(fixture)], "env": env},
+                {"impl": "Lua API", "mode": "html", "cmd": [lua, str(lua_render), "--html", "--repeat", str(args.repeat), str(fixture)], "env": env},
             ]
         )
 

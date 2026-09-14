@@ -360,6 +360,8 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME cmake_option_matrix COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmake_options.sh)
+  add_test(NAME cmdf_install_boundary COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmdf_install.sh)
+  set_tests_properties(cmdf_install_boundary PROPERTIES LABELS "unit;packaging" TIMEOUT 90)
   set_tests_properties(cmake_option_matrix PROPERTIES
     LABELS "unit;packaging"
     TIMEOUT 30
@@ -432,8 +434,12 @@ if(LIBMDF_INSTALL)
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/libmdf)
   endif()
   if(TARGET cmdf AND LIBMDF_INSTALL_BINARY)
-    install(TARGETS cmdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/cmdf)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT LIBMDF_CMDF_STATIC_RUNTIME)
+      message(STATUS "Development cmdf is not installed: use LIBMDF_CMDF_STATIC_RUNTIME=ON for a portable Linux CLI")
+    else()
+      install(TARGETS cmdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+      install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/cmdf)
+    endif()
   endif()
   install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/libmdf)
   configure_package_config_file(cmake/libmdfConfig.cmake.in

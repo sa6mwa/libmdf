@@ -142,7 +142,9 @@ parity-html-stream:
 parity-lua: lua-test
 
 lua-env:
-	@printf 'LUA_PATH=%s/lua/?.lua;%s\n' "$$(pwd)" "$${LUA_PATH:-;;}"
+	@printf 'LUA=%s/build/lua-runtime/bin/lua\n' "$$(pwd)"
+	@printf 'LUA_PATH=%s/build/luarocks/tree/share/lua/5.5/?.lua;;\n' "$$(pwd)"
+	@printf 'LUA_CPATH=%s/build/luarocks/tree/lib/lua/5.5/?.so;;\n' "$$(pwd)"
 
 lua-rock:
 	@scripts/build_lua_rock.sh
