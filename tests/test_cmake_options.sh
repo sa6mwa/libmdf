@@ -40,8 +40,9 @@ EOF
   cat >"$dir/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.20)
 project(libmdf_consumer C)
-find_package(libmdf CONFIG REQUIRED)
+find_package(libmdf CONFIG REQUIRED NO_CMAKE_FIND_ROOT_PATH)
 add_executable(consumer main.c)
+libmdf_configure_development_runtime(consumer)
 if(TARGET libmdf::mdf_static)
   target_link_libraries(consumer PRIVATE libmdf::mdf_static)
 elseif(TARGET libmdf::mdf_shared)
@@ -70,6 +71,7 @@ verify_install_tree() {
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
   cmake -S "$ROOT" -B "$build" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DLIBMDF_BUILD_BINARY=OFF \
     -DLIBMDF_BUILD_TESTS=OFF \
@@ -92,6 +94,8 @@ verify_install_tree() {
 
   write_consumer_sources "$consumer/src"
   cmake -S "$consumer/src" -B "$consumer/build" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
+    -Dlibmdf_DIR="$install/$cmakedir" \
     -DCMAKE_PREFIX_PATH="$install" >>"$log" 2>&1
   cmake --build "$consumer/build" >>"$log" 2>&1
 
@@ -115,6 +119,7 @@ verify_absolute_pkg_config() {
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
   cmake -S "$ROOT" -B "$build" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DCMAKE_INSTALL_LIBDIR="$abs_lib" \
     -DLIBMDF_BUILD_STATIC=ON \

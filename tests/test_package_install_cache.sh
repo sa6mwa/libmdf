@@ -6,11 +6,7 @@ VERSION=$(sh "$ROOT/scripts/version.sh")
 
 unset CC CFLAGS CPPFLAGS LDFLAGS
 
-if command -v x86_64-linux-musl-gcc >/dev/null 2>&1; then
-  TARGET=x86_64-linux-musl
-else
-  TARGET=x86_64-linux-gnu
-fi
+TARGET=x86_64-linux-gnu
 
 PRESET="$TARGET-release"
 CACHE="$ROOT/build/$PRESET/CMakeCache.txt"
@@ -23,6 +19,8 @@ STALE_MANIFEST="$ROOT/dist/libmdf-9.9.9-CHECKSUMS"
 STALE_ROCKSPEC="$ROOT/dist/libmdf-9.9.9-1.rockspec"
 STALE_SRC_ROCK="$ROOT/dist/libmdf-9.9.9-1.src.rock"
 HEADER_CHECK="$ROOT/build/package-install-cache-$TARGET-mdf.h"
+
+rm -rf "$ROOT/build/$PRESET"
 
 cmake --preset "$PRESET" \
   -DLIBMDF_INSTALL=OFF \

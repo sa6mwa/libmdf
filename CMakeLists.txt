@@ -48,6 +48,14 @@ set(LIBMDF_TARGET_ARCH "" CACHE STRING "Release target arch")
 set(LIBMDF_TARGET_OS "" CACHE STRING "Release target os")
 set(LIBMDF_TARGET_LIBC "" CACHE STRING "Release target libc")
 
+# Linux toolchain files provide the real implementation before project().
+# Keep non-Linux packaging and source-inspection configurations valid without
+# applying ELF-only flags to their executables.
+if(NOT COMMAND libmdf_configure_development_runtime)
+  function(libmdf_configure_development_runtime target)
+  endfunction()
+endif()
+
 if(IS_ABSOLUTE "${CMAKE_INSTALL_LIBDIR}")
   set(LIBMDF_PC_PREFIX "${CMAKE_INSTALL_PREFIX}")
   set(LIBMDF_PC_LIBDIR "${CMAKE_INSTALL_FULL_LIBDIR}")
@@ -148,6 +156,8 @@ if(LIBMDF_BUILD_BINARY)
   endif()
   if(LIBMDF_CMDF_STATIC_RUNTIME AND NOT APPLE)
     target_link_options(cmdf PRIVATE -static)
+  else()
+    libmdf_configure_development_runtime(cmdf)
   endif()
 endif()
 
@@ -155,6 +165,7 @@ if(LIBMDF_BUILD_EXAMPLES)
   add_executable(example_basic examples/basic.c)
   target_include_directories(example_basic PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(example_basic PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(example_basic)
 endif()
 
 if(LIBMDF_BUILD_TESTS)
@@ -162,6 +173,7 @@ if(LIBMDF_BUILD_TESTS)
   add_executable(test_internal_api tests/test_api.c)
   target_include_directories(test_internal_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_internal_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(test_internal_api)
   add_test(NAME test_internal_api COMMAND test_internal_api)
   set_tests_properties(test_internal_api PROPERTIES
     LABELS "unit;internal"
@@ -176,12 +188,14 @@ if(LIBMDF_BUILD_TESTS)
   endif()
   target_include_directories(test_public_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_public_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(test_public_api)
   add_test(NAME test_public_api COMMAND test_public_api)
   set_tests_properties(test_public_api PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
   add_executable(test_contracts tests/test_contracts.c)
   target_include_directories(test_contracts PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_contracts PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(test_contracts)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
@@ -189,6 +203,7 @@ if(LIBMDF_BUILD_TESTS)
   target_compile_features(golden_render PRIVATE c_std_90)
   target_include_directories(golden_render PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(golden_render PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(golden_render)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(golden_render PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
@@ -217,6 +232,7 @@ if(LIBMDF_BUILD_TESTS)
     target_compile_definitions(mdf_pager_test PRIVATE LIBMDF_PAGER_TESTING)
 
     add_executable(test_pager tests/test_pager.c)
+    libmdf_configure_development_runtime(test_pager)
     target_compile_features(test_pager PRIVATE c_std_90)
     target_compile_definitions(test_pager PRIVATE _POSIX_C_SOURCE=200809L LIBMDF_PAGER_TESTING)
     # Darwin places terminal resize signals and anonymous-mapping aliases
@@ -241,6 +257,7 @@ if(LIBMDF_BUILD_TESTS)
     set_tests_properties(test_pager PROPERTIES LABELS "integration;cli;pager;forkpty" TIMEOUT 30)
 
     add_executable(test_pager_ratio tests/test_pager_ratio.c)
+    libmdf_configure_development_runtime(test_pager_ratio)
     target_compile_features(test_pager_ratio PRIVATE c_std_90)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
       target_compile_options(test_pager_ratio PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -281,6 +298,20 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME header_self_sufficient
     COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${LIBMDF_GENERATED_INCLUDE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/header_self_sufficient.o)
   set_tests_properties(header_self_sufficient PROPERTIES LABELS "unit;api" TIMEOUT 10)
+
+  get_property(LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS GLOBAL PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)
+  foreach(LIBMDF_BOOTLIN_TARGET IN LISTS LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)
+    add_test(NAME ${LIBMDF_BOOTLIN_TARGET}_uses_bootlin_runtime
+      COMMAND ${CMAKE_COMMAND}
+              -DREADELF=${CMAKE_READELF}
+              -DEXECUTABLE=$<TARGET_FILE:${LIBMDF_BOOTLIN_TARGET}>
+              -DINTERPRETER=${LIBMDF_BOOTLIN_LOADER}
+              -DRUNTIME_DIR=${LIBMDF_BOOTLIN_sysroot}/lib
+              -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_bootlin_runtime.cmake)
+    set_tests_properties(${LIBMDF_BOOTLIN_TARGET}_uses_bootlin_runtime PROPERTIES
+      LABELS "unit;lifecycle;runtime"
+      TIMEOUT 10)
+  endforeach()
 
   add_test(NAME version_source_archive COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_version_source.sh)
   set_tests_properties(version_source_archive PROPERTIES LABELS "unit;packaging" TIMEOUT 10)
@@ -364,6 +395,7 @@ if(LIBMDF_BUILD_FUZZERS)
   add_executable(fuzz_smoke fuzz/fuzz_smoke.c)
   target_include_directories(fuzz_smoke PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(fuzz_smoke PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(fuzz_smoke)
   target_compile_options(fuzz_smoke PRIVATE -fsanitize=fuzzer-no-link -fno-omit-frame-pointer)
   target_link_options(fuzz_smoke PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")

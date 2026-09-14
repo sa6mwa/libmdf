@@ -25,6 +25,7 @@ test "$(cat "$SRC/VERSION")" = "$VERSION"
 cmp "$WORK/manifest.actual" "$WORK/manifest.expected"
 
 cmake -S "$SRC" -B "$WORK/build" -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE="$SRC/cmake/toolchains/x86_64-linux-gnu.cmake" \
   -DLIBMDF_BUILD_TESTS=ON \
   -DLIBMDF_BUILD_EXAMPLES=ON \
   -DLIBMDF_BUILD_FUZZERS=OFF \
