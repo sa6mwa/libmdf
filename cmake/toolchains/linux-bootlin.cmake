@@ -84,5 +84,6 @@ function(libmdf_configure_development_runtime target)
   target_link_options(${target} PRIVATE
     "-Wl,--dynamic-linker,${LIBMDF_BOOTLIN_LOADER}"
     "-Wl,--disable-new-dtags,-rpath,${LIBMDF_BOOTLIN_RUNTIME_RPATH}")
+  set_property(TARGET ${target} PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_RUNTIME TRUE)
   set_property(GLOBAL APPEND PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS ${target})
 endfunction()

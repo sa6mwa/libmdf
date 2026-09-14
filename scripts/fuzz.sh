@@ -3,9 +3,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MODE=${1:-standard}
-CACHE="$ROOT/build/fuzz/CMakeCache.txt"
 SEED_CORPUS="$ROOT/fuzz/corpus"
-WORK_CORPUS="$ROOT/build/fuzz/corpus"
+OUTPUT="$ROOT/build/fuzz/afl-output"
 
 case "$MODE" in
   smoke)
@@ -23,17 +22,21 @@ case "$MODE" in
     ;;
 esac
 
-if [ -f "$CACHE" ] && ! grep -Eq '^CMAKE_C_COMPILER:FILEPATH=.*clang([^/]*)?$' "$CACHE"; then
-  rm -rf "$ROOT/build/fuzz"
-fi
-
 "$ROOT/scripts/configure_preset.sh" fuzz fuzz
 cmake --build --preset fuzz
-mkdir -p "$ROOT/build/fuzz/artifacts"
-rm -rf "$WORK_CORPUS"
-mkdir -p "$WORK_CORPUS"
-cp "$SEED_CORPUS"/* "$WORK_CORPUS"/
-"$ROOT/build/fuzz/fuzz_smoke" \
-  -max_total_time="$MAX_TOTAL_TIME" \
-  -artifact_prefix="$ROOT/build/fuzz/artifacts/" \
-  "$WORK_CORPUS"
+eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+cmake \
+  -DREADELF="$LIBMDF_BOOTLIN_READELF" \
+  -DEXECUTABLE="$ROOT/build/fuzz/fuzz_smoke" \
+  -DINTERPRETER="$LIBMDF_BOOTLIN_INTERPRETER" \
+  -DRUNTIME_DIR="$LIBMDF_BOOTLIN_RUNTIME_DIR" \
+  -P "$ROOT/tests/assert_bootlin_runtime.cmake"
+rm -rf "$OUTPUT"
+mkdir -p "$OUTPUT"
+eval "$("$ROOT/scripts/cpkt-aflpp.sh" env)"
+AFL_NO_UI=1 AFL_NO_AFFINITY=1 AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
+  "$CPKT_AFLPP_ROOT/bin/afl-fuzz" \
+  -V "$MAX_TOTAL_TIME" \
+  -i "$SEED_CORPUS" \
+  -o "$OUTPUT" \
+  -- "$ROOT/build/fuzz/fuzz_smoke" @@

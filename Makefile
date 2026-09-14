@@ -1,6 +1,6 @@
 PREFIX ?= /usr/local
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening asan tsan msan fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix release-pipeline finalize-slice prerelease prerelease-hardening lifecycle-version-contract release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening valgrind fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix release-pipeline finalize-slice prerelease prerelease-hardening lifecycle-version-contract release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
 
 help:
 	@printf '%s\n' 'libmdf lifecycle targets:'
@@ -17,8 +17,8 @@ help:
 	@printf '%s\n' '  make golden-test            Verify libmdf API output goldens'
 	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
 	@printf '%s\n' '  make test                   Run debug tests'
-	@printf '%s\n' '  make test-all               Run bounded local gate: tests, ASan, fuzz smoke, quick parity'
-	@printf '%s\n' '  make test-hardening         Run tests, all sanitizers, fuzz smoke, and full parity'
+	@printf '%s\n' '  make test-all               Run bounded local gate: tests, Valgrind, fuzz smoke, quick parity'
+	@printf '%s\n' '  make test-hardening         Run tests, Valgrind, fuzz smoke, and full parity'
 	@printf '%s\n' '  make parity                 Run exhaustive ANSI, HTML, streaming, and Lua parity gates'
 	@printf '%s\n' '  make parity-quick           Run bounded ANSI, HTML, and streaming parity smoke'
 	@printf '%s\n' '  make lua-test               Run Lua facade and cmdf.lua parity smoke tests'
@@ -26,12 +26,10 @@ help:
 	@printf '%s\n' '  make lua-rock               Build local Lua rock'
 	@printf '%s\n' '  make release-lua-artifacts  Build Lua source archive and source rock'
 	@printf '%s\n' '  make verify-lua-artifacts   Verify Lua release artifacts'
-	@printf '%s\n' '  make asan                   Run AddressSanitizer + UBSan tests'
-	@printf '%s\n' '  make tsan                   Run ThreadSanitizer tests'
-	@printf '%s\n' '  make msan                   Run MemorySanitizer tests'
-	@printf '%s\n' '  make fuzz-smoke             Run bounded libFuzzer smoke'
-	@printf '%s\n' '  make fuzz                   Run standard bounded libFuzzer job'
-	@printf '%s\n' '  make fuzz-long              Run longer bounded libFuzzer job'
+	@printf '%s\n' '  make valgrind               Run native Bootlin Valgrind memory check'
+	@printf '%s\n' '  make fuzz-smoke             Run bounded native AFL++ fuzz smoke'
+	@printf '%s\n' '  make fuzz                   Run standard bounded native AFL++ job'
+	@printf '%s\n' '  make fuzz-long              Run longer bounded native AFL++ job'
 	@printf '%s\n' '  make package                Build release SDK archives'
 	@printf '%s\n' '  make package-source         Build source archive'
 	@printf '%s\n' '  make package-source-smoke   Build and test the source archive'
@@ -92,18 +90,12 @@ install:
 test test-debug:
 	@scripts/test.sh debug
 
-test-all: test asan fuzz-smoke parity-quick
+test-all: test valgrind fuzz-smoke parity-quick
 
-test-hardening: test asan tsan msan fuzz-smoke parity
+test-hardening: test valgrind fuzz-smoke parity
 
-asan:
-	@scripts/test.sh asan
-
-tsan:
-	@scripts/test.sh tsan
-
-msan:
-	@scripts/test.sh msan
+valgrind:
+	@scripts/valgrind.sh
 
 fuzz:
 	@scripts/fuzz.sh standard

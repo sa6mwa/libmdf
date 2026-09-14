@@ -219,6 +219,7 @@ if(LIBMDF_BUILD_TESTS)
     add_executable(test_cmdf tests/test_cmdf.c)
     target_compile_features(test_cmdf PRIVATE c_std_90)
     target_compile_definitions(test_cmdf PRIVATE _POSIX_C_SOURCE=200809L)
+    libmdf_configure_development_runtime(test_cmdf)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
       target_compile_options(test_cmdf PRIVATE -Wall -Wextra -Wpedantic -Werror)
     endif()
@@ -251,9 +252,8 @@ if(LIBMDF_BUILD_TESTS)
     endif()
     add_test(NAME test_pager COMMAND test_pager $<TARGET_FILE:cmdf>)
     # forkpty launches a child that immediately enters libmdf after the
-    # sanitizer runtime has created helper threads. That post-fork execution
-    # is outside ThreadSanitizer's supported process model; ASan and the
-    # normal integration gate cover the terminal pager instead.
+    # The terminal pager runs after forkpty. Keep this integration test separate
+    # from the normal unit suite so it can retain a focused timeout and label.
     set_tests_properties(test_pager PROPERTIES LABELS "integration;cli;pager;forkpty" TIMEOUT 30)
 
     add_executable(test_pager_ratio tests/test_pager_ratio.c)
@@ -366,7 +366,7 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME parityjudge_suite_stdin
-    COMMAND go test .)
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_parityjudge.sh)
   set_tests_properties(parityjudge_suite_stdin PROPERTIES
     LABELS "integration;parity"
     TIMEOUT 60
@@ -389,18 +389,32 @@ if(LIBMDF_BUILD_TESTS)
 endif()
 
 if(LIBMDF_BUILD_FUZZERS)
-  if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "LIBMDF_BUILD_FUZZERS requires Clang with libFuzzer support")
+  if(NOT CMAKE_C_COMPILER MATCHES "cpkt-afl-gcc$")
+    message(FATAL_ERROR "LIBMDF_BUILD_FUZZERS requires the pinned AFL++ Bootlin toolchain")
   endif()
   add_executable(fuzz_smoke fuzz/fuzz_smoke.c)
   target_include_directories(fuzz_smoke PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(fuzz_smoke PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   libmdf_configure_development_runtime(fuzz_smoke)
-  target_compile_options(fuzz_smoke PRIVATE -fsanitize=fuzzer-no-link -fno-omit-frame-pointer)
-  target_link_options(fuzz_smoke PRIVATE -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer)
   if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(fuzz_smoke PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  get_property(LIBMDF_BUILD_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(LIBMDF_BUILD_TARGET IN LISTS LIBMDF_BUILD_TARGETS)
+    get_target_property(LIBMDF_BUILD_TARGET_TYPE ${LIBMDF_BUILD_TARGET} TYPE)
+    if(LIBMDF_BUILD_TARGET_TYPE STREQUAL "EXECUTABLE")
+      if(LIBMDF_BUILD_TARGET STREQUAL "cmdf" AND LIBMDF_CMDF_STATIC_RUNTIME)
+        continue()
+      endif()
+      get_target_property(LIBMDF_BUILD_TARGET_RUNTIME ${LIBMDF_BUILD_TARGET} LIBMDF_BOOTLIN_DEVELOPMENT_RUNTIME)
+      if(NOT LIBMDF_BUILD_TARGET_RUNTIME)
+        message(FATAL_ERROR "Non-shipped Linux executable ${LIBMDF_BUILD_TARGET} must use libmdf_configure_development_runtime")
+      endif()
+    endif()
+  endforeach()
 endif()
 
 if(LIBMDF_INSTALL)

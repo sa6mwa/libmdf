@@ -102,7 +102,7 @@ if [ "$MODE" != "ansi" ]; then
   exit 2
 fi
 
-(cd "$ROOT/parityjudge" && go build -tags "libmdf_$STAMP" -o "$JUDGE" .)
+"$ROOT/scripts/build_parityjudge.sh" "$JUDGE" "libmdf_$STAMP"
 
 run_child "$JUDGE" -mode ansi -compare-libmdf -trace-compare -suite "$ROOT/testdata" -exclude "$EXCLUDES" -exclude-cases "$CASE_EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
   -themes "$THEMES" -borings "$BORINGS" -osc8s "$OSC8S" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"

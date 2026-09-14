@@ -14,6 +14,27 @@ shift 2
 
 common='-DLIBMDF_BUILD_STATIC=ON -DLIBMDF_BUILD_SHARED=ON'
 with_target_env="$ROOT/scripts/with_target_env.sh"
+cache="$ROOT/build/$preset/CMakeCache.txt"
+
+case "$preset" in
+  debug|debug-lua)
+    expected_toolchain="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake"
+    ;;
+  fuzz)
+    expected_toolchain="$ROOT/cmake/toolchains/x86_64-linux-gnu-afl.cmake"
+    ;;
+  *-release)
+    expected_toolchain="$ROOT/cmake/toolchains/${preset%-release}.cmake"
+    ;;
+  *)
+    expected_toolchain=
+    ;;
+esac
+
+if [ -n "$expected_toolchain" ] && [ -f "$cache" ] &&
+  ! grep -Fx "CMAKE_TOOLCHAIN_FILE:FILEPATH=$expected_toolchain" "$cache" >/dev/null; then
+  rm -rf "$ROOT/build/$preset"
+fi
 
 case "$profile" in
   dev)
@@ -78,6 +99,9 @@ case "$profile" in
       "$@"
     ;;
   fuzz)
+    if [ -f "$cache" ] && ! grep -Eq '^CMAKE_C_COMPILER:FILEPATH=.*/cpkt-afl-gcc$' "$cache"; then
+      rm -rf "$ROOT/build/fuzz"
+    fi
     exec "$with_target_env" "$preset" cmake --preset "$preset" \
       -DLIBMDF_BUILD_STATIC=ON \
       -DLIBMDF_BUILD_SHARED=OFF \

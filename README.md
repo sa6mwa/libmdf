@@ -630,7 +630,7 @@ Common commands:
 ```sh
 make build
 make test
-make asan
+make valgrind
 make parity
 make parity-quick
 make lua-test
@@ -642,11 +642,12 @@ make prerelease
 make release
 ```
 
-Hardening targets:
+Hardening targets use the Bootlin-built development executables directly. Valgrind
+is a host analysis tool; it checks the selected Bootlin runtime rather than
+substituting a host-built sanitizer configuration.
 
 ```sh
-make tsan
-make msan
+make valgrind
 make fuzz-smoke
 make fuzz
 ```
@@ -693,7 +694,7 @@ The local lifecycle skill is the release authority for this repository.
 `make prerelease` runs the complete release proof graph without first removing
 generated state. `make release` first verifies the lightweight-tag version
 contract, then starts from a clean tree and runs that same proof graph:
-prerelease checks, sanitizer checks, fuzz smoke, Lua checks, full Go parity
+prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks, full Go parity
 matrix, release matrix builds, package generation, Lua release artifact
 generation, checksum generation, package verification, and artifact
 privacy/relocatability checks. `make lifecycle-version-contract` is the

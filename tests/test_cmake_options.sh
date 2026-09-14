@@ -35,6 +35,7 @@ int main(void)
     mdf_options_init(&opts);
     return opts.width == 0 ? 0 : 1;
 }
+
 EOF
 
   cat >"$dir/CMakeLists.txt" <<'EOF'
@@ -51,6 +52,30 @@ else()
   message(FATAL_ERROR "libmdf package exports no usable library target")
 endif()
 EOF
+}
+
+assert_bootlin_runtime() {
+  executable=$1
+
+  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  cmake \
+    -DREADELF="$LIBMDF_BOOTLIN_READELF" \
+    -DEXECUTABLE="$executable" \
+    -DINTERPRETER="$LIBMDF_BOOTLIN_INTERPRETER" \
+    -DRUNTIME_DIR="$LIBMDF_BOOTLIN_RUNTIME_DIR" \
+    -P "$ROOT/tests/assert_bootlin_runtime.cmake"
+}
+
+build_pkg_config_consumer() {
+  executable=$1
+  shift
+
+  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  "$LIBMDF_BOOTLIN_CC" "$@" \
+    "-Wl,--dynamic-linker,$LIBMDF_BOOTLIN_INTERPRETER" \
+    "-Wl,--disable-new-dtags,-rpath,$LIBMDF_BOOTLIN_RUNTIME_RPATH"
+  assert_bootlin_runtime "$executable"
+  "$executable"
 }
 
 verify_install_tree() {
@@ -93,14 +118,24 @@ verify_install_tree() {
   fi
 
   write_consumer_sources "$consumer/src"
+  if cmake -S "$consumer/src" -B "$consumer/host-build" -G Ninja \
+    -Dlibmdf_DIR="$install/$cmakedir" \
+    -DCMAKE_PREFIX_PATH="$install" >"$consumer/host-build.log" 2>&1; then
+    printf '%s\n' 'CMake package consumer unexpectedly accepted a host runtime' >&2
+    exit 1
+  fi
+  grep -q 'require a Bootlin CMAKE_TOOLCHAIN_FILE' "$consumer/host-build.log"
   cmake -S "$consumer/src" -B "$consumer/build" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -Dlibmdf_DIR="$install/$cmakedir" \
     -DCMAKE_PREFIX_PATH="$install" >>"$log" 2>&1
   cmake --build "$consumer/build" >>"$log" 2>&1
+  assert_bootlin_runtime "$consumer/build/consumer"
+  "$consumer/build/consumer"
 
   mkdir -p "$pkg"
-  cc $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --cflags libmdf) \
+  build_pkg_config_consumer "$pkg/consumer" \
+    $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --cflags libmdf) \
     "$consumer/src/main.c" \
     $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --libs libmdf) \
     -o "$pkg/consumer" >>"$log" 2>&1
@@ -135,7 +170,8 @@ verify_absolute_pkg_config() {
   test -f "$pcdir/libmdf.pc"
   write_consumer_sources "$consumer/src"
   mkdir -p "$pkg"
-  cc $(PKG_CONFIG_PATH="$pcdir" pkg-config --cflags libmdf) \
+  build_pkg_config_consumer "$pkg/consumer" \
+    $(PKG_CONFIG_PATH="$pcdir" pkg-config --cflags libmdf) \
     "$consumer/src/main.c" \
     $(PKG_CONFIG_PATH="$pcdir" pkg-config --libs libmdf) \
     -o "$pkg/consumer" >>"$log" 2>&1

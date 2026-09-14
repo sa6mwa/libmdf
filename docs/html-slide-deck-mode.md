@@ -306,7 +306,7 @@ For full local verification, run:
 make test-hardening
 ```
 
-That target covers debug tests, ASan/UBSan, TSan, MSan, fuzz smoke, and full
+That target covers debug tests, native Valgrind checking, AFL++ fuzz smoke, and full
 ANSI/HTML/stream/Lua parity.
 
 ## Architecture Notes
