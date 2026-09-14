@@ -94,14 +94,37 @@ and shared libraries.
 
 ## CMake
 
-After extracting an SDK archive, point CMake at the archive prefix:
+After extracting an SDK archive, point CMake at the archive prefix. On Linux,
+the consuming project must use its pinned Bootlin CMake toolchain. The SDK does
+not export a compiler, ELF interpreter, RPATH, or cache path. Apply the
+package's development-runtime helper to every local executable; it selects the
+same direct Bootlin runtime policy as libmdf's own examples and tests.
 
 ```cmake
 find_package(libmdf CONFIG REQUIRED)
 
 add_executable(app app.c)
 target_link_libraries(app PRIVATE libmdf::mdf_static)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  libmdf_configure_development_runtime(app)
+endif()
 ```
+
+For example, a native Linux consumer configures with its own lifecycle-owned
+Bootlin toolchain and the extracted SDK prefix:
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE=/path/to/your-project/cmake/toolchains/x86_64-linux-gnu.cmake \
+  -DCMAKE_PREFIX_PATH=/path/to/libmdf-sdk
+cmake --build build
+```
+
+The consuming toolchain must set `LIBMDF_BOOTLIN_LOADER` and
+`LIBMDF_BOOTLIN_RUNTIME_RPATH`; `libmdf_configure_development_runtime` rejects
+a Linux consumer that has not done so. Do not copy a path from libmdf's pinned
+collection into a consumer or release artifact.
 
 The package exports `libmdf::mdf_static` and `libmdf::mdf_shared` when both
 library variants are present.
@@ -112,8 +135,10 @@ When building from source, the main CMake options are:
 LIBMDF_BUILD_STATIC=ON|OFF
 LIBMDF_BUILD_SHARED=ON|OFF
 LIBMDF_BUILD_BINARY=ON|OFF
+LIBMDF_BUILD_EXAMPLES=ON|OFF
 LIBMDF_BUILD_TESTS=ON|OFF
-LIBMDF_BUILD_FUZZ=ON|OFF
+LIBMDF_BUILD_FUZZERS=ON|OFF
+LIBMDF_INSTALL=ON|OFF
 LIBMDF_INSTALL_BINARY=ON|OFF
 LIBMDF_CMDF_STATIC_RUNTIME=ON|OFF
 ```
@@ -123,10 +148,23 @@ for development and release builds.
 
 ## pkg-config
 
-The SDK also ships relocatable pkg-config metadata:
+The SDK also ships relocatable pkg-config metadata. On Linux, use it with the
+same consuming-project Bootlin compiler and direct ELF runtime policy shown
+above; the `.pc` file deliberately contains no local toolchain paths or runtime
+link flags. This development-only example assumes the consuming project vendors
+the lifecycle resolver and uses an SDK with the usual `lib` directory.
 
 ```sh
-cc app.c $(pkg-config --cflags --libs libmdf)
+SDK_PREFIX=/path/to/libmdf-sdk
+eval "$(./scripts/cpkt-toolchains.sh env x86_64-linux-gnu)"
+loader=$(find "$CPKT_TOOLCHAIN_SYSROOT/lib" -maxdepth 1 -type f \
+  \( -name 'ld-linux*.so*' -o -name 'ld-musl-*.so*' \) -print | sort | head -n 1)
+libgcc_dir=$(dirname -- "$("$CC" -print-file-name=libgcc_s.so.1)")
+export PKG_CONFIG_PATH="$SDK_PREFIX/lib/pkgconfig"
+"$CC" app.c \
+  $(pkg-config --cflags --libs libmdf) \
+  "-Wl,--dynamic-linker,$loader" \
+  "-Wl,--disable-new-dtags,-rpath,$SDK_PREFIX/lib:$CPKT_TOOLCHAIN_SYSROOT/lib:$CPKT_TOOLCHAIN_SYSROOT/usr/lib:$libgcc_dir"
 ```
 
 ## C API
