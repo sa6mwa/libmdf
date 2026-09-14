@@ -34,9 +34,5 @@ cmake \
 rm -rf "$OUTPUT"
 mkdir -p "$OUTPUT"
 eval "$("$ROOT/scripts/cpkt-aflpp.sh" env)"
-AFL_NO_UI=1 AFL_NO_AFFINITY=1 AFL_SKIP_CPUFREQ=1 AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1 \
-  "$CPKT_AFLPP_ROOT/bin/afl-fuzz" \
-  -V "$MAX_TOTAL_TIME" \
-  -i "$SEED_CORPUS" \
-  -o "$OUTPUT" \
-  -- "$ROOT/build/fuzz/fuzz_smoke" @@
+sh "$ROOT/scripts/run_afl_gate.sh" "$CPKT_AFLPP_ROOT/bin/afl-fuzz" \
+  "$MAX_TOTAL_TIME" "$SEED_CORPUS" "$OUTPUT" "$ROOT/build/fuzz/fuzz_smoke" @@

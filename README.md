@@ -690,6 +690,12 @@ make fuzz-smoke
 make fuzz
 ```
 
+AFL++ tools and fuzz targets use the selected Bootlin loader and runtime.
+Fuzz gates fail when AFL++ saves a crash, even if its time limit ends normally;
+reproducers remain under `build/fuzz/afl-output`. `make fuzz-smoke` also tests
+the gate with a deliberately crashing target, a clean target, and a startup
+failure.
+
 `make parity` runs the exhaustive ANSI, HTML, and streaming parity matrix across
 all configured chunks, widths, themes, boring modes, table buffers, and table
 wire modes. Streaming parity is chunk-bound and runs as fast as the renderer can

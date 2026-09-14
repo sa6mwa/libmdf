@@ -101,6 +101,7 @@ fuzz:
 	@scripts/fuzz.sh standard
 
 fuzz-smoke:
+	@bash tests/test_afl_gate.sh
 	@scripts/fuzz.sh smoke
 
 fuzz-long:
