@@ -153,6 +153,26 @@ scan_local_paths() {
   return 0
 }
 
+scan_bootlin_toolchain_paths() {
+  root=$1
+  patterns="$TMP/bootlin-toolchain-path-patterns.txt"
+  matches="$TMP/bootlin-toolchain-path-matches.txt"
+
+  "$ROOT/scripts/cpkt-toolchains.sh" discover |
+    sed -n 's#^archive=\(.*\)\.tar\.xz$#/roots/\1#p' | sort -u > "$patterns"
+  if [ ! -s "$patterns" ]; then
+    printf '%s\n' 'could not derive pinned Bootlin collection paths' >&2
+    exit 1
+  fi
+  if grep -R -a -l -f "$patterns" "$root" > "$matches"; then
+    while IFS= read -r match; do
+      printf '%s\n' "$match contains pinned Bootlin toolchain path" >> "$HITS"
+    done < "$matches"
+    return 1
+  fi
+  return 0
+}
+
 find_darwin_tool() {
   target=$1
   name=$1
@@ -276,6 +296,7 @@ while IFS= read -r artifact_name; do
   esac
   extract_artifact "$artifact" "$artifact_tmp"
   expand_nested_archives "$artifact_tmp"
+  scan_bootlin_toolchain_paths "$artifact_tmp" || true
   scan_local_paths "$artifact_tmp" || true
   scan_runtime_paths "$artifact_tmp" "$target" || true
 done < "$artifact_list"

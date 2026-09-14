@@ -46,3 +46,15 @@ printf '%s\n' "$ROOT" > "$PKG/share/doc/libmdf/README.md"
 tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
 (cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
 expect_fail repo-path 'local paths or non-relocatable runtime paths leaked'
+
+reset_dist
+TOOLCHAIN_ROOT=$("$ROOT/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu | sed -n 's/^root=//p')
+TOOLCHAIN_CC=$("$ROOT/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu | sed -n 's/^cc=//p')
+test -n "$TOOLCHAIN_ROOT"
+test -x "$TOOLCHAIN_CC"
+mkdir -p "$PKG/bin"
+printf '%s\n' 'int main(void) { return 0; }' > "$BASE/bootlin-leak.c"
+"$TOOLCHAIN_CC" "$BASE/bootlin-leak.c" "-Wl,-rpath,$TOOLCHAIN_ROOT" -o "$PKG/bin/bootlin-leak"
+tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
+(cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
+expect_fail bootlin-path 'contains pinned Bootlin toolchain path'
