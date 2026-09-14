@@ -138,7 +138,8 @@ verify_install_tree() {
     $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --cflags libmdf) \
     "$consumer/src/main.c" \
     $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --libs libmdf) \
-    -o "$pkg/consumer" >>"$log" 2>&1
+    -o "$pkg/consumer" \
+    "-Wl,-rpath,$libdir" >>"$log" 2>&1
 }
 
 verify_absolute_pkg_config() {
