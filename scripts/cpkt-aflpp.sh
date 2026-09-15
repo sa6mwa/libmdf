@@ -65,7 +65,9 @@ ensure() {
   d=$(bootlin_description); br=$(value root "$d"); id=$(collection_id "$br")
   r=$(root "$id"); c=$(cache)
   ready "$r" "$id" && return
-  with_cache_lock "$c/locks/aflplusplus-${version}-x86_64-linux-gnu.lock" ensure_locked
+  # `discover` and `env` are machine-readable command surfaces.  Keep every
+  # provisioning diagnostic off stdout so callers can safely consume exports.
+  with_cache_lock "$c/locks/aflplusplus-${version}-x86_64-linux-gnu.lock" ensure_locked >&2
 }
 
 ensure_locked() {

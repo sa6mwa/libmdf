@@ -3,8 +3,27 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -p "$root/build"
 work=$(mktemp -d "$root/build/test-afl-gate.XXXXXX")
-eval "$("$root/scripts/cpkt-aflpp.sh" env)"
-eval "$("$root/scripts/bootlin_x86_runtime.sh")"
+toolchain_description=$("$root/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu)
+toolchain_root=$(sed -n 's/^root=//p' <<<"$toolchain_description")
+toolchain_cache=$(sed -n 's/^cache=//p' <<<"$toolchain_description")
+archive="$toolchain_cache/archives/AFLplusplus-5.02c.tar.gz"
+[[ -d "$toolchain_root" ]] || {
+  printf 'Pinned Bootlin toolchain is unavailable\n' >&2
+  exit 1
+}
+
+# Provision AFL++ in an otherwise empty cache so `env` is tested on the exact
+# first-use path that Make and release gates consume.
+cold_cache="$work/cold-cache"
+mkdir -p "$cold_cache/roots" "$cold_cache/archives"
+ln -s "$toolchain_root" "$cold_cache/roots/$(basename -- "$toolchain_root")"
+if [[ -f "$archive" ]]; then
+  cp "$archive" "$cold_cache/archives/$(basename -- "$archive")"
+fi
+env_output=$(CPKT_TOOLCHAIN_CACHE="$cold_cache" "$root/scripts/cpkt-aflpp.sh" env 2>"$work/cold-cache-provision.log")
+bash -n <<<"$env_output"
+eval "$env_output"
+eval "$(CPKT_TOOLCHAIN_CACHE="$cold_cache" "$root/scripts/bootlin_x86_runtime.sh")"
 for tool in afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-cc; do
   executable="$CPKT_AFLPP_ROOT/bin/$tool"
   cmake -DREADELF="$LIBMDF_BOOTLIN_READELF" -DEXECUTABLE="$executable" \
