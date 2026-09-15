@@ -41,7 +41,7 @@ EOF
   cat >"$dir/CMakeLists.txt" <<'EOF'
 cmake_minimum_required(VERSION 3.20)
 project(libmdf_consumer C)
-find_package(libmdf CONFIG REQUIRED NO_CMAKE_FIND_ROOT_PATH)
+find_package(libmdf CONFIG REQUIRED)
 add_executable(consumer main.c)
 libmdf_configure_development_runtime(consumer)
 if(TARGET libmdf::mdf_static)
@@ -119,16 +119,14 @@ verify_install_tree() {
 
   write_consumer_sources "$consumer/src"
   if cmake -S "$consumer/src" -B "$consumer/host-build" -G Ninja \
-    -Dlibmdf_DIR="$install/$cmakedir" \
-    -DCMAKE_PREFIX_PATH="$install" >"$consumer/host-build.log" 2>&1; then
+    -Dlibmdf_DIR="$install/$cmakedir" >"$consumer/host-build.log" 2>&1; then
     printf '%s\n' 'CMake package consumer unexpectedly accepted a host runtime' >&2
     exit 1
   fi
   grep -q 'require a Bootlin CMAKE_TOOLCHAIN_FILE' "$consumer/host-build.log"
   cmake -S "$consumer/src" -B "$consumer/build" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
-    -Dlibmdf_DIR="$install/$cmakedir" \
-    -DCMAKE_PREFIX_PATH="$install" >>"$log" 2>&1
+    -Dlibmdf_DIR="$install/$cmakedir" >>"$log" 2>&1
   cmake --build "$consumer/build" >>"$log" 2>&1
   assert_bootlin_runtime "$consumer/build/consumer"
   "$consumer/build/consumer"

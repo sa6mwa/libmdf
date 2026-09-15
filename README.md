@@ -117,9 +117,13 @@ Bootlin toolchain and the extracted SDK prefix:
 ```sh
 cmake -S . -B build \
   -DCMAKE_TOOLCHAIN_FILE=/path/to/your-project/cmake/toolchains/x86_64-linux-gnu.cmake \
-  -DCMAKE_PREFIX_PATH=/path/to/libmdf-sdk
+  -Dlibmdf_DIR=/path/to/libmdf-sdk/lib/cmake/libmdf
 cmake --build build
 ```
+
+Set `libmdf_DIR` directly: the Bootlin toolchain intentionally restricts
+package lookup to its sysroot, so `CMAKE_PREFIX_PATH` alone cannot find an SDK
+prefix outside that sysroot.
 
 The consuming toolchain must set `LIBMDF_BOOTLIN_LOADER` and
 `LIBMDF_BOOTLIN_RUNTIME_RPATH`; `libmdf_configure_development_runtime` rejects

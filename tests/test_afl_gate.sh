@@ -3,6 +3,7 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -p "$root/build"
 work=$(mktemp -d "$root/build/test-afl-gate.XXXXXX")
+"$root/scripts/cpkt-toolchains.sh" ensure x86_64-linux-gnu
 toolchain_description=$("$root/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu)
 toolchain_root=$(sed -n 's/^root=//p' <<<"$toolchain_description")
 toolchain_cache=$(sed -n 's/^cache=//p' <<<"$toolchain_description")

@@ -16,6 +16,11 @@ common='-DLIBMDF_BUILD_STATIC=ON -DLIBMDF_BUILD_SHARED=ON'
 with_target_env="$ROOT/scripts/with_target_env.sh"
 cache="$ROOT/build/$preset/CMakeCache.txt"
 
+cache_value() {
+  key=$1
+  sed -n "s/^$key:[^=]*=//p" "$cache" | sed -n '1p'
+}
+
 case "$preset" in
   debug|debug-lua)
     expected_toolchain="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake"
@@ -31,9 +36,11 @@ case "$preset" in
     ;;
 esac
 
-if [ -n "$expected_toolchain" ] && [ -f "$cache" ] &&
-  ! grep -Fx "CMAKE_TOOLCHAIN_FILE:FILEPATH=$expected_toolchain" "$cache" >/dev/null; then
-  rm -rf "$ROOT/build/$preset"
+if [ -n "$expected_toolchain" ] && [ -f "$cache" ]; then
+  cached_toolchain=$(cache_value CMAKE_TOOLCHAIN_FILE)
+  if [ "$cached_toolchain" != "$expected_toolchain" ]; then
+    rm -rf "$ROOT/build/$preset"
+  fi
 fi
 
 case "$profile" in
@@ -99,8 +106,12 @@ case "$profile" in
       "$@"
     ;;
   fuzz)
-    if [ -f "$cache" ] && ! grep -Eq '^CMAKE_C_COMPILER:FILEPATH=.*/cpkt-afl-gcc$' "$cache"; then
-      rm -rf "$ROOT/build/fuzz"
+    if [ -f "$cache" ]; then
+      cached_compiler=$(cache_value CMAKE_C_COMPILER)
+      case "$cached_compiler" in
+        */cpkt-afl-gcc) ;;
+        *) rm -rf "$ROOT/build/fuzz" ;;
+      esac
     fi
     exec "$with_target_env" "$preset" cmake --preset "$preset" \
       -DLIBMDF_BUILD_STATIC=ON \
