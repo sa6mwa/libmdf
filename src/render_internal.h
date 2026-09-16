@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define MDF_MAX_FRONTMATTER_PROBE 65536
+#define MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES 65536
 
 typedef struct html_segment {
     char *text;

@@ -266,6 +266,44 @@ Important options:
 - `allocator`, `emission_buffer`, `memory`: custom memory and emission-buffer
   control.
 
+## Incremental documents
+
+For an event-loop or another producer that supplies Markdown fragments, keep
+one renderer for one document and use the additive document lifecycle. `feed`
+and `flush` are soft boundaries, never EOF; only `finish_document` resolves an
+unfinished construct and closes output. The supplied sink is synchronous and
+borrowed for each call, so its write callback must accept every complete
+decision emission or fail the document.
+
+```c
+static int stdout_write(void *userdata, const char *src, size_t len)
+{
+    FILE *out = (FILE *)userdata;
+    return fwrite(src, 1, len, out) == len ? 0 : -1;
+}
+
+mdf_sink sink;
+
+sink.userdata = stdout;
+sink.write = stdout_write;
+
+mdf_feed(renderer, "Hello ", 6, &sink);
+mdf_flush(renderer, &sink);              /* still not EOF */
+mdf_feed(renderer, "**world**", 9, &sink);
+mdf_finish_document(renderer, &sink);    /* the sole EOF operation */
+mdf_begin_document(renderer);            /* now a distinct document may start */
+```
+
+Fragments must be nonempty. After successful finalization, further `feed`,
+`flush`, or `finish_document` calls fail until `begin_document` succeeds.
+Sink failure makes that document failed; libmdf never retries or retains the
+sink. Pending table and chart constructs retain at most 65536 bytes; an
+oversized unfinished construct fails with `MDF_ERROR_PARSE` instead of growing
+without bound. The incremental lifecycle supports ANSI and HTML documents; HTML callers
+must set an explicit title before the first feed because automatic title
+detection is a one-shot source feature. HTML deck renderers remain whole-source
+only.
+
 The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
@@ -587,6 +625,23 @@ local mdf = require("libmdf")
 local h = mdf.new({ boring = true })
 io.write(h:render("# hello\n"))
 h:close()
+```
+
+Lua hosts can use the same incremental document boundaries with a synchronous
+callback. The callback runs only from `write`, `flush`, or `finish_document`.
+
+```lua
+local chunks = {}
+local stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  chunks[#chunks + 1] = chunk
+end)
+
+assert(stream:write("Hello "))
+assert(stream:flush())             -- not EOF
+assert(stream:write("world"))
+assert(stream:finish_document())   -- EOF exactly once
+assert(stream:begin_document())
+stream:close()
 ```
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the

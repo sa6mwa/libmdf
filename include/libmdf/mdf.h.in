@@ -419,6 +419,36 @@ void mdf_options_init(mdf_options *opts);
  */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
 /**
+ * Feed a nonempty Markdown fragment into one incremental document.
+ * Rendering is synchronous: sink is borrowed only for this call and each
+ * decided emission must be accepted completely. This is not EOF; call
+ * mdf_finish_document to resolve an unterminated construct and close output.
+ * A pending table or chart construct is limited to 65536 retained bytes;
+ * exceeding that limit fails with MDF_ERROR_PARSE rather than buffering an
+ * unbounded document suffix.
+ * Feed, flush, and finish_document reject HTML deck renderers; HTML requires
+ * an explicit title set before the first call. After a successful finish, call
+ * mdf_begin_document before feeding another document.
+ */
+mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
+/**
+ * Apply a non-EOF boundary to an incremental document. It emits output that
+ * is already decidable but preserves any Markdown suffix that needs later
+ * input to determine its meaning.
+ */
+mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
+/**
+ * End an incremental document exactly once. It resolves retained Markdown
+ * under ordinary EOF rules and emits the renderer's final closure. Later feed,
+ * flush, or finish_document calls fail until mdf_begin_document succeeds.
+ */
+mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink);
+/**
+ * Reset a renderer after a successful mdf_finish_document so it can render a
+ * distinct next document without destruction and reconstruction.
+ */
+mdf_status mdf_begin_document(mdf *renderer);
+/**
  * Set or clear the explicit HTML document/deck title before rendering starts.
  * title is copied; NULL restores automatic title detection. ANSI renderers
  * reject this operation.

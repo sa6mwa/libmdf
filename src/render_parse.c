@@ -273,6 +273,10 @@ static int chart_append(mdf_parser_impl *impl, const char *src, size_t len)
     if (len == 0) {
         return 0;
     }
+    if (len > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - impl->chart_len) {
+        impl->retention_limit_exceeded = 1;
+        return -1;
+    }
     if (impl->chart_len + len + 1 < impl->chart_len) {
         return -1;
     }
@@ -378,6 +382,7 @@ static int frontmatter_opening_prefix_possible(const char *src, size_t len)
 }
 
 #define TABLE_MAX_COLUMNS 32u
+#define TABLE_MAX_RETAINED_ROWS 1024u
 
 typedef struct table_filter {
     mdf_allocator *allocator;
@@ -406,6 +411,8 @@ typedef struct table_filter {
     int has_header;
     int row_layout_ready;
     size_t row_widths[TABLE_MAX_COLUMNS];
+    size_t retained_bytes;
+    int retention_limit_exceeded;
 } table_filter;
 
 #define TABLE_FILTER_STATE_PREFIX_PRELUDE 4
@@ -422,6 +429,7 @@ static void table_filter_clear_rows(table_filter *tf)
     size_t i;
 
     for (i = 0; i < tf->rows_len; i++) {
+        tf->retained_bytes -= tf->row_lens[i];
         mdf_free_mem(tf->allocator, tf->rows[i], tf->row_lens[i] + 1);
     }
     tf->rows_len = 0;
@@ -469,11 +477,21 @@ static int table_filter_append_mem(table_filter *tf, char **buf, size_t *len, si
 
 static int table_filter_append_line(table_filter *tf, const char *src, size_t n)
 {
-    return table_filter_append_mem(tf, &tf->line, &tf->line_len, &tf->line_cap, src, n);
+    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+        tf->retention_limit_exceeded = 1;
+        return -1;
+    }
+    if (table_filter_append_mem(tf, &tf->line, &tf->line_len, &tf->line_cap, src, n) != 0) {
+        return -1;
+    }
+    tf->retained_bytes += n;
+    return 0;
 }
 
 static void table_filter_reset_line(table_filter *tf)
 {
+    tf->retained_bytes -= tf->line_len;
+    tf->retained_bytes -= tf->line_chunk_len * sizeof(tf->line_chunk_offsets[0]);
     tf->line_len = 0;
     tf->line_chunk_len = 0;
 }
@@ -489,6 +507,10 @@ static int table_filter_note_chunk_offset(table_filter *tf)
     if (tf->line_chunk_len > 0 && tf->line_chunk_offsets[tf->line_chunk_len - 1] == tf->line_len) {
         return 0;
     }
+    if (sizeof(tf->line_chunk_offsets[0]) > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+        tf->retention_limit_exceeded = 1;
+        return -1;
+    }
     if (tf->line_chunk_len == tf->line_chunk_cap) {
         new_cap = tf->line_chunk_cap == 0 ? 8 : tf->line_chunk_cap * 2;
         next = (size_t *)mdf_realloc_mem(tf->allocator,
@@ -502,6 +524,7 @@ static int table_filter_note_chunk_offset(table_filter *tf)
         tf->line_chunk_cap = new_cap;
     }
     tf->line_chunk_offsets[tf->line_chunk_len++] = tf->line_len;
+    tf->retained_bytes += sizeof(tf->line_chunk_offsets[0]);
     return 0;
 }
 
@@ -603,6 +626,10 @@ static int table_filter_set_copy(table_filter *tf, char **dst, size_t *dst_len, 
 {
     char *copy;
 
+    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - (tf->retained_bytes - *dst_len)) {
+        tf->retention_limit_exceeded = 1;
+        return -1;
+    }
     copy = (char *)mdf_alloc(tf->allocator, n + 1);
     if (copy == NULL) {
         return -1;
@@ -610,8 +637,10 @@ static int table_filter_set_copy(table_filter *tf, char **dst, size_t *dst_len, 
     memcpy(copy, src, n);
     copy[n] = '\0';
     mdf_free_mem(tf->allocator, *dst, *dst_len + 1);
+    tf->retained_bytes -= *dst_len;
     *dst = copy;
     *dst_len = n;
+    tf->retained_bytes += n;
     return 0;
 }
 
@@ -622,6 +651,14 @@ static int table_filter_add_row(table_filter *tf, const char *src, size_t n)
     char *copy;
     size_t new_cap;
 
+    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+        tf->retention_limit_exceeded = 1;
+        return -1;
+    }
+    if (tf->rows_len == TABLE_MAX_RETAINED_ROWS) {
+        tf->retention_limit_exceeded = 1;
+        return -1;
+    }
     if (tf->rows_len + 1 > tf->rows_cap) {
         new_cap = tf->rows_cap == 0 ? 8 : tf->rows_cap * 2;
         next_rows = (char **)mdf_realloc_mem(tf->allocator, tf->rows, tf->rows_cap * sizeof(tf->rows[0]), new_cap * sizeof(tf->rows[0]));
@@ -645,6 +682,7 @@ static int table_filter_add_row(table_filter *tf, const char *src, size_t n)
     tf->rows[tf->rows_len] = copy;
     tf->row_lens[tf->rows_len] = n;
     tf->rows_len++;
+    tf->retained_bytes += n;
     return 0;
 }
 
@@ -3879,6 +3917,7 @@ static void table_filter_reset_candidate(table_filter *tf)
 {
     mdf_free_mem(tf->allocator, tf->header, tf->header_len + 1);
     mdf_free_mem(tf->allocator, tf->delimiter, tf->delimiter_len + 1);
+    tf->retained_bytes -= tf->header_len + tf->delimiter_len;
     tf->header = NULL;
     tf->header_len = 0;
     tf->delimiter = NULL;
@@ -6098,122 +6137,261 @@ static mdf_status feed_parse_bytes(parse_state *ps, mdf_parser_impl *impl, mdf_r
     return MDF_OK;
 }
 
-mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink)
-{
-    char buf[4096];
-    parse_state ps;
-    frontmatter_filter fm;
+typedef struct parser_stream_state {
+    parse_state parse;
+    frontmatter_filter frontmatter;
     table_filter tables;
-    size_t n;
-    int err;
-    int decided;
+} parser_stream_state;
+
+static parser_stream_state *parser_stream_state_get(mdf_parser *self, int create)
+{
+    mdf_parser_impl *impl;
+    parser_stream_state *state;
+
+    impl = (mdf_parser_impl *)self->impl;
+    state = (parser_stream_state *)impl->stream_state;
+    if (state != NULL || !create) {
+        return state;
+    }
+    state = (parser_stream_state *)mdf_alloc(&impl->allocator, sizeof(*state));
+    if (state == NULL) {
+        mdf_parser_set_error(self, "out of memory");
+        return NULL;
+    }
+    memset(state, 0, sizeof(*state));
+    state->frontmatter.allocator = &impl->allocator;
+    table_filter_init(&state->tables, &impl->allocator);
+    state->parse.at_line_start = 1;
+    state->parse.thematic_possible = 1;
+    impl->stream_state = state;
+    return state;
+}
+
+void mdf_parser_release_stream(mdf_parser *self)
+{
+    mdf_parser_impl *impl;
+    parser_stream_state *state;
+
+    if (self == NULL || self->impl == NULL) {
+        return;
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    state = (parser_stream_state *)impl->stream_state;
+    if (state != NULL) {
+        table_filter_destroy(&state->tables);
+        mdf_free_mem(state->frontmatter.allocator,
+                     state->frontmatter.probe,
+                     state->frontmatter.cap);
+        mdf_free_mem(&impl->allocator, state, sizeof(*state));
+        impl->stream_state = NULL;
+    }
+    mdf_free_mem(&impl->allocator, impl->chart_buf, impl->chart_cap);
+    memset(impl->error, 0,
+           offsetof(mdf_parser_impl, stream_state) - offsetof(mdf_parser_impl, error));
+}
+
+mdf_status mdf_parser_feed(mdf_parser *self,
+                           mdf_renderer *renderer,
+                           mdf_sink *sink,
+                           const char *data,
+                           size_t len)
+{
+    mdf_parser_impl *impl;
+    parser_stream_state *state;
     const char *filtered;
     size_t filtered_len;
+    size_t probe_len;
+    int decided;
     mdf_status st;
-    mdf_status result;
-    mdf_parser_impl *impl;
 
-    if (self == NULL || self->impl == NULL || source == NULL || renderer == NULL || sink == NULL || source->read == NULL ||
-        renderer->write_token == NULL || renderer->finish == NULL) {
-        mdf_parser_set_error(self, "parse requires parser, source, renderer, and sink");
+    if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL ||
+        (data == NULL && len != 0)) {
+        mdf_parser_set_error(self, "feed requires parser, renderer, sink, and data");
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_parser_impl *)self->impl;
-    memset(&ps, 0, sizeof(ps));
-    memset(&fm, 0, sizeof(fm));
-    table_filter_init(&tables, &impl->allocator);
-    fm.allocator = &impl->allocator;
-    ps.at_line_start = 1;
-    ps.thematic_possible = 1;
-    err = 0;
-    result = MDF_OK;
-    for (;;) {
-        n = source->read(source->userdata, buf, sizeof(buf), &err);
-        if (err != 0) {
-            mdf_parser_set_error(self, "source read failed");
-            result = MDF_ERROR_IO;
-            goto cleanup_filters;
-        }
-        if (n == 0) {
-            break;
-        }
-        if (fm.passthrough) {
-            st = table_filter_feed(&tables, &ps, impl, renderer, sink, buf, n);
-            if (st != MDF_OK) {
-                result = st;
-                goto cleanup_filters;
-            }
-            continue;
-        }
-        if (fm_append(&fm, buf, n) != 0) {
+    state = parser_stream_state_get(self, 1);
+    if (state == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    if (len == 0) {
+        return MDF_OK;
+    }
+    if (state->frontmatter.passthrough) {
+        st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink, data, len);
+        goto done;
+    }
+    if (len > MDF_MAX_FRONTMATTER_PROBE - state->frontmatter.len) {
+        probe_len = MDF_MAX_FRONTMATTER_PROBE - state->frontmatter.len;
+        if (probe_len > 0 && fm_append(&state->frontmatter, data, probe_len) != 0) {
             mdf_parser_set_error(self, "out of memory");
-            result = MDF_ERROR_NOMEM;
-            goto cleanup_filters;
+            return MDF_ERROR_NOMEM;
         }
-        if (frontmatter_decide(&fm, 0, &filtered, &filtered_len, &decided) != 0) {
+        if (frontmatter_decide(&state->frontmatter, 0, &filtered, &filtered_len, &decided) != 0) {
             mdf_parser_set_error(self, "frontmatter filter failed");
-            result = MDF_ERROR_PARSE;
-            goto cleanup_filters;
+            return MDF_ERROR_PARSE;
         }
-        if (!decided && fm.len > MDF_MAX_FRONTMATTER_PROBE) {
-            filtered = fm.probe;
-            filtered_len = fm.len;
-            fm.passthrough = 1;
-            decided = 1;
+        if (!decided) {
+            filtered = state->frontmatter.probe;
+            filtered_len = state->frontmatter.len;
+            state->frontmatter.passthrough = 1;
         }
-        if (decided && filtered_len > 0) {
-            st = table_filter_feed(&tables, &ps, impl, renderer, sink, filtered, filtered_len);
+        if (filtered_len > 0) {
+            st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink, filtered, filtered_len);
             if (st != MDF_OK) {
-                result = st;
-                goto cleanup_filters;
+                goto done;
             }
         }
+        st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink,
+                               data + probe_len, len - probe_len);
+        goto done;
     }
-    if (!fm.passthrough && fm.len > 0) {
-        if (frontmatter_decide(&fm, 1, &filtered, &filtered_len, &decided) != 0) {
+    if (fm_append(&state->frontmatter, data, len) != 0) {
+        mdf_parser_set_error(self, "out of memory");
+        return MDF_ERROR_NOMEM;
+    }
+    if (frontmatter_decide(&state->frontmatter, 0, &filtered, &filtered_len, &decided) != 0) {
+        mdf_parser_set_error(self, "frontmatter filter failed");
+        return MDF_ERROR_PARSE;
+    }
+    if (!decided || filtered_len == 0) {
+        return MDF_OK;
+    }
+    st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink, filtered, filtered_len);
+done:
+    if (st == MDF_ERROR_NOMEM &&
+        (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
+        mdf_parser_set_error(self, "pending construct exceeds the 65536-byte retention limit");
+        return MDF_ERROR_PARSE;
+    }
+    return st;
+}
+
+mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
+{
+    parser_stream_state *state;
+    mdf_impl *render_impl;
+
+    if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
+        mdf_parser_set_error(self, "flush requires parser, renderer, and sink");
+        return MDF_ERROR_INVALID;
+    }
+    state = parser_stream_state_get(self, 1);
+    if (state == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    /* A completed block boundary cannot be changed by a future fragment. The
+     * ANSI renderer may still own its last word for wrapping, so release that
+     * exact decided emission without treating the boundary as document EOF. */
+    if (renderer->write_token != mdf_renderer_write_token_internal ||
+        renderer->finish != mdf_renderer_finish_internal) {
+        return MDF_OK;
+    }
+    render_impl = (mdf_impl *)renderer->impl;
+    if (render_impl->format == MDF_FORMAT_ANSI &&
+        state->tables.state == 0 && state->tables.line_len == 0 &&
+        state->parse.prefix_len == 0 && !state->parse.decided &&
+        !state->parse.pending_soft_space && ansi_flush_word(render_impl, sink) != 0) {
+        mdf_parser_set_error(self, "sink write failed");
+        return MDF_ERROR_IO;
+    }
+    return MDF_OK;
+}
+
+mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
+{
+    mdf_parser_impl *impl;
+    parser_stream_state *state;
+    const char *filtered;
+    size_t filtered_len;
+    int decided;
+    mdf_status st;
+
+    if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
+        mdf_parser_set_error(self, "finish_document requires parser, renderer, and sink");
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    state = parser_stream_state_get(self, 1);
+    if (state == NULL) {
+        return MDF_ERROR_NOMEM;
+    }
+    if (!state->frontmatter.passthrough && state->frontmatter.len > 0) {
+        if (frontmatter_decide(&state->frontmatter, 1, &filtered, &filtered_len, &decided) != 0) {
             mdf_parser_set_error(self, "frontmatter filter failed");
-            result = MDF_ERROR_PARSE;
-            goto cleanup_filters;
+            return MDF_ERROR_PARSE;
         }
         if (decided && filtered_len > 0) {
-            st = table_filter_feed(&tables, &ps, impl, renderer, sink, filtered, filtered_len);
-            if (st != MDF_OK) {
-                result = st;
-                goto cleanup_filters;
-            }
+            st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink, filtered, filtered_len);
+            if (st != MDF_OK) return st;
         }
     }
-    mdf_free_mem(fm.allocator, fm.probe, fm.cap);
-    fm.probe = NULL;
-    fm.len = 0;
-    fm.cap = 0;
-    st = table_filter_finish(&tables, &ps, impl, renderer, sink);
-    table_filter_destroy(&tables);
-    if (st != MDF_OK) return st;
-    if (ps.prefix_len > 0 || ps.decided) {
-        st = end_line(&ps, impl, renderer, sink);
+    st = table_filter_finish(&state->tables, &state->parse, impl, renderer, sink);
+    if (st != MDF_OK) {
+        if (st == MDF_ERROR_NOMEM &&
+            (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
+            mdf_parser_set_error(self, "pending construct exceeds the 65536-byte retention limit");
+            return MDF_ERROR_PARSE;
+        }
+        return st;
+    }
+    if (state->parse.prefix_len > 0 || state->parse.decided) {
+        st = end_line(&state->parse, impl, renderer, sink);
         if (st != MDF_OK) return st;
     }
-    st = flush_pending_quoted_list_blank(&ps, impl, renderer, sink, 0);
+    st = flush_pending_quoted_list_blank(&state->parse, impl, renderer, sink, 0);
     if (st != MDF_OK) return st;
-    st = flush_pending_bare_quote_blank(&ps, impl, renderer, sink, -1);
+    st = flush_pending_bare_quote_blank(&state->parse, impl, renderer, sink, -1);
     if (st != MDF_OK) return st;
     st = flush_pending_list_item_end(impl, renderer, sink);
     if (st != MDF_OK) return st;
     if (impl->in_chart_block) {
-        int kind = impl->chart_kind;
+        int kind;
 
+        kind = impl->chart_kind;
         impl->in_chart_block = 0;
         impl->chart_kind = 0;
-        st = emit_chart_block(&ps, impl, renderer, sink, kind);
+        st = emit_chart_block(&state->parse, impl, renderer, sink, kind);
         if (st != MDF_OK) return st;
     }
     st = render_emit(renderer, sink, MDF_TOKEN_DOCUMENT_END, NULL, 0, 0);
     if (st != MDF_OK) return st;
-    return renderer->finish(renderer, sink);
+    st = renderer->finish(renderer, sink);
+    if (st == MDF_OK) {
+        mdf_parser_release_stream(self);
+    }
+    return st;
+}
 
-cleanup_filters:
-    table_filter_destroy(&tables);
-    mdf_free_mem(fm.allocator, fm.probe, fm.cap);
-    return result;
+mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink)
+{
+    char buf[4096];
+    size_t n;
+    int err;
+    mdf_status st;
+
+    if (self == NULL || self->impl == NULL || source == NULL || source->read == NULL || renderer == NULL || sink == NULL) {
+        mdf_parser_set_error(self, "parse requires parser, source, renderer, and sink");
+        return MDF_ERROR_INVALID;
+    }
+    err = 0;
+    for (;;) {
+        n = source->read(source->userdata, buf, sizeof(buf), &err);
+        if (err != 0) {
+            mdf_parser_set_error(self, "source read failed");
+            return MDF_ERROR_IO;
+        }
+        if (n == 0) {
+            break;
+        }
+        st = mdf_parser_feed(self, renderer, sink, buf, n);
+        if (st != MDF_OK) {
+            return st;
+        }
+        st = mdf_parser_flush(self, renderer, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+    return mdf_parser_finish_document(self, renderer, sink);
 }

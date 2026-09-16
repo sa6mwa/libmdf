@@ -24,6 +24,10 @@ function mdf.render_stream(read, write, opts)
   return core.render_stream(read, write, opts or {})
 end
 
+function mdf.document_stream(opts, write)
+  return core.document_stream(opts or {}, write)
+end
+
 function mdf.pager(path, opts)
   return core.pager(path, opts or {})
 end
