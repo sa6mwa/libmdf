@@ -59,15 +59,16 @@ run_boundary_case() {
   name=$1
   expected=$2
   input=$3
+  shift 3
   baseline="$TMP/$name.baseline"
   incremental="$TMP/$name.incremental"
   baseline_trace="$baseline.trace"
   incremental_trace="$incremental.trace"
 
   printf '%b' "$input" > "$TMP/$name.md"
-  "$CMDF" --boring --simulate-chunk 1 --trace-writes "$baseline_trace" \
+  "$CMDF" --boring "$@" --simulate-chunk 1 --trace-writes "$baseline_trace" \
     "$TMP/$name.md" > "$baseline"
-  "$CMDF" --incremental --boring --simulate-chunk 1 \
+  "$CMDF" --incremental --boring "$@" --simulate-chunk 1 \
     --trace-writes "$incremental_trace" "$TMP/$name.md" > "$incremental"
   printf '%b' "$expected" > "$TMP/$name.expected"
   cmp "$TMP/$name.expected" "$baseline"
@@ -79,3 +80,5 @@ run_boundary_case() {
 # remain identical when cmdf drives the public feed/flush lifecycle.
 run_boundary_case trailing-tab 'hello\n' 'hello\t\n'
 run_boundary_case unfinished-inline 'hello *[\n' '*hello *[\n\n'
+run_boundary_case unfinished-inline-space 'hello*\n' 'hello* '
+run_boundary_case pending-tab-wrap 'helloabcde\two\nrld\n' 'helloabcde\tworld\n' -w 12

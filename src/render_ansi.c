@@ -3344,6 +3344,31 @@ int ansi_flush_ready(const mdf_impl *impl)
            impl->ansi_uri_scheme_pending == 0;
 }
 
+int ansi_flush_space_ready(const mdf_impl *impl)
+{
+    size_t i;
+
+    if (!ansi_flush_ready(impl)) {
+        return 0;
+    }
+    for (i = 0; i < impl->ansi_word_len; i++) {
+        switch (impl->ansi_word[i]) {
+        case '*':
+        case '_':
+        case '[':
+        case ']':
+        case '`':
+        case '&':
+        case '<':
+        case '\\':
+            return 0;
+        default:
+            break;
+        }
+    }
+    return 1;
+}
+
 static int ansi_flush_pending_space_for(mdf_impl *impl, mdf_sink *sink, size_t next_len)
 {
     int plain_space;

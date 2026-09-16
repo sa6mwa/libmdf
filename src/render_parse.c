@@ -4705,9 +4705,9 @@ static mdf_status flush_immediate_spaces(parse_state *ps, mdf_renderer *renderer
 }
 
 /* A literal space is represented by the ANSI renderer as a pending separator,
- * so forwarding it cannot make trailing line whitespace visible. Tabs do not
- * have that property: retain them until the parser knows whether they are
- * trailing, while their presence still proves the preceding word is final. */
+ * so forwarding it cannot make trailing line whitespace visible. Tabs and
+ * unresolved inline delimiters do not have that property; retain them until
+ * the parser and renderer can make the final decision. */
 static mdf_status flush_decidable_immediate_spaces(parse_state *ps,
                                                    mdf_renderer *renderer,
                                                    mdf_sink *sink)
@@ -6317,7 +6317,6 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
     const char *filtered;
     size_t filtered_len;
     int decided;
-    int unresolved_separator;
     mdf_status st;
 
     if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
@@ -6354,24 +6353,22 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
     }
     render_impl = (mdf_impl *)renderer->impl;
     /* A call boundary alone decides nothing. Literal spaces use the normal
-     * renderer path; tabs remain parser-owned until their trailing-whitespace
-     * meaning is known. Either retained tab proves the preceding word final. */
+     * renderer path only after inline syntax is final. Tabs remain parser-owned
+     * because they participate in the next wrapping decision. */
     if (external_boundary && render_impl->format == MDF_FORMAT_ANSI &&
-        state->parse.immediate_spaces_len > 0) {
+        state->parse.immediate_spaces_len > 0 &&
+        ansi_flush_space_ready(render_impl)) {
         st = flush_decidable_immediate_spaces(&state->parse, renderer, sink);
         if (st != MDF_OK) {
             return st;
         }
     }
-    unresolved_separator = state->parse.immediate_spaces_len > 0;
-    /* A completed parser block, or a public parser-held separator, can release
-     * a word. A call boundary alone cannot; unresolved inline syntax remains
-     * private until the renderer can make its final decision. */
+    /* Only a completed parser block can release a word. A call boundary and
+     * retained separators stay private until their final decision is known. */
     if (render_impl->format == MDF_FORMAT_ANSI &&
         state->tables.state == 0 && state->tables.line_len == 0 &&
         state->parse.prefix_len == 0 &&
-        ((!state->parse.decided && !state->parse.pending_soft_space) ||
-         (external_boundary && unresolved_separator)) &&
+        !state->parse.decided && !state->parse.pending_soft_space &&
         ansi_flush_ready(render_impl) &&
         ansi_flush_word(render_impl, sink) != 0) {
         if (strcmp(render_impl->error, "out of memory") == 0) {

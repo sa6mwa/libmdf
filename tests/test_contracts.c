@@ -789,8 +789,8 @@ static int test_stream_trace_contract(void)
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental tab boundary flush succeeds");
-            fails += expect_output_equals(&cap, "hello",
-                                          "incremental flush does not commit trailing tab");
+            fails += expect(cap.out_len == 0,
+                            "incremental flush retains a trailing tab decision");
             if (st == MDF_OK) {
                 st = inst->feed(inst, "\n", 1, &sink);
             }
@@ -803,6 +803,80 @@ static int test_stream_trace_contract(void)
                                           "incremental trailing tab matches ordinary line rendering");
             fails += expect_trace_matches_writes(&cap,
                                                  "incremental tab boundary writes match traces");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+    }
+    {
+        mdf *inst;
+        mdf_sink sink;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental unresolved-delimiter renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, "hello* ", strlen("hello* "), &sink);
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.out_len == 0,
+                            "incremental flush retains delimiter plus trailing space");
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental unresolved-delimiter document finishes");
+            fails += expect_output_equals(&cap, "hello*\n",
+                                          "incremental delimiter flush matches immediate EOF");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental delimiter flush writes match traces");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+    }
+    {
+        mdf *inst;
+        mdf_sink sink;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 12;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental pending-tab wrapping renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, "helloabcde\t", strlen("helloabcde\t"), &sink);
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.out_len == 0,
+                            "incremental flush retains a tab-dependent wrap decision");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, "world\n", strlen("world\n"), &sink);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental pending-tab wrapping document finishes");
+            fails += expect_output_equals(&cap, "helloabcde\two\nrld\n",
+                                          "incremental pending tab preserves the one-shot wrap");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental pending-tab wrap writes match traces");
             inst->destroy(inst);
         }
         capture_free(&cap);

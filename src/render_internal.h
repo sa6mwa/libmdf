@@ -104,6 +104,7 @@ void mdf_impl_mark_oom(mdf_impl *impl);
 int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink);
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink);
 int ansi_flush_ready(const mdf_impl *impl);
+int ansi_flush_space_ready(const mdf_impl *impl);
 int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len);
 int ansi_emit_pending_style_reset(mdf_impl *impl, mdf_sink *sink);
 int ansi_emit_styled_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *style, const char *src, size_t len);
