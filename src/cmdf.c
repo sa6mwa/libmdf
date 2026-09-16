@@ -78,6 +78,41 @@ static size_t file_read(void *userdata, char *dst, size_t cap, int *err)
     return (size_t)n;
 }
 
+/* Drive the additive document lifecycle from the same bounded file reads as
+ * cmdf's ordinary source adapter. Each read is a transport boundary only;
+ * libmdf decides which output, if any, is ready before returning. */
+static mdf_status render_incremental_file(mdf *renderer,
+                                          file_source *source_data,
+                                          mdf_sink *sink,
+                                          int *source_err)
+{
+    char buf[4096];
+    mdf_status st;
+    size_t n;
+    int err;
+
+    *source_err = 0;
+    for (;;) {
+        err = 0;
+        n = file_read(source_data, buf, sizeof(buf), &err);
+        if (n == 0) {
+            if (err != 0) {
+                *source_err = err;
+                return MDF_ERROR_IO;
+            }
+            return renderer->finish_document(renderer, sink);
+        }
+        st = renderer->feed(renderer, buf, n, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+        st = renderer->flush(renderer, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+}
+
 
 typedef struct file_sink {
     FILE *fp;
@@ -316,6 +351,7 @@ static void usage(FILE *fp)
     fprintf(fp, "      --simulate             Simulate input streaming with default chunk\n");
     fprintf(fp, "      --simulate-chunk N     Simulate input streaming with max N bytes per read\n");
     fprintf(fp, "      --simulate-delay D     Delay duration between simulated reads; implies --simulate\n");
+    fprintf(fp, "      --incremental          Use the experimental incremental ANSI driver\n");
     fprintf(fp, "      --trace-writes PATH    Write ANSI renderer-emission NDJSON trace to PATH or - for stderr\n");
 }
 
@@ -515,6 +551,7 @@ int main(int argc, char **argv)
     const char *title_override;
     const char *trace_writes_path;
     int simulate_enabled;
+    int incremental_enabled;
     int format_explicit;
     int deck_requested;
     int deck_option_seen;
@@ -568,6 +605,7 @@ int main(int argc, char **argv)
         {"simulate", no_argument, NULL, 1004},
         {"simulate-chunk", required_argument, NULL, 'S'},
         {"simulate-delay", required_argument, NULL, 1005},
+        {"incremental", no_argument, NULL, 1021},
         {"trace-writes", required_argument, NULL, 1006},
         {"transition", required_argument, NULL, 'x'},
         {"slide-numbers", no_argument, NULL, 1010},
@@ -600,6 +638,7 @@ int main(int argc, char **argv)
     title_override = NULL;
     trace_writes_path = NULL;
     simulate_enabled = 0;
+    incremental_enabled = 0;
     format_explicit = 0;
     deck_requested = 0;
     deck_option_seen = 0;
@@ -748,6 +787,9 @@ int main(int argc, char **argv)
             }
             simulate_enabled = 1;
             break;
+        case 1021:
+            incremental_enabled = 1;
+            break;
         case 1006:
             trace_writes_path = optarg;
             break;
@@ -885,6 +927,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "cmdf: --trace-writes is only supported for ANSI output\n");
         return 2;
     }
+    if (incremental_enabled && format != MDF_FORMAT_ANSI) {
+        fprintf(stderr, "cmdf: --incremental is only supported for ANSI output\n");
+        return 2;
+    }
     if (format == MDF_FORMAT_ANSI && width_flag == 0) {
         opts.width = mdf_terminal_width(STDOUT_FILENO, 80);
     }
@@ -902,8 +948,9 @@ int main(int argc, char **argv)
             return 2;
         }
         if (out_path != NULL || format != MDF_FORMAT_ANSI || trace_writes_path != NULL ||
-            simulate_enabled || simulate_chunk != 0 || simulate_delay_seconds > 0.0) {
-            fprintf(stderr, "cmdf: --pager is only supported with ANSI file input and no output, trace, or simulation options\n");
+            simulate_enabled || simulate_chunk != 0 || simulate_delay_seconds > 0.0 ||
+            incremental_enabled) {
+            fprintf(stderr, "cmdf: --pager is only supported with ANSI file input and no output, trace, simulation, or incremental options\n");
             return 2;
         }
         st = mdf_pager_file(in_path, &opts, MDF_PAGER_FORMAT_AUTO);
@@ -1015,10 +1062,21 @@ int main(int argc, char **argv)
     source.read = file_read;
     sink.userdata = &sink_data;
     sink.write = file_write;
-    st = renderer->render(renderer, &source, &sink);
+    if (incremental_enabled) {
+        int source_err;
+
+        st = render_incremental_file(renderer, &source_data, &sink, &source_err);
+        if (st != MDF_OK && source_err != 0) {
+            fprintf(stderr, "cmdf: read input: %s\n", strerror(source_err));
+        }
+    } else {
+        st = renderer->render(renderer, &source, &sink);
+    }
     rc = 0;
     if (st != MDF_OK) {
-        fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
+        if (!incremental_enabled || renderer->error(renderer)[0] != '\0') {
+            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
+        }
         rc = 1;
     }
     renderer->destroy(renderer);

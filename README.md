@@ -489,6 +489,7 @@ Flags:
     --simulate
     --simulate-chunk N
     --simulate-delay D
+    --incremental
     --trace-writes PATH
 ```
 
@@ -497,6 +498,10 @@ them. `--simulate-delay` is an opt-in demo/probe option for making output timing
 visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
+`--incremental` is an ANSI-only experimental driver that feeds each bounded
+source read through `feed` and non-EOF `flush`, then calls `finish_document` at
+EOF. It is useful with the simulator to exercise the additive lifecycle; it
+does not add nonblocking-FD or output-queue behavior.
 
 `--pager` requires a named input file and terminal stdin/stdout. It uses the
 alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,

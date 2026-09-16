@@ -297,6 +297,14 @@ if(LIBMDF_BUILD_TESTS)
       LABELS "integration;cli;golden"
       TIMEOUT 30
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    add_test(NAME cmdf_incremental
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmdf_incremental.sh
+              $<TARGET_FILE:cmdf>)
+    set_tests_properties(cmdf_incremental PROPERTIES
+      LABELS "integration;cli;streaming;golden"
+      TIMEOUT 30
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   endif()
 
   foreach(LIBMDF_PRODUCTION_TARGET IN LISTS LIBMDF_EXPORT_TARGETS)
