@@ -837,6 +837,8 @@ static int lua_mdf_new(lua_State *L)
     handle->opts_ref = LUA_NOREF;
     handle->trace_ctx.L = L;
     handle->trace_ctx.ref = LUA_NOREF;
+    luaL_getmetatable(L, LUA_MDF_HANDLE);
+    lua_setmetatable(L, -2);
     if (lua_istable(L, 1)) {
         lua_mdf_apply_options(L, 1, &opts, &handle->trace_ctx);
     }
@@ -858,14 +860,14 @@ static int lua_mdf_new(lua_State *L)
         }
         if (handle->opts_ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
+            handle->opts_ref = LUA_NOREF;
         }
         if (handle->trace_ctx.ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->trace_ctx.ref);
+            handle->trace_ctx.ref = LUA_NOREF;
         }
         return luaL_error(L, "mdf_create: %s", mdf_status_string(st));
     }
-    luaL_getmetatable(L, LUA_MDF_HANDLE);
-    lua_setmetatable(L, -2);
     return 1;
 }
 
@@ -888,6 +890,8 @@ static int lua_mdf_document_stream_new(lua_State *L)
     stream->sink_ref = LUA_NOREF;
     stream->trace_ctx.L = L;
     stream->trace_ctx.ref = LUA_NOREF;
+    luaL_getmetatable(L, LUA_MDF_DOCUMENT_STREAM);
+    lua_setmetatable(L, -2);
     lua_mdf_apply_options(L, 1, &opts, &stream->trace_ctx);
     lua_pushvalue(L, 1);
     stream->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -905,13 +909,20 @@ static int lua_mdf_document_stream_new(lua_State *L)
             stream->mdf->destroy(stream->mdf);
             stream->mdf = NULL;
         }
-        if (stream->opts_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, stream->opts_ref);
-        if (stream->sink_ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ref);
-        if (stream->trace_ctx.ref != LUA_NOREF) luaL_unref(L, LUA_REGISTRYINDEX, stream->trace_ctx.ref);
+        if (stream->opts_ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, stream->opts_ref);
+            stream->opts_ref = LUA_NOREF;
+        }
+        if (stream->sink_ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ref);
+            stream->sink_ref = LUA_NOREF;
+        }
+        if (stream->trace_ctx.ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, stream->trace_ctx.ref);
+            stream->trace_ctx.ref = LUA_NOREF;
+        }
         return luaL_error(L, "mdf_document_stream: %s", mdf_status_string(st));
     }
-    luaL_getmetatable(L, LUA_MDF_DOCUMENT_STREAM);
-    lua_setmetatable(L, -2);
     return 1;
 }
 

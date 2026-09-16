@@ -626,13 +626,57 @@ static int test_stream_trace_contract(void)
                 st = inst->flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
-                            "incremental flush emits a word proven by whitespace");
+                            "incremental flush emits the decision proven by whitespace");
             fails += expect_trace_matches_writes(&cap,
                                                  "incremental flush writes match traces");
             fails += expect_write_sequence(&cap,
                                            expected,
                                            sizeof(expected) / sizeof(expected[0]),
-                                           "incremental flush emits the exact decided word");
+                                           "incremental flush emits the exact decided output");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+    }
+
+    {
+        mdf *inst;
+        mdf_sink sink;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 12;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental wrapped-decision renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, "12345 abc", strlen("12345 abc"), &sink);
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental flush retains a trailing undecided suffix");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental partial-suffix flush writes match traces");
+            fails += expect_no_write_contains(&cap, "abc",
+                                              "incremental flush does not emit an incomplete suffix");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, "defghi", strlen("defghi"), &sink);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental wrapped partial suffix finishes");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental wrapped suffix writes match traces");
+            fails += expect_output_equals(&cap, "12345\nabcdefghi\n",
+                                          "incremental flush preserves one-shot decision wrapping");
             inst->destroy(inst);
         }
         capture_free(&cap);

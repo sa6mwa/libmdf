@@ -6311,19 +6311,28 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
             }
         }
     }
-    /* A completed block boundary cannot be changed by a future fragment. The
-     * ANSI renderer may still own its last word for wrapping, so release that
-     * exact decided emission without treating the boundary as document EOF. */
     if (renderer->write_token != mdf_renderer_write_token_internal ||
         renderer->finish != mdf_renderer_finish_internal) {
         return MDF_OK;
     }
     render_impl = (mdf_impl *)renderer->impl;
+    /* A call boundary alone decides nothing. A retained visible separator,
+     * however, proves that the preceding ANSI decision cannot grow. Send that
+     * separator through the normal renderer path; trailing_spaces retains the
+     * parser's later hard-break decision. */
+    if (external_boundary && render_impl->format == MDF_FORMAT_ANSI &&
+        state->parse.immediate_spaces_len > 0) {
+        st = flush_immediate_spaces(&state->parse, renderer, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+    /* Completed parser blocks are independently ready for their renderer
+     * decision to be released. */
     if (render_impl->format == MDF_FORMAT_ANSI &&
         state->tables.state == 0 && state->tables.line_len == 0 &&
         state->parse.prefix_len == 0 &&
-        (external_boundary ||
-         (!state->parse.decided && !state->parse.pending_soft_space)) &&
+        !state->parse.decided && !state->parse.pending_soft_space &&
         ansi_flush_word(render_impl, sink) != 0) {
         if (strcmp(render_impl->error, "out of memory") == 0) {
             mdf_parser_set_error(self, render_impl->error);

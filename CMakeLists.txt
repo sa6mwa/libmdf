@@ -199,6 +199,22 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
+  add_executable(incremental_decision_parity tests/incremental_decision_parity.c)
+  target_compile_features(incremental_decision_parity PRIVATE c_std_90)
+  target_include_directories(incremental_decision_parity PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_link_libraries(incremental_decision_parity PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_development_runtime(incremental_decision_parity)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(incremental_decision_parity PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  endif()
+  add_test(NAME incremental_decision_goldens
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_incremental_decision_goldens.sh
+            $<TARGET_FILE:incremental_decision_parity>)
+  set_tests_properties(incremental_decision_goldens PROPERTIES
+    LABELS "integration;streaming;api;golden"
+    TIMEOUT 120
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   add_executable(golden_render tests/golden_render.c)
   target_compile_features(golden_render PRIVATE c_std_90)
   target_include_directories(golden_render PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")

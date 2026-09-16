@@ -224,6 +224,26 @@ assert(incremental:finish_document(), "lua document stream finishes next documen
 incremental:close()
 
 do
+  local weak = setmetatable({}, { __mode = "v" })
+  do
+    local opts = { format = "html", font_uri = {} }
+    local captured = {}
+    local sink = function()
+      return captured
+    end
+    weak.opts = opts
+    weak.sink = sink
+    weak.captured = captured
+    local ok = pcall(mdf.document_stream, opts, sink)
+    assert(not ok, "lua document stream rejects invalid font options")
+  end
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak.opts == nil and weak.sink == nil and weak.captured == nil,
+         "lua document stream constructor failure releases registry references")
+end
+
+do
   local markdown = "# Split Lua\n\n- item\n\n`code` [link](https://example.com)\n"
   local chunks = {}
   local split = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
