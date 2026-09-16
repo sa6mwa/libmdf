@@ -562,12 +562,14 @@ static int table_filter_has_chunk_offset(const table_filter *tf, size_t offset)
 static void table_filter_apply_go_chunk_utf8_loss(table_filter *tf)
 {
     size_t i;
+    size_t input_len;
     size_t out_len;
     int prev_split_kind;
 
     if (tf->line_chunk_len == 0 || tf->line_len == 0) {
         return;
     }
+    input_len = tf->line_len;
     out_len = 0;
     prev_split_kind = 0;
     i = 0;
@@ -618,6 +620,7 @@ static void table_filter_apply_go_chunk_utf8_loss(table_filter *tf)
         }
         i += adv;
     }
+    tf->retained_bytes -= input_len - out_len;
     tf->line_len = out_len;
     tf->line[out_len] = '\0';
 }
@@ -6337,7 +6340,14 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
     }
     if (state->parse.prefix_len > 0 || state->parse.decided) {
         st = end_line(&state->parse, impl, renderer, sink);
-        if (st != MDF_OK) return st;
+        if (st != MDF_OK) {
+            if (st == MDF_ERROR_NOMEM &&
+                (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
+                mdf_parser_set_error(self, "pending construct exceeds the 65536-byte or 1024-row retention limit");
+                return MDF_ERROR_PARSE;
+            }
+            return st;
+        }
     }
     st = flush_pending_quoted_list_blank(&state->parse, impl, renderer, sink, 0);
     if (st != MDF_OK) return st;

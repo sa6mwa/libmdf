@@ -22,7 +22,7 @@ project(libmdf VERSION "${LIBMDF_VERSION}" LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-set(LIBMDF_ABI_VERSION 2)
+set(LIBMDF_ABI_VERSION 3)
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
@@ -298,6 +298,10 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME header_self_sufficient
     COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${LIBMDF_GENERATED_INCLUDE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/header_self_sufficient.o)
   set_tests_properties(header_self_sufficient PROPERTIES LABELS "unit;api" TIMEOUT 10)
+
+  add_test(NAME source_header_self_sufficient
+    COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/source_header_self_sufficient.o)
+  set_tests_properties(source_header_self_sufficient PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
   get_property(LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS GLOBAL PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)
   foreach(LIBMDF_BOOTLIN_TARGET IN LISTS LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)

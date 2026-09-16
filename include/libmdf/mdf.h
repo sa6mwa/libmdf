@@ -306,7 +306,8 @@ typedef struct mdf_source {
 
 /**
  * Streaming output sink. Each write is one decided renderer emission; it must
- * accept the complete src/len pair or return nonzero. userdata and the callback
+ * accept the complete src/len pair or return nonzero. This is not a partial
+ * write, file-descriptor, or queued-output interface. userdata and the callback
  * remain owned by the caller for the duration of a render.
  */
 typedef struct mdf_sink {
@@ -402,6 +403,14 @@ struct mdf {
     void (*destroy)(mdf *self);
     /** Free a string returned by this renderer, including render_cstr output. */
     void (*string_free)(mdf *self, char *s);
+    /** Feed a nonempty Markdown fragment into the active incremental document. */
+    mdf_status (*feed)(mdf *self, const char *data, size_t len, mdf_sink *sink);
+    /** Apply a non-EOF boundary to the active incremental document. */
+    mdf_status (*flush)(mdf *self, mdf_sink *sink);
+    /** Resolve and close the active incremental document exactly once. */
+    mdf_status (*finish_document)(mdf *self, mdf_sink *sink);
+    /** Start a distinct next document after a successful finish_document call. */
+    mdf_status (*begin_document)(mdf *self);
     /** Private implementation state. Do not inspect or modify it. */
     void *impl;
 };
@@ -418,6 +427,37 @@ void mdf_options_init(mdf_options *opts);
  * owns *out and must release it through its destroy method.
  */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
+/**
+ * Feed a nonempty Markdown fragment into one incremental document.
+ * Rendering is synchronous: sink is borrowed only for this call and each
+ * decided emission must be accepted completely. This is not EOF; call
+ * mdf_finish_document to resolve an unterminated construct and close output.
+ * A pending table or chart construct is limited to 65536 retained bytes;
+ * tables are also limited to 1024 retained rows. Exceeding either limit fails
+ * with MDF_ERROR_PARSE rather than buffering an unbounded document suffix.
+ * Feed, flush, and finish_document reject HTML deck renderers; HTML requires
+ * an explicit title set before the first call. A sink failure latches this
+ * document in a failed state without retrying output. After a successful
+ * finish, call mdf_begin_document before feeding another document.
+ */
+mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
+/**
+ * Apply a non-EOF boundary to an incremental document. It emits output that
+ * is already decidable but preserves any Markdown suffix that needs later
+ * input to determine its meaning.
+ */
+mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
+/**
+ * End an incremental document exactly once. It resolves retained Markdown
+ * under ordinary EOF rules and emits the renderer's final closure. Later feed,
+ * flush, or finish_document calls fail until mdf_begin_document succeeds.
+ */
+mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink);
+/**
+ * Reset a renderer after a successful mdf_finish_document so it can render a
+ * distinct next document without destruction and reconstruction.
+ */
+mdf_status mdf_begin_document(mdf *renderer);
 /**
  * Set or clear the explicit HTML document/deck title before rendering starts.
  * title is copied; NULL restores automatic title detection. ANSI renderers

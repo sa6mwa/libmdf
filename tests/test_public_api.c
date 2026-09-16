@@ -4192,27 +4192,31 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental renderer creates");
         if (inst != NULL) {
-            st = mdf_feed(inst, ordinary, strlen(ordinary), &incremental_output);
+            fails += expect(inst->feed == mdf_feed && inst->flush == mdf_flush &&
+                            inst->finish_document == mdf_finish_document &&
+                            inst->begin_document == mdf_begin_document,
+                            "incremental lifecycle receiver methods are bound to their exported wrappers");
+            st = inst->feed(inst, ordinary, strlen(ordinary), &incremental_output);
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL &&
                             strstr(incremental_sink.buf, "ordinary") != NULL,
                             "incremental feed emits decidable ordinary text before eof");
-            st = mdf_flush(inst, &incremental_output);
+            st = inst->flush(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental flush is a non-eof boundary");
-            st = mdf_begin_document(inst);
+            st = inst->begin_document(inst);
             fails += expect(st == MDF_ERROR_INVALID, "incremental begin rejects an unfinished document");
-            st = mdf_finish_document(inst, &incremental_output);
+            st = inst->finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental finish closes the first document");
-            st = mdf_feed(inst, "later", 5, &incremental_output);
+            st = inst->feed(inst, "later", 5, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental feed rejects post-finish input");
-            st = mdf_flush(inst, &incremental_output);
+            st = inst->flush(inst, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental flush rejects post-finish calls");
-            st = mdf_finish_document(inst, &incremental_output);
+            st = inst->finish_document(inst, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental finish is not repeatable");
-            st = mdf_begin_document(inst);
+            st = inst->begin_document(inst);
             fails += expect(st == MDF_OK, "incremental begin starts a distinct next document");
-            st = mdf_feed(inst, "second document", strlen("second document"), &incremental_output);
+            st = inst->feed(inst, "second document", strlen("second document"), &incremental_output);
             fails += expect(st == MDF_OK, "incremental next document accepts input");
-            st = mdf_finish_document(inst, &incremental_output);
+            st = inst->finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental next document finishes");
             inst->destroy(inst);
             inst = NULL;
@@ -4225,17 +4229,17 @@ int main(void)
             incremental_output.write = grow_write;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             if (st == MDF_OK) {
-                st = mdf_feed(inst, incremental_markdown, split, &incremental_output);
+                st = inst->feed(inst, incremental_markdown, split, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = mdf_flush(inst, &incremental_output);
+                st = inst->flush(inst, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = mdf_feed(inst, incremental_markdown + split,
-                              incremental_len - split, &incremental_output);
+                st = inst->feed(inst, incremental_markdown + split,
+                                incremental_len - split, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = mdf_finish_document(inst, &incremental_output);
+                st = inst->finish_document(inst, &incremental_output);
             }
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL && expected_sink.buf != NULL &&
                             strcmp(incremental_sink.buf, expected_sink.buf) == 0,
@@ -4249,7 +4253,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental empty fragment renderer creates");
         if (inst != NULL) {
-            st = mdf_feed(inst, "", 0, &sink);
+            st = inst->feed(inst, "", 0, &sink);
             fails += expect(st == MDF_ERROR_INVALID, "incremental feed rejects an empty fragment");
             inst->destroy(inst);
             inst = NULL;
@@ -4264,10 +4268,10 @@ int main(void)
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL, "incremental failing sink renderer creates");
             if (inst != NULL) {
-                st = mdf_feed(inst, "sink failure\n", strlen("sink failure\n"), &incremental_output);
+                st = inst->feed(inst, "sink failure\n", strlen("sink failure\n"), &incremental_output);
                 fails += expect(st == MDF_ERROR_IO && strcmp(inst->error(inst), "sink write failed") == 0,
                                 "incremental sink failure enters a failed state");
-                st = mdf_finish_document(inst, &incremental_output);
+                st = inst->finish_document(inst, &incremental_output);
                 fails += expect(st == MDF_ERROR_INVALID, "incremental failed state does not replay output");
                 inst->destroy(inst);
                 inst = NULL;
@@ -4281,8 +4285,8 @@ int main(void)
         fails += expect(st == MDF_OK && inst != NULL, "incremental html renderer creates");
         if (inst != NULL) {
             st = mdf_set_html_title(inst, "Incremental HTML");
-            if (st == MDF_OK) st = mdf_feed(inst, "# Heading\n", strlen("# Heading\n"), &incremental_output);
-            if (st == MDF_OK) st = mdf_finish_document(inst, &incremental_output);
+            if (st == MDF_OK) st = inst->feed(inst, "# Heading\n", strlen("# Heading\n"), &incremental_output);
+            if (st == MDF_OK) st = inst->finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL &&
                             strstr(incremental_sink.buf, "<title>Incremental HTML</title>") != NULL &&
                             strstr(incremental_sink.buf, "</html>") != NULL,
@@ -4294,7 +4298,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental deck renderer creates");
         if (inst != NULL) {
-            st = mdf_feed(inst, "# deck\n", strlen("# deck\n"), &sink);
+            st = inst->feed(inst, "# deck\n", strlen("# deck\n"), &sink);
             fails += expect(st == MDF_ERROR_INVALID, "incremental lifecycle rejects whole-source deck rendering");
             inst->destroy(inst);
             inst = NULL;
@@ -4302,7 +4306,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental untitled html renderer creates");
         if (inst != NULL) {
-            st = mdf_feed(inst, "# Heading\n", strlen("# Heading\n"), &sink);
+            st = inst->feed(inst, "# Heading\n", strlen("# Heading\n"), &sink);
             fails += expect(st == MDF_ERROR_INVALID &&
                             strcmp(inst->error(inst), "incremental HTML requires an explicit title") == 0,
                             "incremental html rejects ambiguous automatic title detection");
@@ -4321,9 +4325,9 @@ int main(void)
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
                 fails += expect(st == MDF_OK && inst != NULL, "incremental bounded chart renderer creates");
                 if (inst != NULL) {
-                    st = mdf_feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
+                    st = inst->feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
                     if (st == MDF_OK) {
-                        st = mdf_feed(inst, oversized, oversized_len, &sink);
+                        st = inst->feed(inst, oversized, oversized_len, &sink);
                     }
                     fails += expect(st == MDF_ERROR_PARSE &&
                                     strstr(inst->error(inst), "retention limit") != NULL,
@@ -4335,15 +4339,104 @@ int main(void)
             }
         }
         {
+            char *eof_sized_chart;
+            size_t eof_sized_chart_len;
+
+            eof_sized_chart_len = 65536;
+            eof_sized_chart = (char *)malloc(eof_sized_chart_len);
+            fails += expect(eof_sized_chart != NULL, "incremental eof-sized chart test allocates");
+            if (eof_sized_chart != NULL) {
+                memset(eof_sized_chart, 'x', eof_sized_chart_len);
+                mdf_options_init(&opts);
+                opts.boring = 1;
+                st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                fails += expect(st == MDF_OK && inst != NULL, "incremental eof-sized chart renderer creates");
+                if (inst != NULL) {
+                    st = inst->feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
+                    if (st == MDF_OK) {
+                        st = inst->feed(inst, eof_sized_chart, eof_sized_chart_len, &sink);
+                    }
+                    fails += expect(st == MDF_OK,
+                                    "incremental eof-sized chart body is accepted before eof completion");
+                    if (st == MDF_OK) {
+                        st = inst->finish_document(inst, &sink);
+                    }
+                    fails += expect(st == MDF_ERROR_PARSE &&
+                                    strstr(inst->error(inst), "retention limit") != NULL,
+                                    "incremental eof-sized chart reports the retention limit as a parse error");
+                    inst->destroy(inst);
+                    inst = NULL;
+                }
+                free(eof_sized_chart);
+            }
+        }
+        {
+            static const char row_mode_prefix[] = "| h |\n|---|\n";
+            static const char row_mode_row[] = "| \xE4\xB8\xAD\xE6\x96\x87\xE5\xAD\x97 |  \n";
+            static const size_t chunk_sizes[] = {4096, 8};
+            char *row_mode_table;
+            size_t row_mode_table_len;
+            size_t row;
+            size_t case_index;
+            mdf_sink row_mode_sink;
+
+            row_mode_table_len = strlen(row_mode_prefix) + 25000 * strlen(row_mode_row);
+            row_mode_table = (char *)malloc(row_mode_table_len);
+            fails += expect(row_mode_table != NULL, "incremental row-mode utf8 table test allocates");
+            if (row_mode_table != NULL) {
+                memcpy(row_mode_table, row_mode_prefix, strlen(row_mode_prefix));
+                for (row = 0; row < 25000; row++) {
+                    memcpy(row_mode_table + strlen(row_mode_prefix) + row * strlen(row_mode_row),
+                           row_mode_row, strlen(row_mode_row));
+                }
+                row_mode_sink.userdata = NULL;
+                row_mode_sink.write = discard_write;
+                for (case_index = 0; case_index < sizeof(chunk_sizes) / sizeof(chunk_sizes[0]); case_index++) {
+                    size_t off;
+
+                    mdf_options_init(&opts);
+                    opts.boring = 1;
+                    opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
+                    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                    fails += expect(st == MDF_OK && inst != NULL,
+                                    "incremental row-mode utf8 table renderer creates");
+                    if (inst == NULL) {
+                        continue;
+                    }
+                    off = 0;
+                    while (st == MDF_OK && off < row_mode_table_len) {
+                        size_t n;
+
+                        n = row_mode_table_len - off;
+                        if (n > chunk_sizes[case_index]) {
+                            n = chunk_sizes[case_index];
+                        }
+                        st = inst->feed(inst, row_mode_table + off, n, &row_mode_sink);
+                        off += n;
+                    }
+                    if (st == MDF_OK) {
+                        st = inst->finish_document(inst, &row_mode_sink);
+                    }
+                    fails += expect(st == MDF_OK,
+                                    "incremental row-mode utf8 table retention is independent of fragment size");
+                    inst->destroy(inst);
+                    inst = NULL;
+                }
+                free(row_mode_table);
+            }
+        }
+        {
             size_t row;
 
+            mdf_options_init(&opts);
+            opts.boring = 1;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL, "incremental bounded table renderer creates");
             if (inst != NULL) {
-                st = mdf_feed(inst, "| left | right |\n|---|---|\n",
-                              strlen("| left | right |\n|---|---|\n"), &sink);
+                st = inst->feed(inst, "| left | right |\n|---|---|\n",
+                                strlen("| left | right |\n|---|---|\n"), &sink);
                 for (row = 0; st == MDF_OK && row <= 1024; row++) {
-                    st = mdf_feed(inst, "| one | two |\n", strlen("| one | two |\n"), &sink);
+                    st = inst->feed(inst, "| one | two |\n", strlen("| one | two |\n"), &sink);
                 }
                 fails += expect(st == MDF_ERROR_PARSE &&
                                 strstr(inst->error(inst), "retention limit") != NULL,
@@ -4380,17 +4473,17 @@ int main(void)
                 }
                 allocation_start = fail_allocs.alloc_calls + fail_allocs.realloc_calls;
                 fail_allocs.fail_after = allocation_start + fail_step;
-                st = mdf_feed(inst, allocation_markdown, strlen(allocation_markdown), &sink);
+                st = inst->feed(inst, allocation_markdown, strlen(allocation_markdown), &sink);
                 if (st == MDF_ERROR_NOMEM) {
                     saw_nomem = 1;
                     fails += expect(strstr(inst->error(inst), "out of memory") != NULL,
                                     "incremental allocator failure preserves an actionable error");
-                    fails += expect(mdf_finish_document(inst, &sink) == MDF_ERROR_INVALID,
+                    fails += expect(inst->finish_document(inst, &sink) == MDF_ERROR_INVALID,
                                     "incremental allocator failure enters a non-replayable failed state");
                 } else {
                     fail_allocs.fail_after = (size_t)-1;
                     if (st == MDF_OK) {
-                        st = mdf_finish_document(inst, &sink);
+                        st = inst->finish_document(inst, &sink);
                     }
                     fails += expect(st == MDF_OK,
                                     "incremental allocator injection either fails cleanly or completes cleanly");

@@ -403,6 +403,14 @@ struct mdf {
     void (*destroy)(mdf *self);
     /** Free a string returned by this renderer, including render_cstr output. */
     void (*string_free)(mdf *self, char *s);
+    /** Feed a nonempty Markdown fragment into the active incremental document. */
+    mdf_status (*feed)(mdf *self, const char *data, size_t len, mdf_sink *sink);
+    /** Apply a non-EOF boundary to the active incremental document. */
+    mdf_status (*flush)(mdf *self, mdf_sink *sink);
+    /** Resolve and close the active incremental document exactly once. */
+    mdf_status (*finish_document)(mdf *self, mdf_sink *sink);
+    /** Start a distinct next document after a successful finish_document call. */
+    mdf_status (*begin_document)(mdf *self);
     /** Private implementation state. Do not inspect or modify it. */
     void *impl;
 };

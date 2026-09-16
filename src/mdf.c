@@ -2377,6 +2377,10 @@ static void mdf_bind_receiver_methods(mdf *inst)
     inst->error = mdf_method_error;
     inst->destroy = mdf_method_destroy;
     inst->string_free = mdf_method_string_free;
+    inst->feed = mdf_feed;
+    inst->flush = mdf_flush;
+    inst->finish_document = mdf_finish_document;
+    inst->begin_document = mdf_begin_document;
 }
 
 static mdf_status mdf_impl_configure_emit_buffer(mdf_impl *impl)

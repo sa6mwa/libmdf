@@ -938,7 +938,7 @@ static int lua_mdf_document_stream_write(lua_State *L)
     stream = lua_mdf_check_document_stream(L, 1);
     data = luaL_checklstring(L, 2, &len);
     lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = mdf_feed(stream->mdf, data, len, &sink);
+    st = stream->mdf->feed(stream->mdf, data, len, &sink);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.write: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -956,7 +956,7 @@ static int lua_mdf_document_stream_flush(lua_State *L)
 
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = mdf_flush(stream->mdf, &sink);
+    st = stream->mdf->flush(stream->mdf, &sink);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.flush: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -974,7 +974,7 @@ static int lua_mdf_document_stream_finish_document(lua_State *L)
 
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = mdf_finish_document(stream->mdf, &sink);
+    st = stream->mdf->finish_document(stream->mdf, &sink);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.finish_document: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -989,7 +989,7 @@ static int lua_mdf_document_stream_begin_document(lua_State *L)
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
-    st = mdf_begin_document(stream->mdf);
+    st = stream->mdf->begin_document(stream->mdf);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.begin_document: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));

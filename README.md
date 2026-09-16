@@ -289,11 +289,11 @@ mdf_sink sink;
 sink.userdata = stdout;
 sink.write = stdout_write;
 
-mdf_feed(renderer, "Hello ", 6, &sink);
-mdf_flush(renderer, &sink);              /* still not EOF */
-mdf_feed(renderer, "**world**", 9, &sink);
-mdf_finish_document(renderer, &sink);    /* the sole EOF operation */
-mdf_begin_document(renderer);            /* now a distinct document may start */
+renderer->feed(renderer, "Hello ", 6, &sink);
+renderer->flush(renderer, &sink);              /* still not EOF */
+renderer->feed(renderer, "**world**", 9, &sink);
+renderer->finish_document(renderer, &sink);    /* the sole EOF operation */
+renderer->begin_document(renderer);            /* now a distinct document may start */
 ```
 
 Fragments must be nonempty. After successful finalization, further `feed`,
@@ -306,7 +306,7 @@ supports ANSI and HTML documents; HTML callers must set an explicit title before
 the first feed because automatic title detection is a one-shot source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
+The shared library uses SONAME ABI version `3`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.
