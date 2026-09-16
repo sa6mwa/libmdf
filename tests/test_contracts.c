@@ -881,6 +881,80 @@ static int test_stream_trace_contract(void)
         }
         capture_free(&cap);
     }
+    {
+        static const char markdown[] = "#  ";
+        capture baseline;
+        mdf *inst;
+        mdf_sink sink;
+
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "baseline empty heading render succeeds");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "baseline empty heading writes match traces");
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental empty-heading renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, markdown, strlen(markdown), &sink);
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental empty-heading document finishes");
+            fails += expect_output_equals(&cap, "# \n",
+                                          "incremental empty heading retains trailing whitespace to EOF");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental empty heading writes match traces");
+            fails += expect_capture_writes_equal(&cap, &baseline,
+                                                 "incremental empty heading decisions match baseline");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+        capture_free(&baseline);
+    }
+    {
+        static const char markdown[] = "> hello*\n\nworld";
+        capture one_byte;
+        capture whole;
+
+        memset(&one_byte, 0, sizeof(one_byte));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &one_byte);
+        fails += expect(st == MDF_OK && one_byte.failed == 0,
+                        "one-byte deferred quote render succeeds");
+        fails += expect_trace_matches_writes(&one_byte,
+                                             "one-byte deferred quote writes match traces");
+        fails += expect_output_equals(&one_byte, "> hello\n*\nworld\n",
+                                      "one-byte deferred quote matches Go structure");
+        memset(&whole, 0, sizeof(whole));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &whole);
+        fails += expect(st == MDF_OK && whole.failed == 0,
+                        "whole deferred quote render succeeds");
+        fails += expect_trace_matches_writes(&whole,
+                                             "whole deferred quote writes match traces");
+        fails += expect_capture_writes_equal(&one_byte, &whole,
+                                             "source-read boundaries preserve deferred quote decisions");
+        capture_free(&one_byte);
+        capture_free(&whole);
+    }
     return fails;
 }
 

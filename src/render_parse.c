@@ -6353,10 +6353,11 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
     }
     render_impl = (mdf_impl *)renderer->impl;
     /* A call boundary alone decides nothing. Literal spaces use the normal
-     * renderer path only after inline syntax is final. Tabs remain parser-owned
-     * because they participate in the next wrapping decision. */
+     * renderer path only after inline syntax and heading content are final.
+     * Tabs remain parser-owned because they participate in wrapping. */
     if (external_boundary && render_impl->format == MDF_FORMAT_ANSI &&
         state->parse.immediate_spaces_len > 0 &&
+        state->parse.mode != 1 &&
         ansi_flush_space_ready(render_impl)) {
         st = flush_decidable_immediate_spaces(&state->parse, renderer, sink);
         if (st != MDF_OK) {
@@ -6369,6 +6370,9 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
         state->tables.state == 0 && state->tables.line_len == 0 &&
         state->parse.prefix_len == 0 &&
         !state->parse.decided && !state->parse.pending_soft_space &&
+        !impl->prev_quote_line_text &&
+        !impl->pending_bare_quote_blank_depth &&
+        !impl->pending_quoted_list_blank_depth &&
         ansi_flush_ready(render_impl) &&
         ansi_flush_word(render_impl, sink) != 0) {
         if (strcmp(render_impl->error, "out of memory") == 0) {

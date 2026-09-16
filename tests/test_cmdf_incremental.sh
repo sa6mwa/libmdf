@@ -82,3 +82,4 @@ run_boundary_case trailing-tab 'hello\n' 'hello\t\n'
 run_boundary_case unfinished-inline 'hello *[\n' '*hello *[\n\n'
 run_boundary_case unfinished-inline-space 'hello*\n' 'hello* '
 run_boundary_case pending-tab-wrap 'helloabcde\two\nrld\n' 'helloabcde\tworld\n' -w 12
+run_boundary_case empty-heading '# \n' '#  '
