@@ -424,8 +424,8 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * decided emission must be accepted completely. This is not EOF; call
  * mdf_finish_document to resolve an unterminated construct and close output.
  * A pending table or chart construct is limited to 65536 retained bytes;
- * exceeding that limit fails with MDF_ERROR_PARSE rather than buffering an
- * unbounded document suffix.
+ * tables are also limited to 1024 retained rows. Exceeding either limit fails
+ * with MDF_ERROR_PARSE rather than buffering an unbounded document suffix.
  * Feed, flush, and finish_document reject HTML deck renderers; HTML requires
  * an explicit title set before the first call. After a successful finish, call
  * mdf_begin_document before feeding another document.

@@ -297,12 +297,12 @@ mdf_begin_document(renderer);            /* now a distinct document may start */
 Fragments must be nonempty. After successful finalization, further `feed`,
 `flush`, or `finish_document` calls fail until `begin_document` succeeds.
 Sink failure makes that document failed; libmdf never retries or retains the
-sink. Pending table and chart constructs retain at most 65536 bytes; an
-oversized unfinished construct fails with `MDF_ERROR_PARSE` instead of growing
-without bound. The incremental lifecycle supports ANSI and HTML documents; HTML callers
-must set an explicit title before the first feed because automatic title
-detection is a one-shot source feature. HTML deck renderers remain whole-source
-only.
+sink. Pending table and chart constructs retain at most 65536 bytes, and tables
+retain at most 1024 rows; an oversized unfinished construct fails with
+`MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
+supports ANSI and HTML documents; HTML callers must set an explicit title before
+the first feed because automatic title detection is a one-shot source feature.
+HTML deck renderers remain whole-source only.
 
 The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,

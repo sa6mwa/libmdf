@@ -6261,7 +6261,7 @@ mdf_status mdf_parser_feed(mdf_parser *self,
 done:
     if (st == MDF_ERROR_NOMEM &&
         (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
-        mdf_parser_set_error(self, "pending construct exceeds the 65536-byte retention limit");
+        mdf_parser_set_error(self, "pending construct exceeds the 65536-byte or 1024-row retention limit");
         return MDF_ERROR_PARSE;
     }
     return st;
@@ -6330,7 +6330,7 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
     if (st != MDF_OK) {
         if (st == MDF_ERROR_NOMEM &&
             (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
-            mdf_parser_set_error(self, "pending construct exceeds the 65536-byte retention limit");
+            mdf_parser_set_error(self, "pending construct exceeds the 65536-byte or 1024-row retention limit");
             return MDF_ERROR_PARSE;
         }
         return st;

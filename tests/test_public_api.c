@@ -4326,13 +4326,79 @@ int main(void)
                         st = mdf_feed(inst, oversized, oversized_len, &sink);
                     }
                     fails += expect(st == MDF_ERROR_PARSE &&
-                                    strstr(inst->error(inst), "65536-byte retention limit") != NULL,
+                                    strstr(inst->error(inst), "retention limit") != NULL,
                                     "incremental oversized unfinished chart fails at the retention limit");
                     inst->destroy(inst);
                     inst = NULL;
                 }
                 free(oversized);
             }
+        }
+        {
+            size_t row;
+
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL, "incremental bounded table renderer creates");
+            if (inst != NULL) {
+                st = mdf_feed(inst, "| left | right |\n|---|---|\n",
+                              strlen("| left | right |\n|---|---|\n"), &sink);
+                for (row = 0; st == MDF_OK && row <= 1024; row++) {
+                    st = mdf_feed(inst, "| one | two |\n", strlen("| one | two |\n"), &sink);
+                }
+                fails += expect(st == MDF_ERROR_PARSE &&
+                                strstr(inst->error(inst), "retention limit") != NULL,
+                                "incremental oversized unfinished table fails at the retention limit");
+                inst->destroy(inst);
+                inst = NULL;
+            }
+        }
+        {
+            static const char allocation_markdown[] =
+                "# Allocation\n\n"
+                "| left | right |\n|---|---|\n| one | two |\n\n"
+                "```mdf-bar-chart\nalpha, 1\nbeta, 2\n```\n";
+            size_t fail_step;
+            int saw_nomem;
+
+            saw_nomem = 0;
+            for (fail_step = 1; fail_step <= 32; fail_step++) {
+                size_t allocation_start;
+
+                memset(&fail_allocs, 0, sizeof(fail_allocs));
+                fail_allocs.fail_after = (size_t)-1;
+                mdf_options_init(&opts);
+                opts.boring = 1;
+                opts.allocator.userdata = &fail_allocs;
+                opts.allocator.alloc = failing_alloc;
+                opts.allocator.realloc = failing_realloc;
+                opts.allocator.free = failing_free;
+                st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                fails += expect(st == MDF_OK && inst != NULL,
+                                "incremental allocator-failure renderer creates before injection");
+                if (inst == NULL) {
+                    continue;
+                }
+                allocation_start = fail_allocs.alloc_calls + fail_allocs.realloc_calls;
+                fail_allocs.fail_after = allocation_start + fail_step;
+                st = mdf_feed(inst, allocation_markdown, strlen(allocation_markdown), &sink);
+                if (st == MDF_ERROR_NOMEM) {
+                    saw_nomem = 1;
+                    fails += expect(strstr(inst->error(inst), "out of memory") != NULL,
+                                    "incremental allocator failure preserves an actionable error");
+                    fails += expect(mdf_finish_document(inst, &sink) == MDF_ERROR_INVALID,
+                                    "incremental allocator failure enters a non-replayable failed state");
+                } else {
+                    fail_allocs.fail_after = (size_t)-1;
+                    if (st == MDF_OK) {
+                        st = mdf_finish_document(inst, &sink);
+                    }
+                    fails += expect(st == MDF_OK,
+                                    "incremental allocator injection either fails cleanly or completes cleanly");
+                }
+                inst->destroy(inst);
+                inst = NULL;
+            }
+            fails += expect(saw_nomem, "incremental allocator failure coverage reaches parser allocation paths");
         }
         grow_free(&expected_sink);
     }

@@ -2731,8 +2731,10 @@ static mdf_status mdf_incremental_fail(mdf *renderer, mdf_status st)
     mdf_impl *impl;
     const char *err;
     size_t err_len;
+    int copied_error;
 
     impl = (mdf_impl *)renderer->impl;
+    copied_error = 0;
     if (impl->incremental_parser != NULL) {
         err = mdf_parser_error(impl->incremental_parser);
         if (err != NULL && err[0] != '\0') {
@@ -2742,6 +2744,20 @@ static mdf_status mdf_incremental_fail(mdf *renderer, mdf_status st)
             }
             memmove(impl->error, err, err_len);
             impl->error[err_len] = '\0';
+            copied_error = 1;
+        }
+    }
+    if (!copied_error && impl->error[0] == '\0') {
+        /* Internal write paths report sink failures themselves. A blank IO
+         * result here can only be an allocation failure that predated the
+         * renderer's usual diagnostic conversion. */
+        if (st == MDF_ERROR_IO) {
+            st = MDF_ERROR_NOMEM;
+        }
+        if (st == MDF_ERROR_NOMEM) {
+            mdf_set_error(renderer, "out of memory");
+        } else {
+            mdf_set_error(renderer, "incremental rendering failed");
         }
     }
     impl->incremental_state = MDF_INCREMENTAL_FAILED;
