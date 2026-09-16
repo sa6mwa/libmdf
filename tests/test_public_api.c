@@ -4278,6 +4278,52 @@ int main(void)
             }
             grow_free(&failed_incremental_sink.capture);
         }
+        {
+            char long_word[201];
+            char long_markdown[203];
+
+            memset(long_word, 'x', sizeof(long_word) - 1);
+            long_word[sizeof(long_word) - 1] = '\0';
+            memcpy(long_markdown, long_word, sizeof(long_word) - 1);
+            memcpy(long_markdown + sizeof(long_word) - 1, "\n\n", 3);
+            memset(&fail_allocs, 0, sizeof(fail_allocs));
+            fail_allocs.fail_after = (size_t)-1;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 1000;
+            opts.emission_buffer.initial_cap = 8;
+            opts.emission_buffer.max_cap = 1024;
+            opts.allocator.userdata = &fail_allocs;
+            opts.allocator.alloc = failing_alloc;
+            opts.allocator.realloc = failing_realloc;
+            opts.allocator.free = failing_free;
+            memset(&incremental_sink, 0, sizeof(incremental_sink));
+            incremental_output.userdata = &incremental_sink;
+            incremental_output.write = grow_write;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL,
+                            "incremental flush allocation-failure renderer creates");
+            if (inst != NULL) {
+                st = inst->feed(inst, long_markdown, strlen(long_markdown), &incremental_output);
+                fails += expect(st == MDF_OK && incremental_sink.len == 0,
+                                "incremental long word remains pending before flush");
+                fail_allocs.alloc_calls = 0;
+                fail_allocs.realloc_calls = 0;
+                fail_allocs.fail_after = 1;
+                if (st == MDF_OK) {
+                    st = inst->flush(inst, &incremental_output);
+                }
+                fails += expect(st == MDF_ERROR_NOMEM &&
+                                strcmp(inst->error(inst), "out of memory") == 0,
+                                "incremental flush preserves allocation failure diagnostics");
+                fails += expect(incremental_sink.len == 0,
+                                "incremental flush allocation failure does not invoke the sink");
+                inst->destroy(inst);
+                inst = NULL;
+            }
+            fail_allocs.fail_after = (size_t)-1;
+            grow_free(&incremental_sink);
+        }
         memset(&incremental_sink, 0, sizeof(incremental_sink));
         incremental_output.userdata = &incremental_sink;
         incremental_output.write = grow_write;

@@ -6270,10 +6270,18 @@ done:
     return st;
 }
 
-mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
+static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
+                                            mdf_renderer *renderer,
+                                            mdf_sink *sink,
+                                            int external_boundary)
 {
+    mdf_parser_impl *impl;
     parser_stream_state *state;
     mdf_impl *render_impl;
+    const char *filtered;
+    size_t filtered_len;
+    int decided;
+    mdf_status st;
 
     if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
         mdf_parser_set_error(self, "flush requires parser, renderer, and sink");
@@ -6282,6 +6290,26 @@ mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *
     state = parser_stream_state_get(self, 1);
     if (state == NULL) {
         return MDF_ERROR_NOMEM;
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    if (external_boundary &&
+        !state->frontmatter.passthrough && state->frontmatter.len > 0) {
+        if (frontmatter_decide(&state->frontmatter, 0, &filtered, &filtered_len, &decided) != 0) {
+            mdf_parser_set_error(self, "frontmatter filter failed");
+            return MDF_ERROR_PARSE;
+        }
+        if (decided && filtered_len > 0) {
+            st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink,
+                                   filtered, filtered_len);
+            if (st != MDF_OK) {
+                if (st == MDF_ERROR_NOMEM &&
+                    (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
+                    mdf_parser_set_error(self, "pending construct exceeds the 65536-byte or 1024-row retention limit");
+                    return MDF_ERROR_PARSE;
+                }
+                return st;
+            }
+        }
     }
     /* A completed block boundary cannot be changed by a future fragment. The
      * ANSI renderer may still own its last word for wrapping, so release that
@@ -6293,12 +6321,23 @@ mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *
     render_impl = (mdf_impl *)renderer->impl;
     if (render_impl->format == MDF_FORMAT_ANSI &&
         state->tables.state == 0 && state->tables.line_len == 0 &&
-        state->parse.prefix_len == 0 && !state->parse.decided &&
-        !state->parse.pending_soft_space && ansi_flush_word(render_impl, sink) != 0) {
+        state->parse.prefix_len == 0 &&
+        (external_boundary ||
+         (!state->parse.decided && !state->parse.pending_soft_space)) &&
+        ansi_flush_word(render_impl, sink) != 0) {
+        if (strcmp(render_impl->error, "out of memory") == 0) {
+            mdf_parser_set_error(self, render_impl->error);
+            return MDF_ERROR_NOMEM;
+        }
         mdf_parser_set_error(self, "sink write failed");
         return MDF_ERROR_IO;
     }
     return MDF_OK;
+}
+
+mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
+{
+    return mdf_parser_flush_boundary(self, renderer, sink, 1);
 }
 
 mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
@@ -6398,7 +6437,7 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
         if (st != MDF_OK) {
             return st;
         }
-        st = mdf_parser_flush(self, renderer, sink);
+        st = mdf_parser_flush_boundary(self, renderer, sink, 0);
         if (st != MDF_OK) {
             return st;
         }

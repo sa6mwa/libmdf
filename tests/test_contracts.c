@@ -601,6 +601,42 @@ static int test_stream_trace_contract(void)
                                       "Common Misreadings imply lack",
                                       "blockquote styled text is not coalesced across words");
     capture_free(&cap);
+
+    {
+        static const char *const expected[] = {"Hello"};
+        mdf *inst;
+        mdf_sink sink;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental flush trace renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, "Hello ", strlen("Hello "), &sink);
+            fails += expect(st == MDF_OK && cap.write_count == 0,
+                            "incremental feed retains a soft boundary until flush");
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental flush emits a word proven by whitespace");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental flush writes match traces");
+            fails += expect_write_sequence(&cap,
+                                           expected,
+                                           sizeof(expected) / sizeof(expected[0]),
+                                           "incremental flush emits the exact decided word");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+    }
     return fails;
 }
 
