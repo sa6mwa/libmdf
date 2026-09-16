@@ -665,6 +665,7 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     {
+        static const char *const expected[] = {"Hello"};
         mdf *inst;
         mdf_sink sink;
 
@@ -681,8 +682,12 @@ static int test_stream_trace_contract(void)
                         "incremental flush trace renderer creates");
         if (inst != NULL) {
             st = inst->feed(inst, "Hello ", strlen("Hello "), &sink);
-            fails += expect(st == MDF_OK && cap.write_count == 0,
-                            "incremental feed retains an unresolved soft boundary");
+            fails += expect(st == MDF_OK && cap.write_count == 1,
+                            "incremental feed emits a word closed by real input");
+            fails += expect_write_sequence(&cap,
+                                           expected,
+                                           sizeof(expected) / sizeof(expected[0]),
+                                           "incremental feed emits the closed word exactly once");
             if (st == MDF_OK) {
                 st = inst->flush(inst, &sink);
             }
@@ -690,8 +695,8 @@ static int test_stream_trace_contract(void)
                             "incremental flush succeeds without manufacturing a decision");
             fails += expect_trace_matches_writes(&cap,
                                                  "incremental flush writes match traces");
-            fails += expect(cap.write_count == 0,
-                            "incremental flush does not emit an unresolved soft boundary");
+            fails += expect(cap.write_count == 1,
+                            "incremental flush does not emit after a feed decision");
             if (st == MDF_OK) {
                 st = inst->finish_document(inst, &sink);
             }
@@ -748,6 +753,31 @@ static int test_stream_trace_contract(void)
             inst->destroy(inst);
         }
         capture_free(&cap);
+    }
+
+    {
+        static const char markdown[] = "Hello world";
+        capture baseline;
+
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen("Hello "), &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "baseline word-boundary render succeeds");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "baseline word-boundary writes match traces");
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = incremental_capture(&opts, markdown, strlen("Hello "), &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "incremental word-boundary render succeeds");
+        fails += expect_trace_matches_writes(&cap,
+                                             "incremental word-boundary writes match traces");
+        fails += expect_capture_writes_equal(&cap, &baseline,
+                                             "feed word-boundary decisions match normal streaming");
+        capture_free(&cap);
+        capture_free(&baseline);
     }
     {
         static const char markdown[] = "*hello *[\n\n";

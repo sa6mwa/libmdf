@@ -4547,7 +4547,7 @@ int main(void)
     }
 
     {
-        static const char source_stream_markdown[] = "plain\n\ntail";
+        static const char source_stream_markdown[] = "plain tail";
         chunked_cstr_source stream_src;
         source_offset_probe_sink stream_sink;
 
@@ -4556,7 +4556,7 @@ int main(void)
         memset(&stream_src, 0, sizeof(stream_src));
         stream_src.src = source_stream_markdown;
         stream_src.len = strlen(source_stream_markdown);
-        stream_src.max_chunk = strlen("plain\n\n");
+        stream_src.max_chunk = strlen("plain ");
         memset(&stream_sink, 0, sizeof(stream_sink));
         stream_sink.source = &stream_src;
         stream_sink.needle = "plain";
@@ -4569,8 +4569,8 @@ int main(void)
         if (inst != NULL) {
             st = inst->render(inst, &src, &sink);
             fails += expect(st == MDF_OK && stream_sink.saw_needle &&
-                            stream_sink.needle_source_off <= strlen("plain\n\n"),
-                            "blocking source emits decidable text before its next read");
+                            stream_sink.needle_source_off <= strlen("plain "),
+                            "blocking source emits a word closed by input before its next read");
             fails += expect(stream_sink.capture.buf != NULL &&
                             strstr(stream_sink.capture.buf, "tail") != NULL,
                             "blocking source emits a final plain-text tail at eof");

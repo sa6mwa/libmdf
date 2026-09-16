@@ -94,6 +94,7 @@ typedef struct html_bridge_sink {
 
 int render_token_is_text(mdf_token_type t);
 mdf_status render_emit(mdf_renderer *renderer, mdf_sink *sink, mdf_token_type type, const char *text, size_t len, int level);
+mdf_status mdf_renderer_consume_space_boundary(mdf_renderer *renderer, mdf_sink *sink, int *consumed);
 mdf_status mdf_renderer_fail_session(mdf_renderer *self, mdf_status st, const char *msg);
 mdf_status mdf_renderer_fail_from_impl(mdf_renderer *self, mdf_impl *impl, const char *fallback_msg);
 mdf_status mdf_renderer_fail_sink_write(mdf_renderer *self);
@@ -104,6 +105,7 @@ void mdf_impl_mark_oom(mdf_impl *impl);
 int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink);
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink);
 int ansi_flush_ready(const mdf_impl *impl);
+int ansi_space_boundary_ready(const mdf_impl *impl);
 int ansi_emit_final_decision(mdf_impl *impl, mdf_sink *sink);
 int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len);
 int ansi_emit_pending_style_reset(mdf_impl *impl, mdf_sink *sink);

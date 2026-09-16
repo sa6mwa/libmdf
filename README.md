@@ -270,7 +270,9 @@ Important options:
 
 For an event-loop or another producer that supplies Markdown fragments, keep
 one renderer for one document and use the additive document lifecycle. `feed`
-emits each final renderer decision as it is made. `flush` is a non-mutating
+emits each final renderer decision as it is made. For example, a real input
+space normally closes and emits the preceding word while the renderer retains
+the separator until wrapping decides it. `flush` is an output-neutral
 soft-boundary check: it never emits, resolves input, or acts as EOF. Only
 `finish_document` resolves an unfinished construct and closes output. The
 supplied sink is synchronous and

@@ -65,6 +65,28 @@ mdf_status render_emit(mdf_renderer *renderer, mdf_sink *sink, mdf_token_type ty
     return renderer->write_token(renderer, &tok, sink);
 }
 
+mdf_status mdf_renderer_consume_space_boundary(mdf_renderer *renderer,
+                                                mdf_sink *sink,
+                                                int *consumed)
+{
+    mdf_impl *impl;
+
+    if (consumed == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    *consumed = 0;
+    if (renderer == NULL || renderer->impl == NULL || sink == NULL ||
+        renderer->write_token != mdf_renderer_write_token_internal) {
+        return MDF_OK;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    if (impl->format != MDF_FORMAT_ANSI || !ansi_space_boundary_ready(impl)) {
+        return MDF_OK;
+    }
+    *consumed = 1;
+    return render_emit(renderer, sink, MDF_TOKEN_SPACE, " ", 1, 0);
+}
+
 static const mdf_theme_style *theme_or_default(const mdf_impl *impl)
 {
     const mdf_theme_style *theme;

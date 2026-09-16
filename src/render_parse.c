@@ -5971,6 +5971,7 @@ static mdf_status decide_prefix(parse_state *ps, mdf_parser_impl *impl, mdf_rend
 static mdf_status feed_decided(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink, char c)
 {
     mdf_status st;
+    int consumed;
 
     if (c == '\r') {
         return MDF_OK;
@@ -6099,6 +6100,19 @@ static mdf_status feed_decided(parse_state *ps, mdf_parser_impl *impl, mdf_rende
                 ps->trailing_spaces++;
             } else {
                 ps->trailing_spaces = 0;
+            }
+            /* The renderer alone decides whether this real input space closes
+             * its pending decision.  If it accepts the space, it emits the
+             * preceding word and retains the separator for wrapping; otherwise
+             * the parser preserves the byte under normal trailing-space rules. */
+            if (c == ' ' && ps->immediate_spaces_len == 0) {
+                st = mdf_renderer_consume_space_boundary(renderer, sink, &consumed);
+                if (st != MDF_OK) {
+                    return st;
+                }
+                if (consumed) {
+                    return MDF_OK;
+                }
             }
             if (ps->immediate_spaces_len < sizeof(ps->immediate_spaces)) {
                 ps->immediate_spaces[ps->immediate_spaces_len++] = c;

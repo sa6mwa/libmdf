@@ -3344,6 +3344,18 @@ int ansi_flush_ready(const mdf_impl *impl)
            impl->ansi_uri_scheme_pending == 0;
 }
 
+int ansi_space_boundary_ready(const mdf_impl *impl)
+{
+    char last;
+
+    if (!ansi_flush_ready(impl) || impl->ansi_word_len == 0 ||
+        impl->ansi_pending_space) {
+        return 0;
+    }
+    last = impl->ansi_word[impl->ansi_word_len - 1];
+    return last != ' ' && last != '\t';
+}
+
 int ansi_emit_final_decision(mdf_impl *impl, mdf_sink *sink)
 {
     if (!ansi_flush_ready(impl) || impl->ansi_word_len == 0) {
