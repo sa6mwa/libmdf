@@ -235,6 +235,7 @@ typedef struct mdf_parser_impl {
     char *chart_buf;
     size_t chart_len;
     size_t chart_cap;
+    int incremental_limits;
     int retention_limit_exceeded;
     void *stream_state;
 } mdf_parser_impl;
@@ -275,6 +276,7 @@ int mdf_emit_buffer_append(mdf_impl *impl, const char *src, size_t len);
 int mdf_emit_buffer_append_cstr(mdf_impl *impl, const char *src);
 int mdf_emit_buffer_commit(mdf_impl *impl, mdf_sink *sink);
 mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out);
+void mdf_parser_enable_incremental_limits(mdf_parser *self);
 const mdf_theme_style *mdf_theme_resolve(const char *name);
 mdf_status mdf_parser_parse(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink);
 mdf_status mdf_parser_feed(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink, const char *data, size_t len);

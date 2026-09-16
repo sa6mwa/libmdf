@@ -54,3 +54,28 @@ run_case comprehensive.ansi.styled.w80 -w 80
 run_case comprehensive.ansi.boring.w80 --boring -w 80
 run_case comprehensive.ansi.boring.w80.margin-l4-r6 --boring -w 80 --margin-left 4 --margin-right 6
 run_case comprehensive.ansi.styled.w40.margin-l2-r3 -w 40 --margin-left 2 --margin-right 3
+
+run_boundary_case() {
+  name=$1
+  expected=$2
+  input=$3
+  baseline="$TMP/$name.baseline"
+  incremental="$TMP/$name.incremental"
+  baseline_trace="$baseline.trace"
+  incremental_trace="$incremental.trace"
+
+  printf '%b' "$input" > "$TMP/$name.md"
+  "$CMDF" --boring --simulate-chunk 1 --trace-writes "$baseline_trace" \
+    "$TMP/$name.md" > "$baseline"
+  "$CMDF" --incremental --boring --simulate-chunk 1 \
+    --trace-writes "$incremental_trace" "$TMP/$name.md" > "$incremental"
+  printf '%b' "$expected" > "$TMP/$name.expected"
+  cmp "$TMP/$name.expected" "$baseline"
+  cmp "$baseline" "$incremental"
+  cmp "$baseline_trace" "$incremental_trace"
+}
+
+# These are boundary-only decisions: output and exact decision trace must
+# remain identical when cmdf drives the public feed/flush lifecycle.
+run_boundary_case trailing-tab 'hello\n' 'hello\t\n'
+run_boundary_case unfinished-inline 'hello *[\n' '*hello *[\n\n'

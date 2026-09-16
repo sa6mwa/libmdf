@@ -220,6 +220,45 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     return st;
 }
 
+static mdf_status incremental_capture(mdf_options *opts, const char *markdown,
+                                      size_t fragment, capture *cap)
+{
+    mdf *inst;
+    mdf_sink sink;
+    mdf_status st;
+    size_t len;
+    size_t off;
+    size_t n;
+
+    inst = NULL;
+    memset(cap, 0, sizeof(*cap));
+    opts->write_trace.userdata = cap;
+    opts->write_trace.emit = capture_trace;
+    sink.userdata = cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, opts, &inst);
+    len = strlen(markdown);
+    off = 0;
+    while (st == MDF_OK && off < len) {
+        n = len - off;
+        if (n > fragment) {
+            n = fragment;
+        }
+        st = inst->feed(inst, markdown + off, n, &sink);
+        if (st == MDF_OK) {
+            st = inst->flush(inst, &sink);
+        }
+        off += n;
+    }
+    if (st == MDF_OK) {
+        st = inst->finish_document(inst, &sink);
+    }
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+    return st;
+}
+
 static mdf_status render_count(mdf_format format, mdf_options *opts, const char *markdown,
                                size_t chunk, count_sink *count)
 {
@@ -263,6 +302,29 @@ static int expect_trace_matches_writes(const capture *cap, const char *msg)
         if (cap->writes[i].len != cap->traces[i].len ||
             memcmp(cap->writes[i].data, cap->traces[i].data, cap->writes[i].len) != 0) {
             fprintf(stderr, "FAIL: %s: mismatch at emission %lu\n", msg, (unsigned long)i);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int expect_capture_writes_equal(const capture *actual, const capture *expected,
+                                       const char *msg)
+{
+    size_t i;
+
+    if (actual->write_count != expected->write_count) {
+        fprintf(stderr, "FAIL: %s: write_count=%lu expected=%lu\n", msg,
+                (unsigned long)actual->write_count,
+                (unsigned long)expected->write_count);
+        return 1;
+    }
+    for (i = 0; i < actual->write_count; i++) {
+        if (actual->writes[i].len != expected->writes[i].len ||
+            memcmp(actual->writes[i].data, expected->writes[i].data,
+                   actual->writes[i].len) != 0) {
+            fprintf(stderr, "FAIL: %s: write %lu differs\n", msg,
+                    (unsigned long)i);
             return 1;
         }
     }
@@ -681,6 +743,70 @@ static int test_stream_trace_contract(void)
         }
         capture_free(&cap);
     }
+    {
+        static const char markdown[] = "*hello *[\n\n";
+        capture baseline;
+
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "baseline unresolved inline render succeeds");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "baseline unresolved inline writes match traces");
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = incremental_capture(&opts, markdown, 1, &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "incremental unresolved inline render succeeds");
+        fails += expect_trace_matches_writes(&cap,
+                                             "incremental unresolved inline writes match traces");
+        fails += expect_capture_writes_equal(&cap, &baseline,
+                                             "incremental unresolved inline decisions match baseline");
+        capture_free(&cap);
+        capture_free(&baseline);
+    }
+    {
+        mdf *inst;
+        mdf_sink sink;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental tab-boundary renderer creates");
+        if (inst != NULL) {
+            st = inst->feed(inst, "hello\t", strlen("hello\t"), &sink);
+            if (st == MDF_OK) {
+                st = inst->flush(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental tab boundary flush succeeds");
+            fails += expect_output_equals(&cap, "hello",
+                                          "incremental flush does not commit trailing tab");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, "\n", 1, &sink);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental tab-boundary document finishes");
+            fails += expect_output_equals(&cap, "hello\n",
+                                          "incremental trailing tab matches ordinary line rendering");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental tab boundary writes match traces");
+            inst->destroy(inst);
+        }
+        capture_free(&cap);
+    }
     return fails;
 }
 
@@ -831,6 +957,42 @@ static int test_table_contract(void)
     fails += expect_trace_matches_writes(&cap, "row-buffer table writes match traces");
     fails += expect_line_margins(cap.out, 2, 38, "row-buffer table honors margins");
     capture_free(&cap);
+
+    {
+        static const char prefix[] = "| h |\n| --- |\n";
+        static const char row[] = "| x |\n";
+        const size_t rows = 1025;
+        size_t prefix_len;
+        size_t row_len;
+        size_t source_len;
+        size_t i;
+        char *source;
+
+        prefix_len = strlen(prefix);
+        row_len = strlen(row);
+        source_len = prefix_len + rows * row_len;
+        source = (char *)malloc(source_len + 1);
+        fails += expect(source != NULL, "ordinary large table fixture allocates");
+        if (source != NULL) {
+            memcpy(source, prefix, prefix_len);
+            for (i = 0; i < rows; i++) {
+                memcpy(source + prefix_len + i * row_len, row, row_len);
+            }
+            source[source_len] = '\0';
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.table_buffer_mode = MDF_TABLE_BUFFER_FULL;
+            st = render_capture(MDF_FORMAT_ANSI, &opts, source, 4096, &cap);
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "ordinary full-buffer table exceeds only incremental retention cap");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "ordinary large table writes match traces");
+            fails += expect_contains(cap.out, "x",
+                                     "ordinary large table produces rendered rows");
+            capture_free(&cap);
+            free(source);
+        }
+    }
     return fails;
 }
 

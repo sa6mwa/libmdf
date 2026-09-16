@@ -3330,6 +3330,20 @@ int ansi_flush_word(mdf_impl *impl, mdf_sink *sink)
     return ansi_flush_word_reserved(impl, sink, 0);
 }
 
+int ansi_flush_ready(const mdf_impl *impl)
+{
+    return impl->inline_mode == 0 &&
+           !impl->inline_emph_pending &&
+           !impl->inline_outer_paren_candidate &&
+           !impl->inline_outer_paren_pending &&
+           !impl->inline_html_nbsp_pending &&
+           !impl->pending_fallback_exact &&
+           !impl->ansi_pending_emit_valid &&
+           !impl->ansi_pending_autolink_emit_valid &&
+           !impl->ansi_pending_fallback_emit_valid &&
+           impl->ansi_uri_scheme_pending == 0;
+}
+
 static int ansi_flush_pending_space_for(mdf_impl *impl, mdf_sink *sink, size_t next_len)
 {
     int plain_space;

@@ -2549,6 +2549,17 @@ mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out)
     return MDF_OK;
 }
 
+void mdf_parser_enable_incremental_limits(mdf_parser *self)
+{
+    mdf_parser_impl *impl;
+
+    if (self == NULL || self->impl == NULL) {
+        return;
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    impl->incremental_limits = 1;
+}
+
 mdf_status mdf_parser_parse(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink)
 {
     if (self == NULL || self->parse == NULL) {
@@ -2726,6 +2737,7 @@ static mdf_status mdf_incremental_start(mdf *renderer, mdf_sink *sink)
         impl->incremental_state = MDF_INCREMENTAL_FAILED;
         return st;
     }
+    mdf_parser_enable_incremental_limits(impl->incremental_parser);
     impl->incremental_state = MDF_INCREMENTAL_ACTIVE;
     return MDF_OK;
 }

@@ -273,7 +273,8 @@ static int chart_append(mdf_parser_impl *impl, const char *src, size_t len)
     if (len == 0) {
         return 0;
     }
-    if (len > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - impl->chart_len) {
+    if (impl->incremental_limits &&
+        len > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - impl->chart_len) {
         impl->retention_limit_exceeded = 1;
         return -1;
     }
@@ -412,15 +413,17 @@ typedef struct table_filter {
     int row_layout_ready;
     size_t row_widths[TABLE_MAX_COLUMNS];
     size_t retained_bytes;
+    int incremental_limits;
     int retention_limit_exceeded;
 } table_filter;
 
 #define TABLE_FILTER_STATE_PREFIX_PRELUDE 4
 
-static void table_filter_init(table_filter *tf, mdf_allocator *allocator)
+static void table_filter_init(table_filter *tf, mdf_allocator *allocator, int incremental_limits)
 {
     memset(tf, 0, sizeof(*tf));
     tf->allocator = allocator;
+    tf->incremental_limits = incremental_limits;
     tf->line_start = 1;
 }
 
@@ -477,7 +480,7 @@ static int table_filter_append_mem(table_filter *tf, char **buf, size_t *len, si
 
 static int table_filter_append_line(table_filter *tf, const char *src, size_t n)
 {
-    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+    if (tf->incremental_limits && n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
         tf->retention_limit_exceeded = 1;
         return -1;
     }
@@ -507,7 +510,8 @@ static int table_filter_note_chunk_offset(table_filter *tf)
     if (tf->line_chunk_len > 0 && tf->line_chunk_offsets[tf->line_chunk_len - 1] == tf->line_len) {
         return 0;
     }
-    if (sizeof(tf->line_chunk_offsets[0]) > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+    if (tf->incremental_limits &&
+        sizeof(tf->line_chunk_offsets[0]) > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
         tf->retention_limit_exceeded = 1;
         return -1;
     }
@@ -629,7 +633,8 @@ static int table_filter_set_copy(table_filter *tf, char **dst, size_t *dst_len, 
 {
     char *copy;
 
-    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - (tf->retained_bytes - *dst_len)) {
+    if (tf->incremental_limits &&
+        n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - (tf->retained_bytes - *dst_len)) {
         tf->retention_limit_exceeded = 1;
         return -1;
     }
@@ -654,11 +659,11 @@ static int table_filter_add_row(table_filter *tf, const char *src, size_t n)
     char *copy;
     size_t new_cap;
 
-    if (n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
+    if (tf->incremental_limits && n > MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES - tf->retained_bytes) {
         tf->retention_limit_exceeded = 1;
         return -1;
     }
-    if (tf->rows_len == TABLE_MAX_RETAINED_ROWS) {
+    if (tf->incremental_limits && tf->rows_len == TABLE_MAX_RETAINED_ROWS) {
         tf->retention_limit_exceeded = 1;
         return -1;
     }
@@ -4699,6 +4704,37 @@ static mdf_status flush_immediate_spaces(parse_state *ps, mdf_renderer *renderer
     return MDF_OK;
 }
 
+/* A literal space is represented by the ANSI renderer as a pending separator,
+ * so forwarding it cannot make trailing line whitespace visible. Tabs do not
+ * have that property: retain them until the parser knows whether they are
+ * trailing, while their presence still proves the preceding word is final. */
+static mdf_status flush_decidable_immediate_spaces(parse_state *ps,
+                                                   mdf_renderer *renderer,
+                                                   mdf_sink *sink)
+{
+    size_t count;
+    size_t i;
+    mdf_status st;
+
+    count = 0;
+    while (count < ps->immediate_spaces_len && ps->immediate_spaces[count] == ' ') {
+        count++;
+    }
+    for (i = 0; i < count; i++) {
+        st = render_emit(renderer, sink, MDF_TOKEN_SPACE, " ", 1, 0);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+    if (count > 0) {
+        memmove(ps->immediate_spaces,
+                ps->immediate_spaces + count,
+                ps->immediate_spaces_len - count);
+        ps->immediate_spaces_len -= count;
+    }
+    return MDF_OK;
+}
+
 static mdf_status prepare_fenced_block_boundary(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink)
 {
     mdf_status st;
@@ -6163,7 +6199,7 @@ static parser_stream_state *parser_stream_state_get(mdf_parser *self, int create
     }
     memset(state, 0, sizeof(*state));
     state->frontmatter.allocator = &impl->allocator;
-    table_filter_init(&state->tables, &impl->allocator);
+    table_filter_init(&state->tables, &impl->allocator, impl->incremental_limits);
     state->parse.at_line_start = 1;
     state->parse.thematic_possible = 1;
     impl->stream_state = state;
@@ -6281,6 +6317,7 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
     const char *filtered;
     size_t filtered_len;
     int decided;
+    int unresolved_separator;
     mdf_status st;
 
     if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
@@ -6316,23 +6353,26 @@ static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
         return MDF_OK;
     }
     render_impl = (mdf_impl *)renderer->impl;
-    /* A call boundary alone decides nothing. A retained visible separator,
-     * however, proves that the preceding ANSI decision cannot grow. Send that
-     * separator through the normal renderer path; trailing_spaces retains the
-     * parser's later hard-break decision. */
+    /* A call boundary alone decides nothing. Literal spaces use the normal
+     * renderer path; tabs remain parser-owned until their trailing-whitespace
+     * meaning is known. Either retained tab proves the preceding word final. */
     if (external_boundary && render_impl->format == MDF_FORMAT_ANSI &&
         state->parse.immediate_spaces_len > 0) {
-        st = flush_immediate_spaces(&state->parse, renderer, sink);
+        st = flush_decidable_immediate_spaces(&state->parse, renderer, sink);
         if (st != MDF_OK) {
             return st;
         }
     }
-    /* Completed parser blocks are independently ready for their renderer
-     * decision to be released. */
+    unresolved_separator = state->parse.immediate_spaces_len > 0;
+    /* A completed parser block, or a public parser-held separator, can release
+     * a word. A call boundary alone cannot; unresolved inline syntax remains
+     * private until the renderer can make its final decision. */
     if (render_impl->format == MDF_FORMAT_ANSI &&
         state->tables.state == 0 && state->tables.line_len == 0 &&
         state->parse.prefix_len == 0 &&
-        !state->parse.decided && !state->parse.pending_soft_space &&
+        ((!state->parse.decided && !state->parse.pending_soft_space) ||
+         (external_boundary && unresolved_separator)) &&
+        ansi_flush_ready(render_impl) &&
         ansi_flush_word(render_impl, sink) != 0) {
         if (strcmp(render_impl->error, "out of memory") == 0) {
             mdf_parser_set_error(self, render_impl->error);
