@@ -382,6 +382,9 @@ typedef struct mdf_token {
 
 typedef struct mdf mdf;
 
+/** Receiver vtable slots reserved for ABI-compatible future expansion. */
+#define MDF_RECEIVER_RESERVED_SLOTS 8
+
 struct mdf {
     /**
      * Render one already-decided token to sink. This is an advanced streaming
@@ -411,6 +414,11 @@ struct mdf {
     mdf_status (*finish_document)(mdf *self, mdf_sink *sink);
     /** Start a distinct next document after a successful finish_document call. */
     mdf_status (*begin_document)(mdf *self);
+    /**
+     * Library-owned ABI reserve. Slots are initialized to NULL; callers must
+     * not write, retain, or call them, and their values have no public meaning.
+     */
+    void (*reserved[MDF_RECEIVER_RESERVED_SLOTS])(void);
     /** Private implementation state. Do not inspect or modify it. */
     void *impl;
 };

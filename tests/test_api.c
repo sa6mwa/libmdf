@@ -1922,6 +1922,7 @@ int main(void)
     mdf_status st;
     counting_allocator allocs;
     int fails;
+    size_t reserved_index;
     static const unsigned char test_font[] = {1, 2, 3};
 
     fails = 0;
@@ -1948,8 +1949,16 @@ int main(void)
                     renderer->render_cstr != NULL &&
                     renderer->error != NULL &&
                     renderer->destroy != NULL &&
-                    renderer->string_free != NULL,
+                    renderer->string_free != NULL &&
+                    renderer->feed != NULL &&
+                    renderer->flush != NULL &&
+                    renderer->finish_document != NULL &&
+                    renderer->begin_document != NULL,
                     "single-handle api populates receiver methods");
+    for (reserved_index = 0; reserved_index < MDF_RECEIVER_RESERVED_SLOTS; reserved_index++) {
+        fails += expect(renderer->reserved[reserved_index] == NULL,
+                        "single-handle api leaves reserved receiver slots null");
+    }
     fails += expect(strcmp(renderer->error(NULL), "invalid instance") == 0,
                     "error reports invalid instance for null handle");
     st = renderer->render(NULL, NULL, NULL);
