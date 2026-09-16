@@ -306,7 +306,8 @@ typedef struct mdf_source {
 
 /**
  * Streaming output sink. Each write is one decided renderer emission; it must
- * accept the complete src/len pair or return nonzero. userdata and the callback
+ * accept the complete src/len pair or return nonzero. This is not a partial
+ * write, file-descriptor, or queued-output interface. userdata and the callback
  * remain owned by the caller for the duration of a render.
  */
 typedef struct mdf_sink {
@@ -427,8 +428,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * tables are also limited to 1024 retained rows. Exceeding either limit fails
  * with MDF_ERROR_PARSE rather than buffering an unbounded document suffix.
  * Feed, flush, and finish_document reject HTML deck renderers; HTML requires
- * an explicit title set before the first call. After a successful finish, call
- * mdf_begin_document before feeding another document.
+ * an explicit title set before the first call. A sink failure latches this
+ * document in a failed state without retrying output. After a successful
+ * finish, call mdf_begin_document before feeding another document.
  */
 mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
 /**

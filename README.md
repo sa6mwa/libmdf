@@ -273,7 +273,9 @@ one renderer for one document and use the additive document lifecycle. `feed`
 and `flush` are soft boundaries, never EOF; only `finish_document` resolves an
 unfinished construct and closes output. The supplied sink is synchronous and
 borrowed for each call, so its write callback must accept every complete
-decision emission or fail the document.
+decision emission or fail the document. libmdf deliberately supplies no
+partial-write, nonblocking-FD, or output-queue abstraction; an event-loop host
+owns that bounded transport layer above this API.
 
 ```c
 static int stdout_write(void *userdata, const char *src, size_t len)
