@@ -4280,12 +4280,11 @@ int main(void)
         }
         {
             char long_word[201];
-            char long_markdown[203];
+            char long_markdown[201];
 
             memset(long_word, 'x', sizeof(long_word) - 1);
             long_word[sizeof(long_word) - 1] = '\0';
-            memcpy(long_markdown, long_word, sizeof(long_word) - 1);
-            memcpy(long_markdown + sizeof(long_word) - 1, "\n\n", 3);
+            memcpy(long_markdown, long_word, sizeof(long_word));
             memset(&fail_allocs, 0, sizeof(fail_allocs));
             fail_allocs.fail_after = (size_t)-1;
             mdf_options_init(&opts);
@@ -4306,18 +4305,23 @@ int main(void)
             if (inst != NULL) {
                 st = inst->feed(inst, long_markdown, strlen(long_markdown), &incremental_output);
                 fails += expect(st == MDF_OK && incremental_sink.len == 0,
-                                "incremental long word remains pending before flush");
+                                "incremental long word remains pending before EOF");
                 fail_allocs.alloc_calls = 0;
                 fail_allocs.realloc_calls = 0;
-                fail_allocs.fail_after = 1;
+                fail_allocs.fail_after = 0;
                 if (st == MDF_OK) {
                     st = inst->flush(inst, &incremental_output);
                 }
-                fails += expect(st == MDF_ERROR_NOMEM &&
-                                strcmp(inst->error(inst), "out of memory") == 0,
-                                "incremental flush preserves allocation failure diagnostics");
+                fails += expect(st == MDF_OK,
+                                "incremental flush does not attempt an unresolved emission");
                 fails += expect(incremental_sink.len == 0,
-                                "incremental flush allocation failure does not invoke the sink");
+                                "incremental flush does not invoke the sink");
+                fail_allocs.fail_after = (size_t)-1;
+                if (st == MDF_OK) {
+                    st = inst->finish_document(inst, &incremental_output);
+                }
+                fails += expect(st == MDF_OK && incremental_sink.len > 0,
+                                "incremental EOF emits the retained long-word decision");
                 inst->destroy(inst);
                 inst = NULL;
             }

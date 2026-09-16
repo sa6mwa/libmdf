@@ -408,7 +408,7 @@ struct mdf {
     void (*string_free)(mdf *self, char *s);
     /** Feed a nonempty Markdown fragment into the active incremental document. */
     mdf_status (*feed)(mdf *self, const char *data, size_t len, mdf_sink *sink);
-    /** Apply a non-EOF boundary to the active incremental document. */
+    /** Validate a non-EOF boundary; this never emits or resolves retained input. */
     mdf_status (*flush)(mdf *self, mdf_sink *sink);
     /** Resolve and close the active incremental document exactly once. */
     mdf_status (*finish_document)(mdf *self, mdf_sink *sink);
@@ -450,9 +450,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  */
 mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
 /**
- * Apply a non-EOF boundary to an incremental document. It emits output that
- * is already decidable but preserves any Markdown suffix that needs later
- * input to determine its meaning.
+ * Validate a non-EOF boundary on an incremental document. This never emits,
+ * resolves, or otherwise changes retained input: feed emits every decision as
+ * it becomes final, and mdf_finish_document alone applies EOF semantics.
  */
 mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
 /**

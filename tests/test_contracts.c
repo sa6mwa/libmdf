@@ -665,7 +665,6 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     {
-        static const char *const expected[] = {"Hello"};
         mdf *inst;
         mdf_sink sink;
 
@@ -683,18 +682,25 @@ static int test_stream_trace_contract(void)
         if (inst != NULL) {
             st = inst->feed(inst, "Hello ", strlen("Hello "), &sink);
             fails += expect(st == MDF_OK && cap.write_count == 0,
-                            "incremental feed retains a soft boundary until flush");
+                            "incremental feed retains an unresolved soft boundary");
             if (st == MDF_OK) {
                 st = inst->flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
-                            "incremental flush emits the decision proven by whitespace");
+                            "incremental flush succeeds without manufacturing a decision");
             fails += expect_trace_matches_writes(&cap,
                                                  "incremental flush writes match traces");
-            fails += expect_write_sequence(&cap,
-                                           expected,
-                                           sizeof(expected) / sizeof(expected[0]),
-                                           "incremental flush emits the exact decided output");
+            fails += expect(cap.write_count == 0,
+                            "incremental flush does not emit an unresolved soft boundary");
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst, &sink);
+            }
+            fails += expect(st == MDF_OK && cap.failed == 0,
+                            "incremental EOF resolves the pending decision");
+            fails += expect_output_equals(&cap, "Hello\n",
+                                          "incremental EOF emits the final decision once");
+            fails += expect_trace_matches_writes(&cap,
+                                                 "incremental EOF writes match traces");
             inst->destroy(inst);
         }
         capture_free(&cap);
@@ -952,6 +958,86 @@ static int test_stream_trace_contract(void)
                                              "whole deferred quote writes match traces");
         fails += expect_capture_writes_equal(&one_byte, &whole,
                                              "source-read boundaries preserve deferred quote decisions");
+        capture_free(&one_byte);
+        capture_free(&whole);
+    }
+    {
+        static const char markdown[] = "b_ ";
+        capture baseline;
+
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "baseline trailing inline whitespace EOF render succeeds");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "baseline trailing inline whitespace EOF writes match traces");
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = incremental_capture(&opts, markdown, strlen(markdown), &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "incremental trailing inline whitespace EOF render succeeds");
+        fails += expect_output_equals(&cap, "b \n",
+                                      "incremental trailing inline whitespace matches EOF rendering");
+        fails += expect_trace_matches_writes(&cap,
+                                             "incremental trailing inline whitespace EOF writes match traces");
+        fails += expect_capture_writes_equal(&cap, &baseline,
+                                             "incremental trailing inline whitespace EOF decisions match baseline");
+        capture_free(&cap);
+        capture_free(&baseline);
+    }
+    {
+        static const char markdown[] = "hello_ \nworld";
+        capture baseline;
+
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "baseline trailing inline whitespace newline render succeeds");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "baseline trailing inline whitespace newline writes match traces");
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = incremental_capture(&opts, markdown, strlen("hello_ "), &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "incremental trailing inline whitespace newline render succeeds");
+        fails += expect_output_equals(&cap, "hello  world\n",
+                                      "incremental trailing inline whitespace matches newline rendering");
+        fails += expect_trace_matches_writes(&cap,
+                                             "incremental trailing inline whitespace newline writes match traces");
+        fails += expect_capture_writes_equal(&cap, &baseline,
+                                             "incremental trailing inline whitespace newline decisions match baseline");
+        capture_free(&cap);
+        capture_free(&baseline);
+    }
+    {
+        static const char markdown[] = "1. abc\n`";
+        capture one_byte;
+        capture whole;
+
+        memset(&one_byte, 0, sizeof(one_byte));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 5;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &one_byte);
+        fails += expect(st == MDF_OK && one_byte.failed == 0,
+                        "one-byte deferred list render succeeds");
+        fails += expect_trace_matches_writes(&one_byte,
+                                             "one-byte deferred list writes match traces");
+        memset(&whole, 0, sizeof(whole));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 5;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &whole);
+        fails += expect(st == MDF_OK && whole.failed == 0,
+                        "whole deferred list render succeeds");
+        fails += expect_trace_matches_writes(&whole,
+                                             "whole deferred list writes match traces");
+        fails += expect_capture_writes_equal(&one_byte, &whole,
+                                             "source-read boundaries preserve deferred list decisions");
         capture_free(&one_byte);
         capture_free(&whole);
     }

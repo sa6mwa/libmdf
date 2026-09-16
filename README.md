@@ -270,8 +270,10 @@ Important options:
 
 For an event-loop or another producer that supplies Markdown fragments, keep
 one renderer for one document and use the additive document lifecycle. `feed`
-and `flush` are soft boundaries, never EOF; only `finish_document` resolves an
-unfinished construct and closes output. The supplied sink is synchronous and
+emits each final renderer decision as it is made. `flush` is a non-mutating
+soft-boundary check: it never emits, resolves input, or acts as EOF. Only
+`finish_document` resolves an unfinished construct and closes output. The
+supplied sink is synchronous and
 borrowed for each call, so its write callback must accept every complete
 decision emission or fail the document. libmdf deliberately supplies no
 partial-write, nonblocking-FD, or output-queue abstraction; an event-loop host
@@ -635,7 +637,8 @@ h:close()
 ```
 
 Lua hosts can use the same incremental document boundaries with a synchronous
-callback. The callback runs only from `write`, `flush`, or `finish_document`.
+callback. The callback runs only from `write` or `finish_document`; `flush`
+does not invoke it.
 
 ```lua
 local chunks = {}

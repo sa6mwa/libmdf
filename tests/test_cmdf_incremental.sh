@@ -83,3 +83,25 @@ run_boundary_case unfinished-inline 'hello *[\n' '*hello *[\n\n'
 run_boundary_case unfinished-inline-space 'hello*\n' 'hello* '
 run_boundary_case pending-tab-wrap 'helloabcde\two\nrld\n' 'helloabcde\tworld\n' -w 12
 run_boundary_case empty-heading '# \n' '#  '
+run_boundary_case trailing-inline-space-eof 'b \n' 'b_ '
+run_boundary_case trailing-inline-space-newline 'hello  world\n' 'hello_ \nworld'
+
+run_source_boundary_case() {
+  name=$1
+  input=$2
+  shift 2
+  one="$TMP/$name.one"
+  whole="$TMP/$name.whole"
+  one_trace="$one.trace"
+  whole_trace="$whole.trace"
+
+  printf '%b' "$input" > "$TMP/$name.md"
+  "$CMDF" --boring "$@" --simulate-chunk 1 --trace-writes "$one_trace" \
+    "$TMP/$name.md" > "$one"
+  "$CMDF" --boring "$@" --simulate-chunk 4096 --trace-writes "$whole_trace" \
+    "$TMP/$name.md" > "$whole"
+  cmp "$one" "$whole"
+  cmp "$one_trace" "$whole_trace"
+}
+
+run_source_boundary_case deferred-list '1. abc\n`' -w 5

@@ -323,9 +323,17 @@ int ansi_end_blockquote(mdf_impl *impl, mdf_sink *sink)
 
 int ansi_end_paragraph(mdf_impl *impl, mdf_sink *sink)
 {
+    int word_was_final;
+
     if (ansi_flush_pending_list_marker_if_any(impl, sink) != 0) return -1;
     if (ansi_flush_pre_code_if_active(impl, sink) != 0) return -1;
+    /* Paragraph end is a real parser decision.  Remember whether the pending
+     * word was already syntactically final before literal recovery changes
+     * unresolved inline state; otherwise an unmatched delimiter would be
+     * released merely because the block ended. */
+    word_was_final = ansi_flush_ready(impl);
     if (ansi_inline_flush_literal(impl, sink) != 0) return -1;
+    if (word_was_final && ansi_emit_final_decision(impl, sink) != 0) return -1;
     if (impl->pending_quote_end) {
         if (impl->quote_wrap_active) {
             impl->pending_quote_paragraph_separator = 1;

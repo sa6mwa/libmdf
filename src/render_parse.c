@@ -4704,37 +4704,6 @@ static mdf_status flush_immediate_spaces(parse_state *ps, mdf_renderer *renderer
     return MDF_OK;
 }
 
-/* A literal space is represented by the ANSI renderer as a pending separator,
- * so forwarding it cannot make trailing line whitespace visible. Tabs and
- * unresolved inline delimiters do not have that property; retain them until
- * the parser and renderer can make the final decision. */
-static mdf_status flush_decidable_immediate_spaces(parse_state *ps,
-                                                   mdf_renderer *renderer,
-                                                   mdf_sink *sink)
-{
-    size_t count;
-    size_t i;
-    mdf_status st;
-
-    count = 0;
-    while (count < ps->immediate_spaces_len && ps->immediate_spaces[count] == ' ') {
-        count++;
-    }
-    for (i = 0; i < count; i++) {
-        st = render_emit(renderer, sink, MDF_TOKEN_SPACE, " ", 1, 0);
-        if (st != MDF_OK) {
-            return st;
-        }
-    }
-    if (count > 0) {
-        memmove(ps->immediate_spaces,
-                ps->immediate_spaces + count,
-                ps->immediate_spaces_len - count);
-        ps->immediate_spaces_len -= count;
-    }
-    return MDF_OK;
-}
-
 static mdf_status prepare_fenced_block_boundary(parse_state *ps, mdf_parser_impl *impl, mdf_renderer *renderer, mdf_sink *sink)
 {
     mdf_status st;
@@ -6306,88 +6275,17 @@ done:
     return st;
 }
 
-static mdf_status mdf_parser_flush_boundary(mdf_parser *self,
-                                            mdf_renderer *renderer,
-                                            mdf_sink *sink,
-                                            int external_boundary)
+mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
 {
-    mdf_parser_impl *impl;
-    parser_stream_state *state;
-    mdf_impl *render_impl;
-    const char *filtered;
-    size_t filtered_len;
-    int decided;
-    mdf_status st;
-
     if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
         mdf_parser_set_error(self, "flush requires parser, renderer, and sink");
         return MDF_ERROR_INVALID;
     }
-    state = parser_stream_state_get(self, 1);
-    if (state == NULL) {
-        return MDF_ERROR_NOMEM;
-    }
-    impl = (mdf_parser_impl *)self->impl;
-    if (external_boundary &&
-        !state->frontmatter.passthrough && state->frontmatter.len > 0) {
-        if (frontmatter_decide(&state->frontmatter, 0, &filtered, &filtered_len, &decided) != 0) {
-            mdf_parser_set_error(self, "frontmatter filter failed");
-            return MDF_ERROR_PARSE;
-        }
-        if (decided && filtered_len > 0) {
-            st = table_filter_feed(&state->tables, &state->parse, impl, renderer, sink,
-                                   filtered, filtered_len);
-            if (st != MDF_OK) {
-                if (st == MDF_ERROR_NOMEM &&
-                    (impl->retention_limit_exceeded || state->tables.retention_limit_exceeded)) {
-                    mdf_parser_set_error(self, "pending construct exceeds the 65536-byte or 1024-row retention limit");
-                    return MDF_ERROR_PARSE;
-                }
-                return st;
-            }
-        }
-    }
-    if (renderer->write_token != mdf_renderer_write_token_internal ||
-        renderer->finish != mdf_renderer_finish_internal) {
-        return MDF_OK;
-    }
-    render_impl = (mdf_impl *)renderer->impl;
-    /* A call boundary alone decides nothing. Literal spaces use the normal
-     * renderer path only after inline syntax and heading content are final.
-     * Tabs remain parser-owned because they participate in wrapping. */
-    if (external_boundary && render_impl->format == MDF_FORMAT_ANSI &&
-        state->parse.immediate_spaces_len > 0 &&
-        state->parse.mode != 1 &&
-        ansi_flush_space_ready(render_impl)) {
-        st = flush_decidable_immediate_spaces(&state->parse, renderer, sink);
-        if (st != MDF_OK) {
-            return st;
-        }
-    }
-    /* Only a completed parser block can release a word. A call boundary and
-     * retained separators stay private until their final decision is known. */
-    if (render_impl->format == MDF_FORMAT_ANSI &&
-        state->tables.state == 0 && state->tables.line_len == 0 &&
-        state->parse.prefix_len == 0 &&
-        !state->parse.decided && !state->parse.pending_soft_space &&
-        !impl->prev_quote_line_text &&
-        !impl->pending_bare_quote_blank_depth &&
-        !impl->pending_quoted_list_blank_depth &&
-        ansi_flush_ready(render_impl) &&
-        ansi_flush_word(render_impl, sink) != 0) {
-        if (strcmp(render_impl->error, "out of memory") == 0) {
-            mdf_parser_set_error(self, render_impl->error);
-            return MDF_ERROR_NOMEM;
-        }
-        mdf_parser_set_error(self, "sink write failed");
-        return MDF_ERROR_IO;
-    }
+    /* Feed and parser tokens are the only places that can make a rendering
+     * decision.  A transport flush must never manufacture a boundary, resolve
+     * syntax, or turn retained input into output.  The synchronous sink has no
+     * second output queue to drain, so there is deliberately nothing to do. */
     return MDF_OK;
-}
-
-mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
-{
-    return mdf_parser_flush_boundary(self, renderer, sink, 1);
 }
 
 mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
@@ -6484,10 +6382,6 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
             break;
         }
         st = mdf_parser_feed(self, renderer, sink, buf, n);
-        if (st != MDF_OK) {
-            return st;
-        }
-        st = mdf_parser_flush_boundary(self, renderer, sink, 0);
         if (st != MDF_OK) {
             return st;
         }
