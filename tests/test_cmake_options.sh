@@ -22,6 +22,17 @@ expect_rejected() {
   grep -q "$message" "$log"
 }
 
+expect_configured() {
+  name=$1
+  shift
+  build="$BASE/$name"
+  log="$BASE/$name.log"
+
+  rm -rf "$build"
+  mkdir -p "$(dirname "$log")"
+  cmake -S "$ROOT" -B "$build" -G Ninja "$@" >"$log" 2>&1
+}
+
 write_consumer_sources() {
   dir=$1
 
@@ -33,8 +44,9 @@ int main(void)
 {
     mdf_options opts;
     mdf_options_init(&opts);
-    return opts.width == 0 ? 0 : 1;
+    return opts.width > 0 ? 0 : 1;
 }
+
 EOF
 
   cat >"$dir/CMakeLists.txt" <<'EOF'
@@ -42,6 +54,7 @@ cmake_minimum_required(VERSION 3.20)
 project(libmdf_consumer C)
 find_package(libmdf CONFIG REQUIRED)
 add_executable(consumer main.c)
+libmdf_configure_development_runtime(consumer)
 if(TARGET libmdf::mdf_static)
   target_link_libraries(consumer PRIVATE libmdf::mdf_static)
 elseif(TARGET libmdf::mdf_shared)
@@ -50,6 +63,30 @@ else()
   message(FATAL_ERROR "libmdf package exports no usable library target")
 endif()
 EOF
+}
+
+assert_bootlin_runtime() {
+  executable=$1
+
+  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  cmake \
+    -DREADELF="$LIBMDF_BOOTLIN_READELF" \
+    -DEXECUTABLE="$executable" \
+    -DINTERPRETER="$LIBMDF_BOOTLIN_INTERPRETER" \
+    -DRUNTIME_DIR="$LIBMDF_BOOTLIN_RUNTIME_DIR" \
+    -P "$ROOT/tests/assert_bootlin_runtime.cmake"
+}
+
+build_pkg_config_consumer() {
+  executable=$1
+  shift
+
+  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  "$LIBMDF_BOOTLIN_CC" "$@" \
+    "-Wl,--dynamic-linker,$LIBMDF_BOOTLIN_INTERPRETER" \
+    "-Wl,--disable-new-dtags,-rpath,$LIBMDF_BOOTLIN_RUNTIME_RPATH"
+  assert_bootlin_runtime "$executable"
+  "$executable"
 }
 
 verify_install_tree() {
@@ -70,6 +107,7 @@ verify_install_tree() {
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
   cmake -S "$ROOT" -B "$build" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DLIBMDF_BUILD_BINARY=OFF \
     -DLIBMDF_BUILD_TESTS=OFF \
@@ -87,19 +125,30 @@ verify_install_tree() {
   test -f "$install/share/doc/libmdf/OFL.txt"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.2"
+    test -f "$libdir/libmdf.so.3"
   fi
 
   write_consumer_sources "$consumer/src"
+  if cmake -S "$consumer/src" -B "$consumer/host-build" -G Ninja \
+    -Dlibmdf_DIR="$install/$cmakedir" >"$consumer/host-build.log" 2>&1; then
+    printf '%s\n' 'CMake package consumer unexpectedly accepted a host runtime' >&2
+    exit 1
+  fi
+  grep -q 'require a Bootlin CMAKE_TOOLCHAIN_FILE' "$consumer/host-build.log"
   cmake -S "$consumer/src" -B "$consumer/build" -G Ninja \
-    -DCMAKE_PREFIX_PATH="$install" >>"$log" 2>&1
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
+    -Dlibmdf_DIR="$install/$cmakedir" >>"$log" 2>&1
   cmake --build "$consumer/build" >>"$log" 2>&1
+  assert_bootlin_runtime "$consumer/build/consumer"
+  "$consumer/build/consumer"
 
   mkdir -p "$pkg"
-  cc $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --cflags libmdf) \
+  build_pkg_config_consumer "$pkg/consumer" \
+    $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --cflags libmdf) \
     "$consumer/src/main.c" \
     $(PKG_CONFIG_PATH="$install/$pcdir" pkg-config --libs libmdf) \
-    -o "$pkg/consumer" >>"$log" 2>&1
+    -o "$pkg/consumer" \
+    "-Wl,-rpath,$libdir" >>"$log" 2>&1
 }
 
 verify_absolute_pkg_config() {
@@ -115,6 +164,7 @@ verify_absolute_pkg_config() {
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
   cmake -S "$ROOT" -B "$build" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DCMAKE_INSTALL_LIBDIR="$abs_lib" \
     -DLIBMDF_BUILD_STATIC=ON \
@@ -130,7 +180,8 @@ verify_absolute_pkg_config() {
   test -f "$pcdir/libmdf.pc"
   write_consumer_sources "$consumer/src"
   mkdir -p "$pkg"
-  cc $(PKG_CONFIG_PATH="$pcdir" pkg-config --cflags libmdf) \
+  build_pkg_config_consumer "$pkg/consumer" \
+    $(PKG_CONFIG_PATH="$pcdir" pkg-config --cflags libmdf) \
     "$consumer/src/main.c" \
     $(PKG_CONFIG_PATH="$pcdir" pkg-config --libs libmdf) \
     -o "$pkg/consumer" >>"$log" 2>&1
@@ -144,6 +195,16 @@ expect_rejected no-libraries 'libmdf requires LIBMDF_BUILD_STATIC or LIBMDF_BUIL
   -DLIBMDF_BUILD_TESTS=OFF \
   -DLIBMDF_BUILD_EXAMPLES=OFF \
   -DLIBMDF_BUILD_FUZZERS=OFF
+
+expect_configured library-tests-without-cmdf \
+  -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
+  -DLIBMDF_BUILD_STATIC=ON \
+  -DLIBMDF_BUILD_SHARED=OFF \
+  -DLIBMDF_BUILD_BINARY=OFF \
+  -DLIBMDF_BUILD_TESTS=ON \
+  -DLIBMDF_BUILD_EXAMPLES=OFF \
+  -DLIBMDF_BUILD_FUZZERS=OFF \
+  -DLIBMDF_INSTALL=OFF
 
 verify_install_tree static-only lib/pkgconfig lib/cmake/libmdf include \
   -DLIBMDF_BUILD_STATIC=ON \

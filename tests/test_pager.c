@@ -1,6 +1,6 @@
 #define _XOPEN_SOURCE 600
 
-#include <libmdf/mdf.h>
+#include "mdf_internal.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -44,6 +44,16 @@ typedef struct pager_source {
     size_t offset;
     size_t chunk;
 } pager_source;
+
+typedef struct pager_streaming_sanitize_source {
+    const char *data;
+    size_t len;
+    size_t offset;
+    size_t chunk;
+    size_t reads;
+    size_t writes;
+    capture output;
+} pager_streaming_sanitize_source;
 
 typedef struct pager_failing_allocator {
     int fail;
@@ -95,6 +105,40 @@ static int capture_append(capture *out, const char *src, size_t len)
     memcpy(out->data + out->len, src, len);
     out->len += len;
     out->data[out->len] = '\0';
+    return 0;
+}
+
+static size_t pager_streaming_sanitize_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    pager_streaming_sanitize_source *source;
+    size_t len;
+
+    source = (pager_streaming_sanitize_source *)userdata;
+    if (source->reads > source->writes) {
+        *err = EIO;
+        return 0;
+    }
+    if (source->offset == source->len) {
+        *err = 0;
+        return 0;
+    }
+    len = source->len - source->offset;
+    if (len > cap) len = cap;
+    if (len > source->chunk) len = source->chunk;
+    memcpy(dst, source->data + source->offset, len);
+    source->offset += len;
+    source->reads++;
+    *err = 0;
+    return len;
+}
+
+static int pager_streaming_sanitize_write(void *userdata, const char *src, size_t len)
+{
+    pager_streaming_sanitize_source *source;
+
+    source = (pager_streaming_sanitize_source *)userdata;
+    if (capture_append(&source->output, src, len) != 0) return -1;
+    source->writes++;
     return 0;
 }
 
@@ -414,6 +458,20 @@ static pid_t start_pager(const char *cmdf, const char *path, int direct, int osc
     return start_pager_at_size(cmdf, path, direct, osc8, traced, 40, 10, master);
 }
 
+static pid_t start_incremental_pager(const char *cmdf, const char *path, int *master)
+{
+    struct winsize size;
+    pid_t pid;
+
+    memset(&size, 0, sizeof(size));
+    size.ws_col = 40;
+    size.ws_row = 10;
+    pid = forkpty(master, NULL, NULL, &size);
+    if (pid != 0) return pid;
+    execl(cmdf, cmdf, "-p", "--incremental", path, (char *)NULL);
+    _exit(127);
+}
+
 static pid_t start_pager_with_expected_status(const char *path, mdf_status expected, int *master)
 {
     struct winsize size;
@@ -713,7 +771,8 @@ static int write_fixture(char *path, size_t cap, const char *suffix, int markdow
     if (fd < 0) return -1;
     if (markdown) {
         if (write_all(fd, "# rendered heading\n\n", strlen("# rendered heading\n\n")) != 0) return -1;
-    } else if (write_all(fd, "# raw heading\n", strlen("# raw heading\n")) != 0) {
+    } else if (write_all(fd, "# raw heading left **literal** right\n",
+                          strlen("# raw heading left **literal** right\n")) != 0) {
         return -1;
     }
     if (write_all(fd, "S\303\244kerhet S\303\204KERHET \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242 \346\227\245\346\234\254\350\252\236\346\244\234\347\264\242\n",
@@ -1152,6 +1211,31 @@ int main(int argc, char **argv)
     route_allocator = MAP_FAILED;
     missing_path[0] = '\0';
     rc = 1;
+    {
+        static const char markdown[] = "a\033]52;c;INJECT\a \346\227\245\n";
+        static const char expected[] = "a^[]52;c;INJECT^G \346\227\245\n";
+        pager_streaming_sanitize_source source_data;
+        mdf_source source;
+        mdf_sink sink;
+        mdf_status status;
+
+        memset(&source_data, 0, sizeof(source_data));
+        source_data.data = markdown;
+        source_data.len = sizeof(markdown) - 1;
+        source_data.chunk = 3;
+        source.userdata = &source_data;
+        source.read = pager_streaming_sanitize_read;
+        sink.userdata = &source_data;
+        sink.write = pager_streaming_sanitize_write;
+        stage = "streaming markdown sanitizer";
+        status = mdf_pager_sanitize_markdown_source(&source, &sink, NULL);
+        if (status != MDF_OK || source_data.reads < 2 || source_data.writes < 2 ||
+            source_data.output.data == NULL || strcmp(source_data.output.data, expected) != 0) {
+            free(source_data.output.data);
+            goto done;
+        }
+        free(source_data.output.data);
+    }
     stage = "fixtures";
     if (write_fixture(text_path, sizeof(text_path), "text.txt", 0) != 0 ||
         write_fixture(markdown_path, sizeof(markdown_path), "markdown.md", 1) != 0 ||
@@ -1469,6 +1553,33 @@ int main(int argc, char **argv)
     close(master);
     clear_capture(&out);
 
+    /* --incremental completes the document through the normal decision sink
+     * before the finite pager consumes its rendered ANSI. The screen must keep
+     * the ANSI heading rather than displaying escape bytes as plain text. */
+    stage = "incremental markdown cmdf";
+    pid = start_incremental_pager(argv[1], markdown_path, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
+        require_contains(&out, "\033[1;32m# ") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "incremental text cmdf";
+    pid = start_incremental_pager(argv[1], text_path, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "left **literal** right") != 0 ||
+        strstr(out.data, "\033[1;32m# raw heading") != NULL ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "incremental nonregular file";
+    pid = start_incremental_pager(argv[1], fifo_path, &master);
+    if (pid < 0 || wait_for_failure(pid) != 0 ||
+        wait_for_marker(master, &out, "--pager requires a named regular input file") != 0 ||
+        capture_contains(&out, "\033[?1049h")) goto done;
+    close(master);
+    clear_capture(&out);
+
     stage = "osc8 long URL";
     pid = start_pager(argv[1], osc8_path, 1, 1, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "molnpolicy") != 0 ||
@@ -1633,6 +1744,16 @@ int main(int argc, char **argv)
 
     stage = "Markdown controls";
     pid = start_pager(argv[1], control_markdown_path, 1, 0, 0, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "^[]52;c;INJECT^G") != 0 ||
+        wait_for_marker(master, &out, "M-^]52") != 0 ||
+        strstr(out.data, "\033]52;c;INJECT\a") != NULL ||
+        strstr(out.data, "\23552;c;C1\a") != NULL ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    stage = "incremental Markdown controls";
+    pid = start_incremental_pager(argv[1], control_markdown_path, &master);
     if (pid < 0 || wait_for_marker(master, &out, "^[]52;c;INJECT^G") != 0 ||
         wait_for_marker(master, &out, "M-^]52") != 0 ||
         strstr(out.data, "\033]52;c;INJECT\a") != NULL ||

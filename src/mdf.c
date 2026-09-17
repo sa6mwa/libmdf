@@ -14,6 +14,11 @@
 #define MDF_MEMORY_DEFAULT_MAX_RETAINED_BYTES (256u * 1024u)
 #define MDF_MEMORY_DEFAULT_MAX_REUSABLE_BLOCK_BYTES 8192u
 
+#define MDF_INCREMENTAL_IDLE 0
+#define MDF_INCREMENTAL_ACTIVE 1
+#define MDF_INCREMENTAL_FINISHED 2
+#define MDF_INCREMENTAL_FAILED 3
+
 static void *default_alloc(void *userdata, size_t size)
 {
     (void)userdata;
@@ -2097,6 +2102,10 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     mdf_source title_source;
 
     impl = (mdf_impl *)self->impl;
+    if (impl->incremental_state != MDF_INCREMENTAL_IDLE) {
+        mdf_set_error(self, "render cannot run during or after an incremental document");
+        return MDF_ERROR_INVALID;
+    }
     if (source == NULL || sink == NULL || source->read == NULL || sink->write == NULL) {
         mdf_set_error(self, "render requires instance, source, and sink");
         return MDF_ERROR_INVALID;
@@ -2281,6 +2290,10 @@ static mdf_status instance_render_cstr(mdf_renderer *self, const char *markdown,
         mdf_set_error(self, "render_cstr requires instance, markdown, and out");
         return MDF_ERROR_INVALID;
     }
+    if (((mdf_impl *)self->impl)->incremental_state != MDF_INCREMENTAL_IDLE) {
+        mdf_set_error(self, "render_cstr cannot run during or after an incremental document");
+        return MDF_ERROR_INVALID;
+    }
     cstr_source_init(&src_data, markdown);
     src.userdata = &src_data;
     src.read = cstr_read;
@@ -2364,6 +2377,10 @@ static void mdf_bind_receiver_methods(mdf *inst)
     inst->error = mdf_method_error;
     inst->destroy = mdf_method_destroy;
     inst->string_free = mdf_method_string_free;
+    inst->feed = mdf_feed;
+    inst->flush = mdf_flush;
+    inst->finish_document = mdf_finish_document;
+    inst->begin_document = mdf_begin_document;
 }
 
 static mdf_status mdf_impl_configure_emit_buffer(mdf_impl *impl)
@@ -2532,6 +2549,17 @@ mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out)
     return MDF_OK;
 }
 
+void mdf_parser_enable_incremental_limits(mdf_parser *self)
+{
+    mdf_parser_impl *impl;
+
+    if (self == NULL || self->impl == NULL) {
+        return;
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    impl->incremental_limits = 1;
+}
+
 mdf_status mdf_parser_parse(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink)
 {
     if (self == NULL || self->parse == NULL) {
@@ -2570,7 +2598,7 @@ void mdf_parser_destroy(mdf_parser *self)
     }
     impl = (mdf_parser_impl *)self->impl;
     allocator = impl->allocator;
-    mdf_free_mem(&allocator, impl->chart_buf, impl->chart_cap);
+    mdf_parser_release_stream(self);
     mdf_free_mem(&allocator, impl, sizeof(*impl));
     mdf_free_mem(&allocator, self, sizeof(*self));
 }
@@ -2673,6 +2701,173 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     return MDF_OK;
 }
 
+static mdf_status mdf_incremental_start(mdf *renderer, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_status st;
+
+    if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
+        mdf_set_error(renderer, "incremental rendering requires renderer and sink");
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    if (impl->format == MDF_FORMAT_HTML_DECK) {
+        mdf_set_error(renderer, "deck renderers do not support incremental documents");
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->format == MDF_FORMAT_HTML && impl->html_title == NULL) {
+        mdf_set_error(renderer, "incremental HTML requires an explicit title");
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->incremental_state == MDF_INCREMENTAL_ACTIVE) {
+        return MDF_OK;
+    }
+    if (impl->incremental_state != MDF_INCREMENTAL_IDLE) {
+        mdf_set_error(renderer, "begin_document is required after an incremental document");
+        return MDF_ERROR_INVALID;
+    }
+    st = mdf_renderer_begin_internal(renderer, sink);
+    if (st != MDF_OK) {
+        impl->incremental_state = MDF_INCREMENTAL_FAILED;
+        return st;
+    }
+    st = mdf_parser_create(&impl->opts, &impl->incremental_parser);
+    if (st != MDF_OK) {
+        mdf_set_error(renderer, st == MDF_ERROR_NOMEM ? "out of memory" : "parser creation failed");
+        impl->incremental_state = MDF_INCREMENTAL_FAILED;
+        return st;
+    }
+    mdf_parser_enable_incremental_limits(impl->incremental_parser);
+    impl->incremental_state = MDF_INCREMENTAL_ACTIVE;
+    return MDF_OK;
+}
+
+static mdf_status mdf_incremental_fail(mdf *renderer, mdf_status st)
+{
+    mdf_impl *impl;
+    const char *err;
+    size_t err_len;
+    int copied_error;
+
+    impl = (mdf_impl *)renderer->impl;
+    copied_error = 0;
+    if (impl->incremental_parser != NULL) {
+        err = mdf_parser_error(impl->incremental_parser);
+        if (err != NULL && err[0] != '\0') {
+            err_len = strlen(err);
+            if (err_len >= sizeof(impl->error)) {
+                err_len = sizeof(impl->error) - 1;
+            }
+            memmove(impl->error, err, err_len);
+            impl->error[err_len] = '\0';
+            copied_error = 1;
+        }
+    }
+    if (!copied_error && impl->error[0] == '\0') {
+        /* Internal write paths report sink failures themselves. A blank IO
+         * result here can only be an allocation failure that predated the
+         * renderer's usual diagnostic conversion. */
+        if (st == MDF_ERROR_IO) {
+            st = MDF_ERROR_NOMEM;
+        }
+        if (st == MDF_ERROR_NOMEM) {
+            mdf_set_error(renderer, "out of memory");
+        } else {
+            mdf_set_error(renderer, "incremental rendering failed");
+        }
+    }
+    impl->incremental_state = MDF_INCREMENTAL_FAILED;
+    return st;
+}
+
+mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_status st;
+
+    if (renderer == NULL || renderer->impl == NULL || data == NULL || len == 0) {
+        mdf_set_error(renderer, "feed requires renderer and a nonempty fragment");
+        return MDF_ERROR_INVALID;
+    }
+    st = mdf_incremental_start(renderer, sink);
+    if (st != MDF_OK) {
+        return st;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    st = mdf_parser_feed(impl->incremental_parser, renderer, sink, data, len);
+    return st == MDF_OK ? MDF_OK : mdf_incremental_fail(renderer, st);
+}
+
+mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_status st;
+
+    if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
+        mdf_set_error(renderer, "incremental rendering requires renderer and sink");
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    if (impl->format == MDF_FORMAT_HTML_DECK) {
+        mdf_set_error(renderer, "deck renderers do not support incremental documents");
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->format == MDF_FORMAT_HTML && impl->html_title == NULL) {
+        mdf_set_error(renderer, "incremental HTML requires an explicit title");
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->incremental_state == MDF_INCREMENTAL_IDLE) {
+        /* Flush only observes work already decided by feed.  In particular it
+         * must not begin an HTML document, because that emits its shell. */
+        return MDF_OK;
+    }
+    if (impl->incremental_state != MDF_INCREMENTAL_ACTIVE) {
+        mdf_set_error(renderer, "begin_document is required after an incremental document");
+        return MDF_ERROR_INVALID;
+    }
+    st = mdf_parser_flush(impl->incremental_parser, renderer, sink);
+    return st == MDF_OK ? MDF_OK : mdf_incremental_fail(renderer, st);
+}
+
+mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_status st;
+
+    st = mdf_incremental_start(renderer, sink);
+    if (st != MDF_OK) {
+        return st;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    st = mdf_parser_finish_document(impl->incremental_parser, renderer, sink);
+    if (st != MDF_OK) {
+        return mdf_incremental_fail(renderer, st);
+    }
+    impl->incremental_state = MDF_INCREMENTAL_FINISHED;
+    return MDF_OK;
+}
+
+mdf_status mdf_begin_document(mdf *renderer)
+{
+    mdf_impl *impl;
+
+    if (renderer == NULL || renderer->impl == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    if (impl->incremental_state != MDF_INCREMENTAL_FINISHED) {
+        mdf_set_error(renderer, "begin_document requires a successfully finished document");
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->incremental_parser != NULL) {
+        mdf_parser_destroy(impl->incremental_parser);
+        impl->incremental_parser = NULL;
+    }
+    mdf_renderer_reset_session_state(renderer);
+    impl->incremental_state = MDF_INCREMENTAL_IDLE;
+    return MDF_OK;
+}
+
 mdf_status mdf_set_html_title(mdf *self, const char *title)
 {
     mdf_impl *impl;
@@ -2757,6 +2952,10 @@ static void mdf_method_destroy(mdf *self)
     }
     impl = (mdf_impl *)self->impl;
     allocator = impl->allocator;
+    if (impl->incremental_parser != NULL) {
+        mdf_parser_destroy(impl->incremental_parser);
+        impl->incremental_parser = NULL;
+    }
     mdf_impl_release_heap_state(impl);
     mdf_memory_destroy(&impl->memory);
     allocator = impl->user_allocator;

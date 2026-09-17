@@ -7,17 +7,26 @@
 extern "C" {
 #endif
 
+/** libmdf semantic version string. */
 #define LIBMDF_VERSION "0.0.0"
+/** libmdf semantic major version. */
 #define LIBMDF_VERSION_MAJOR 0
+/** libmdf semantic minor version. */
 #define LIBMDF_VERSION_MINOR 0
+/** libmdf semantic patch version. */
 #define LIBMDF_VERSION_PATCH 0
 
-/** Result codes returned by libmdf constructors and render entry points. */
+/** Result codes returned by libmdf public operations. */
 typedef enum mdf_status {
+    /** Operation completed successfully. */
     MDF_OK = 0,
+    /** An argument, option, or renderer state is invalid. */
     MDF_ERROR_INVALID = 1,
+    /** Allocation failed. */
     MDF_ERROR_NOMEM = 2,
+    /** A source, sink, or filesystem operation failed. */
     MDF_ERROR_IO = 3,
+    /** Markdown input could not be parsed. */
     MDF_ERROR_PARSE = 4
 } mdf_status;
 
@@ -40,42 +49,63 @@ typedef enum mdf_pager_format {
  * all renderers and use the active theme in every format.
  */
 typedef enum mdf_format {
+    /** Styled terminal-oriented ANSI output. */
     MDF_FORMAT_ANSI = 0,
+    /** Complete standalone HTML document output. */
     MDF_FORMAT_HTML = 1,
+    /** Complete standalone HTML slide-deck output. */
     MDF_FORMAT_HTML_DECK = 2
 } mdf_format;
 
 /** HTML slide deck transition behavior. */
 typedef enum mdf_deck_transition {
+    /** Fade through the default deck transition. */
     MDF_DECK_TRANSITION_FADE = 0,
+    /** Crossfade directly between slides. */
     MDF_DECK_TRANSITION_CROSS = 1,
+    /** Switch slides without a transition. */
     MDF_DECK_TRANSITION_HARD = 2
 } mdf_deck_transition;
 
 /** Streaming/buffering mode for Markdown table rendering. */
 typedef enum mdf_table_buffer_mode {
+    /** Buffer the complete table before rendering it. */
     MDF_TABLE_BUFFER_FULL = 0,
+    /** Buffer only enough for the header and first row, then emit later rows. */
     MDF_TABLE_BUFFER_ROW = 1
 } mdf_table_buffer_mode;
 
 /** Border style used for ANSI table output. */
 typedef enum mdf_table_wire_mode {
+    /** Use Unicode line-drawing borders. */
     MDF_TABLE_WIRE_LINE = 0,
+    /** Use ASCII borders. */
     MDF_TABLE_WIRE_ASCII = 1,
+    /** Use whitespace-separated columns without borders. */
     MDF_TABLE_WIRE_SPACE = 2
 } mdf_table_wire_mode;
 
-/** Optional allocator hooks. Leave zeroed to use the C runtime allocator. */
+/**
+ * Optional allocator hooks. Leave this record zeroed to use the C runtime
+ * allocator. Custom alloc and free callbacks must form a pair; realloc is
+ * optional and libmdf falls back to allocate-copy-free when it is absent.
+ */
 typedef struct mdf_allocator {
+    /** Opaque value passed unchanged to every callback. */
     void *userdata;
+    /** Allocate size bytes. Return NULL on failure. */
     void *(*alloc)(void *userdata, size_t size);
+    /** Resize a block allocated by alloc, or return NULL on failure. */
     void *(*realloc)(void *userdata, void *ptr, size_t old_size, size_t new_size);
+    /** Release a block allocated by alloc or realloc. */
     void (*free)(void *userdata, void *ptr, size_t size);
 } mdf_allocator;
 
 /** Optional reusable-memory retention limits. Zero selects library defaults. */
 typedef struct mdf_memory_options {
+    /** Total retained workspace capacity allowed after a render. */
     size_t max_retained_bytes;
+    /** Largest individual workspace block eligible for retention. */
     size_t max_reusable_block_bytes;
 } mdf_memory_options;
 
@@ -87,22 +117,41 @@ typedef struct mdf_memory_options {
  * text, so charts can be traced without a separate output path.
  */
 typedef struct mdf_write_trace {
+    /** Opaque value passed to emit. */
     void *userdata;
+    /**
+     * Observe one completed ANSI sink write. src/len exactly match the write
+     * that just succeeded; returning nonzero makes the render fail.
+     */
     int (*emit)(void *userdata, mdf_format format, const char *src, size_t len);
 } mdf_write_trace;
 
-/** Optional per-renderer emission buffer configuration for ANSI writes. */
+/**
+ * Optional per-renderer emission buffer configuration for ANSI writes.
+ * Without data, libmdf owns a 128-byte buffer that grows as needed to a default
+ * 8192-byte maximum. A supplied fixed or non-owned buffer is hard bounded.
+ * A supplied owned, non-fixed buffer may grow through allocator callbacks.
+ */
 typedef struct mdf_emission_buffer {
+    /** Optional caller-supplied storage. */
     void *data;
+    /** Capacity of data in bytes; ignored when data is NULL. */
     size_t cap;
+    /** Initial owned-buffer capacity when data is NULL; zero selects 128. */
     size_t initial_cap;
+    /** Maximum capacity for one decision emission; zero selects 8192. */
     size_t max_cap;
+    /** Nonzero makes supplied data hard bounded. */
     int fixed;
+    /** Nonzero transfers supplied-data cleanup to the renderer. */
     int take_ownership;
 } mdf_emission_buffer;
 
+/** No caller-provided font data. */
 #define MDF_HTML_FONT_FORMAT_NONE 0
+/** Web Open Font Format 2 font data. */
 #define MDF_HTML_FONT_FORMAT_WOFF2 1
+/** TrueType font data. */
 #define MDF_HTML_FONT_FORMAT_TTF 2
 
 /**
@@ -113,10 +162,15 @@ typedef struct mdf_emission_buffer {
  * *err on failure.
  */
 typedef struct mdf_html_font_face {
+    /** One of MDF_HTML_FONT_FORMAT_*. */
     int format;
+    /** Optional in-memory font bytes. */
     const unsigned char *data;
+    /** Number of bytes in data. */
     size_t data_len;
+    /** Opaque value passed to read. */
     void *userdata;
+    /** Optional random-access font byte reader. */
     size_t (*read)(void *userdata, size_t offset, unsigned char *dst, size_t cap, int *err);
 } mdf_html_font_face;
 
@@ -125,8 +179,11 @@ typedef struct mdf_html_font_face {
  * Family and face fields are borrowed for the renderer lifetime.
  */
 typedef struct mdf_html_font {
+    /** CSS font family name. */
     const char *family;
+    /** Regular font face. */
     mdf_html_font_face regular;
+    /** Italic font face. */
     mdf_html_font_face italic;
 } mdf_html_font;
 
@@ -235,15 +292,28 @@ typedef struct mdf_options {
     mdf_allocator allocator;
 } mdf_options;
 
-/** Streaming input source. Return bytes read, 0 for EOF, and set *err on error. */
+/**
+ * Streaming input source. read fills at most cap bytes, returns zero at EOF,
+ * and sets *err nonzero on failure. userdata and the callback remain owned by
+ * the caller for the duration of a render.
+ */
 typedef struct mdf_source {
+    /** Opaque value passed to read. */
     void *userdata;
+    /** Read the next input chunk. */
     size_t (*read)(void *userdata, char *dst, size_t cap, int *err);
 } mdf_source;
 
-/** Streaming output sink. Return 0 on success and nonzero on write failure. */
+/**
+ * Streaming output sink. Each write is one decided renderer emission; it must
+ * accept the complete src/len pair or return nonzero. This is not a partial
+ * write, file-descriptor, or queued-output interface. userdata and the callback
+ * remain owned by the caller for the duration of a render.
+ */
 typedef struct mdf_sink {
+    /** Opaque value passed to write. */
     void *userdata;
+    /** Write one complete decided output emission. */
     int (*write)(void *userdata, const char *src, size_t len);
 } mdf_sink;
 
@@ -255,22 +325,39 @@ typedef struct mdf_sink {
  * ```mdf-bar-chart, ```mdf-vertical-bar-chart, and ```mdf-tile-chart.
  */
 typedef enum mdf_token_type {
+    /** Ordinary inline text. */
     MDF_TOKEN_TEXT = 0,
+    /** Inline whitespace. */
     MDF_TOKEN_SPACE = 1,
+    /** Source newline. */
     MDF_TOKEN_NEWLINE = 2,
+    /** End of a paragraph. */
     MDF_TOKEN_PARAGRAPH_END = 3,
+    /** Start of a heading; level is its depth. */
     MDF_TOKEN_HEADING_START = 4,
+    /** End of a heading. */
     MDF_TOKEN_HEADING_END = 5,
+    /** Start of a block quote. */
     MDF_TOKEN_BLOCKQUOTE_START = 6,
+    /** End of a block quote. */
     MDF_TOKEN_BLOCKQUOTE_END = 7,
+    /** Start of a list item. */
     MDF_TOKEN_LIST_ITEM_START = 8,
+    /** End of a list item. */
     MDF_TOKEN_LIST_ITEM_END = 9,
+    /** Unchecked task-list marker. */
     MDF_TOKEN_TASK_UNCHECKED = 10,
+    /** Checked task-list marker. */
     MDF_TOKEN_TASK_CHECKED = 11,
+    /** Start of a fenced or indented code block. */
     MDF_TOKEN_CODE_BLOCK_START = 12,
+    /** End of a code block. */
     MDF_TOKEN_CODE_BLOCK_END = 13,
+    /** Literal code-block text. */
     MDF_TOKEN_CODE_TEXT = 14,
+    /** Horizontal thematic break. */
     MDF_TOKEN_THEMATIC_BREAK = 15,
+    /** End of the input document. */
     MDF_TOKEN_DOCUMENT_END = 16,
     /**
      * Complete chart fence body. token->text is the collected two-column CSV
@@ -295,29 +382,108 @@ typedef struct mdf_token {
 
 typedef struct mdf mdf;
 
+/** Receiver vtable slots reserved for ABI-compatible future expansion. */
+#define MDF_RECEIVER_RESERVED_SLOTS 8
+
 struct mdf {
-    /** Render one already-decided token. Usually called by the parser. */
+    /**
+     * Render one already-decided token to sink. This is an advanced streaming
+     * surface; use render for ordinary Markdown input. Deck renderers reject it.
+     */
     mdf_status (*write_token)(mdf *self, const mdf_token *token, mdf_sink *sink);
-    /** Finish streaming output and flush any pending renderer state. */
+    /** Finish manual token streaming, flush pending state, and reset the session. */
     mdf_status (*finish)(mdf *self, mdf_sink *sink);
-    /** Stream Markdown from source to sink. */
+    /** Stream Markdown from source to sink without materializing the input. */
     mdf_status (*render)(mdf *self, mdf_source *source, mdf_sink *sink);
-    /** Render a NUL-terminated Markdown string into an allocated output string. */
+    /**
+     * Render NUL-terminated Markdown into an allocated NUL-terminated string.
+     * On success, release *out through string_free; *out is NULL on failure.
+     */
     mdf_status (*render_cstr)(mdf *self, const char *markdown, char **out);
-    /** Return the renderer's latest diagnostic string, or NULL. */
+    /** Return a borrowed latest diagnostic string, valid until the next renderer call or destroy. */
     const char *(*error)(const mdf *self);
-    /** Destroy the renderer. */
+    /** Destroy the renderer and release its owned state. NULL is accepted. */
     void (*destroy)(mdf *self);
-    /** Free strings returned by this renderer, including render_cstr output. */
+    /** Free a string returned by this renderer, including render_cstr output. */
     void (*string_free)(mdf *self, char *s);
+    /**
+     * Feed a nonempty Markdown fragment into the active incremental document.
+     * The sink is borrowed for this synchronous call; each final decision is
+     * emitted once. See mdf_feed for lifecycle, format, and limit rules.
+     */
+    mdf_status (*feed)(mdf *self, const char *data, size_t len, mdf_sink *sink);
+    /**
+     * Validate a non-EOF boundary. This never emits, resolves, or changes
+     * retained input; only feed and finish_document can emit. See mdf_flush.
+     */
+    mdf_status (*flush)(mdf *self, mdf_sink *sink);
+    /**
+     * Resolve and close the active incremental document exactly once, applying
+     * ordinary EOF rules. See mdf_finish_document.
+     */
+    mdf_status (*finish_document)(mdf *self, mdf_sink *sink);
+    /**
+     * Start a distinct next document after a successful finish_document call.
+     * See mdf_begin_document for its state requirement.
+     */
+    mdf_status (*begin_document)(mdf *self);
+    /**
+     * Library-owned ABI reserve. Slots are initialized to NULL; callers must
+     * not write, retain, or call them, and their values have no public meaning.
+     */
+    void (*reserved[MDF_RECEIVER_RESERVED_SLOTS])(void);
+    /** Private implementation state. Do not inspect or modify it. */
     void *impl;
 };
 
-/** Initialize options to stable defaults. Must be called before mdf_create. */
+/**
+ * Initialize an options record to stable defaults. Call this before setting
+ * fields in a record passed to mdf_create; passing NULL to mdf_create selects
+ * the same defaults. NULL is accepted as a no-op.
+ */
 void mdf_options_init(mdf_options *opts);
-/** Create an ANSI, HTML, or HTML deck renderer using the supplied options. */
+/**
+ * Create an ANSI, HTML, or HTML deck renderer. opts may be NULL for defaults;
+ * out must be non-NULL and is set to NULL on failure. On success, the caller
+ * owns *out and must release it through its destroy method.
+ */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
-/** Set or clear the HTML document/deck title before rendering starts. */
+/**
+ * Feed a nonempty Markdown fragment into one incremental document.
+ * Rendering is synchronous: sink is borrowed only for this call and each
+ * decided emission must be accepted completely. This is not EOF; call
+ * mdf_finish_document to resolve an unterminated construct and close output.
+ * A pending table or chart construct is limited to 65536 retained bytes;
+ * tables are also limited to 1024 retained rows. Exceeding either limit fails
+ * with MDF_ERROR_PARSE rather than buffering an unbounded document suffix.
+ * Feed, flush, and finish_document reject HTML deck renderers; HTML requires
+ * an explicit title set before the first call. A sink failure latches this
+ * document in a failed state without retrying output. After a successful
+ * finish, call mdf_begin_document before feeding another document.
+ */
+mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
+/**
+ * Validate a non-EOF boundary on an incremental document. This never emits,
+ * resolves, or otherwise changes retained input: feed emits every decision as
+ * it becomes final, and mdf_finish_document alone applies EOF semantics.
+ */
+mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
+/**
+ * End an incremental document exactly once. It resolves retained Markdown
+ * under ordinary EOF rules and emits the renderer's final closure. Later feed,
+ * flush, or finish_document calls fail until mdf_begin_document succeeds.
+ */
+mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink);
+/**
+ * Reset a renderer after a successful mdf_finish_document so it can render a
+ * distinct next document without destruction and reconstruction.
+ */
+mdf_status mdf_begin_document(mdf *renderer);
+/**
+ * Set or clear the explicit HTML document/deck title before rendering starts.
+ * title is copied; NULL restores automatic title detection. ANSI renderers
+ * reject this operation.
+ */
 mdf_status mdf_set_html_title(mdf *self, const char *title);
 /**
  * Fill out with libmdf's built-in JetBrains Mono regular and italic WOFF2 faces.
@@ -371,17 +537,17 @@ mdf_status mdf_html_font_resolve_dump_paths(const mdf_options *opts,
  * result means no alias could be established; it is not a path validity check.
  */
 int mdf_paths_alias(const char *first_path, const char *second_path);
-/** Stable string for a status code. */
+/** Return a stable static description for status, including unknown values. */
 const char *mdf_status_string(mdf_status status);
 /** Number of built-in themes. */
 size_t mdf_theme_count(void);
 /** Built-in theme name by index, or NULL when index is out of range. */
 const char *mdf_theme_name(size_t index);
-/** Nonzero when name matches a built-in theme, case-insensitively. */
+/** Nonzero when name matches a built-in theme case-insensitively; NULL/empty selects default. */
 int mdf_theme_exists(const char *name);
 /** Detect whether the current terminal is likely to support OSC8 links. */
 int mdf_detect_osc8_support(void);
-/** Return terminal width for fd, or fallback when it cannot be detected. */
+/** Return terminal width for fd, then COLUMNS, then a positive fallback. */
 int mdf_terminal_width(int fd, int fallback);
 /**
  * Interactively page a named regular file on the controlling terminal.

@@ -1,7 +1,10 @@
 #include <libmdf/mdf.h>
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+
+#define FUZZ_INPUT_CAPACITY (1024U * 1024U)
 
 typedef struct fuzz_source {
     const char *src;
@@ -67,8 +70,31 @@ static void fuzz_one_format(mdf_format format, const unsigned char *data, size_t
     inst->destroy(inst);
 }
 
-int LLVMFuzzerTestOneInput(const unsigned char *data, size_t size)
+int main(int argc, char **argv)
 {
+    FILE *input;
+    unsigned char data[FUZZ_INPUT_CAPACITY];
+    size_t size;
+
+    input = stdin;
+    if (argc == 2) {
+        input = fopen(argv[1], "rb");
+        if (input == 0) {
+            return 1;
+        }
+    } else if (argc != 1) {
+        return 2;
+    }
+    size = fread(data, 1, sizeof(data), input);
+    if (ferror(input)) {
+        if (input != stdin) {
+            (void)fclose(input);
+        }
+        return 1;
+    }
+    if (input != stdin) {
+        (void)fclose(input);
+    }
     fuzz_one_format(MDF_FORMAT_ANSI, data, size);
     fuzz_one_format(MDF_FORMAT_HTML, data, size);
     return 0;

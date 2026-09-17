@@ -96,7 +96,7 @@ run_child() {
 trap 'cleanup_child; exit 130' INT
 trap 'cleanup_child; exit 143' TERM HUP
 
-(cd "$ROOT/parityjudge" && go build -tags "libmdf_$STAMP" -o "$JUDGE" .)
+"$ROOT/scripts/build_parityjudge.sh" "$JUDGE" "libmdf_$STAMP"
 
 if [ "$MODE" = "ansi" ] || [ "$MODE" = "html" ]; then
   if [ "$MODE" = "ansi" ]; then

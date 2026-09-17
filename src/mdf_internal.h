@@ -195,6 +195,8 @@ typedef struct mdf_impl {
     int inline_html_nbsp_pending;
     int inline_html_nbsp_prev_digit;
     int chart_suppress_centering;
+    mdf_parser *incremental_parser;
+    int incremental_state;
 } mdf_impl;
 
 typedef struct mdf_parser_impl {
@@ -233,6 +235,9 @@ typedef struct mdf_parser_impl {
     char *chart_buf;
     size_t chart_len;
     size_t chart_cap;
+    int incremental_limits;
+    int retention_limit_exceeded;
+    void *stream_state;
 } mdf_parser_impl;
 
 #define MDF_CHART_KIND_HORIZONTAL_BAR 1
@@ -271,13 +276,26 @@ int mdf_emit_buffer_append(mdf_impl *impl, const char *src, size_t len);
 int mdf_emit_buffer_append_cstr(mdf_impl *impl, const char *src);
 int mdf_emit_buffer_commit(mdf_impl *impl, mdf_sink *sink);
 mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out);
+void mdf_parser_enable_incremental_limits(mdf_parser *self);
 const mdf_theme_style *mdf_theme_resolve(const char *name);
 mdf_status mdf_parser_parse(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink);
+mdf_status mdf_parser_feed(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink, const char *data, size_t len);
+mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink);
+mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink);
+void mdf_parser_release_stream(mdf_parser *self);
 const char *mdf_parser_error(const mdf_parser *self);
 void mdf_parser_destroy(mdf_parser *self);
 mdf_status mdf_renderer_write_token_internal(mdf_renderer *self, const mdf_token *token, mdf_sink *sink);
 mdf_status mdf_renderer_finish_internal(mdf_renderer *self, mdf_sink *sink);
 mdf_status mdf_renderer_begin_internal(mdf_renderer *self, mdf_sink *sink);
 mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink);
+/* Private pager entry for already-rendered ANSI. It remains deliberately
+ * separate from the public text/Markdown source surface. */
+mdf_status mdf_pager_ansi_source(const char *name, mdf_source *source,
+                                 const mdf_options *render_options);
+/* Sanitize untrusted Markdown before it is rendered into ANSI that a pager
+ * may subsequently treat as styled terminal output. */
+mdf_status mdf_pager_sanitize_markdown_source(mdf_source *source, mdf_sink *sink,
+                                              const mdf_options *render_options);
 
 #endif

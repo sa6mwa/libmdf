@@ -9,6 +9,7 @@
 #include <string.h>
 
 #define MDF_MAX_FRONTMATTER_PROBE 65536
+#define MDF_MAX_INCREMENTAL_CONSTRUCT_BYTES 65536
 
 typedef struct html_segment {
     char *text;
@@ -102,6 +103,13 @@ void mdf_impl_mark_oom(mdf_impl *impl);
 
 int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink);
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink);
+int ansi_flush_ready(const mdf_impl *impl);
+int ansi_space_boundary_ready(const mdf_impl *impl);
+/* Returns 1 when the real space proves and emits the preceding word, 0 when
+ * the word remains undecided, and -1 when emission fails.  The separator
+ * remains parser-owned in every case. */
+int ansi_emit_space_boundary_word(mdf_impl *impl, mdf_sink *sink);
+int ansi_emit_final_decision(mdf_impl *impl, mdf_sink *sink);
 int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len);
 int ansi_emit_pending_style_reset(mdf_impl *impl, mdf_sink *sink);
 int ansi_emit_styled_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *style, const char *src, size_t len);

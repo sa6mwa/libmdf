@@ -2,6 +2,7 @@
 #include "mdf_internal.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <getopt.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -16,6 +17,8 @@ typedef struct file_source {
     double delay_seconds;
     size_t reads;
 } file_source;
+
+static int has_markdown_extension(const char *path);
 
 static int sleep_seconds(double seconds)
 {
@@ -78,10 +81,61 @@ static size_t file_read(void *userdata, char *dst, size_t cap, int *err)
     return (size_t)n;
 }
 
+/* Drive the additive document lifecycle from the same bounded file reads as
+ * cmdf's ordinary source adapter. Each read is a transport boundary only;
+ * libmdf decides which output, if any, is ready before returning. */
+static mdf_status render_incremental_source(mdf *renderer,
+                                            mdf_source *source,
+                                            mdf_sink *sink,
+                                            int *source_err)
+{
+    char buf[4096];
+    mdf_status st;
+    size_t n;
+    int err;
+
+    *source_err = 0;
+    for (;;) {
+        err = 0;
+        n = source->read(source->userdata, buf, sizeof(buf), &err);
+        if (n == 0) {
+            if (err != 0) {
+                *source_err = err;
+                return MDF_ERROR_IO;
+            }
+            return renderer->finish_document(renderer, sink);
+        }
+        st = renderer->feed(renderer, buf, n, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+        st = renderer->flush(renderer, sink);
+        if (st != MDF_OK) {
+            return st;
+        }
+    }
+}
+
 
 typedef struct file_sink {
     FILE *fp;
 } file_sink;
+
+/* The pager is intentionally a post-EOD consumer. This buffer holds the
+ * completed ANSI document only until the pager takes its finite input. It is
+ * not part of cmdf's incremental rendering path. */
+typedef struct pager_eod_buffer {
+    char *data;
+    size_t len;
+    size_t cap;
+    size_t offset;
+} pager_eod_buffer;
+
+typedef struct pager_incremental_sink {
+    mdf *renderer;
+    mdf_sink *sink;
+    mdf_status status;
+} pager_incremental_sink;
 
 typedef struct trace_output {
     FILE *trace_fp;
@@ -204,6 +258,168 @@ static int file_write(void *userdata, const char *src, size_t len)
     return 0;
 }
 
+static int pager_eod_sink_write(void *userdata, const char *src, size_t len)
+{
+    pager_eod_buffer *buffer;
+    size_t required;
+    size_t cap;
+    char *next;
+
+    buffer = (pager_eod_buffer *)userdata;
+    if (len > (size_t)-1 - buffer->len) return -1;
+    required = buffer->len + len;
+    if (required > buffer->cap) {
+        cap = buffer->cap == 0 ? 4096 : buffer->cap;
+        while (cap < required) {
+            if (cap > (size_t)-1 / 2) {
+                cap = required;
+                break;
+            }
+            cap *= 2;
+        }
+        next = (char *)realloc(buffer->data, cap);
+        if (next == NULL) return -1;
+        buffer->data = next;
+        buffer->cap = cap;
+    }
+    if (len != 0) memcpy(buffer->data + buffer->len, src, len);
+    buffer->len += len;
+    return 0;
+}
+
+static int pager_incremental_sink_write(void *userdata, const char *src, size_t len)
+{
+    pager_incremental_sink *state;
+
+    state = (pager_incremental_sink *)userdata;
+    state->status = state->renderer->feed(state->renderer, src, len, state->sink);
+    if (state->status == MDF_OK) {
+        state->status = state->renderer->flush(state->renderer, state->sink);
+    }
+    return state->status == MDF_OK ? 0 : -1;
+}
+
+static size_t pager_eod_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    pager_eod_buffer *buffer;
+    size_t len;
+
+    buffer = (pager_eod_buffer *)userdata;
+    if (buffer->offset == buffer->len) {
+        *err = 0;
+        return 0;
+    }
+    len = buffer->len - buffer->offset;
+    if (len > cap) len = cap;
+    memcpy(dst, buffer->data + buffer->offset, len);
+    buffer->offset += len;
+    *err = 0;
+    return len;
+}
+
+static int run_incremental_pager_file(const char *path, const mdf_options *opts)
+{
+    FILE *input;
+    struct stat input_st;
+    file_source file_data;
+    pager_eod_buffer rendered;
+    pager_incremental_sink incremental_sink;
+    mdf_source input_source;
+    mdf_source pager_source;
+    mdf_sink sanitized_sink;
+    mdf_sink rendered_sink;
+    mdf *renderer;
+    mdf_status st;
+    int input_fd;
+    int rc;
+
+    input_fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (input_fd < 0) {
+        fprintf(stderr, "cmdf: open input %s: %s\n", path, strerror(errno));
+        return 1;
+    }
+    if (fstat(input_fd, &input_st) != 0 || !S_ISREG(input_st.st_mode)) {
+        (void)close(input_fd);
+        fprintf(stderr, "cmdf: --pager requires a named regular input file\n");
+        return 2;
+    }
+    input = fdopen(input_fd, "rb");
+    if (input == NULL) {
+        (void)close(input_fd);
+        fprintf(stderr, "cmdf: open input %s: %s\n", path, strerror(errno));
+        return 1;
+    }
+    memset(&file_data, 0, sizeof(file_data));
+    memset(&rendered, 0, sizeof(rendered));
+    memset(&incremental_sink, 0, sizeof(incremental_sink));
+    file_data.fp = input;
+    input_source.userdata = &file_data;
+    input_source.read = file_read;
+    if (!has_markdown_extension(path)) {
+        st = mdf_pager_source(path, &input_source, opts, MDF_PAGER_FORMAT_TEXT);
+        if (fclose(input) != 0 && st == MDF_OK) {
+            fprintf(stderr, "cmdf: close input: %s\n", strerror(errno));
+            return 1;
+        }
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
+            return 1;
+        }
+        return 0;
+    }
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, opts, &renderer);
+    if (st != MDF_OK) {
+        fprintf(stderr, "cmdf: create renderer: %s\n", mdf_status_string(st));
+        return 1;
+    }
+    rendered_sink.userdata = &rendered;
+    rendered_sink.write = pager_eod_sink_write;
+    incremental_sink.renderer = renderer;
+    incremental_sink.sink = &rendered_sink;
+    incremental_sink.status = MDF_OK;
+    sanitized_sink.userdata = &incremental_sink;
+    sanitized_sink.write = pager_incremental_sink_write;
+    /* Sanitization is a bounded source-to-renderer transform. The only
+     * materialized bytes are completed ANSI held for the post-EOD pager. */
+    st = mdf_pager_sanitize_markdown_source(&input_source, &sanitized_sink, opts);
+    rc = 0;
+    if (fclose(input) != 0) {
+        fprintf(stderr, "cmdf: close input: %s\n", strerror(errno));
+        rc = 1;
+    }
+    if (st != MDF_OK) {
+        if (incremental_sink.status != MDF_OK) {
+            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(incremental_sink.status),
+                    renderer->error(renderer));
+        } else if (st == MDF_ERROR_IO) {
+            fprintf(stderr, "cmdf: read input: %s\n", strerror(errno));
+        } else {
+            fprintf(stderr, "cmdf: sanitize input: %s\n", mdf_status_string(st));
+        }
+        rc = 1;
+    }
+    if (rc == 0) {
+        st = renderer->finish_document(renderer, &rendered_sink);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
+            rc = 1;
+        }
+    }
+    renderer->destroy(renderer);
+    if (rc == 0) {
+        pager_source.userdata = &rendered;
+        pager_source.read = pager_eod_source_read;
+        st = mdf_pager_ansi_source(path, &pager_source, opts);
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
+            rc = 1;
+        }
+    }
+    free(rendered.data);
+    return rc;
+}
+
 static int trace_write_base64(FILE *fp, const unsigned char *src, size_t len)
 {
     static const char base64_table[] =
@@ -316,6 +532,7 @@ static void usage(FILE *fp)
     fprintf(fp, "      --simulate             Simulate input streaming with default chunk\n");
     fprintf(fp, "      --simulate-chunk N     Simulate input streaming with max N bytes per read\n");
     fprintf(fp, "      --simulate-delay D     Delay duration between simulated reads; implies --simulate\n");
+    fprintf(fp, "      --incremental          Use the experimental incremental ANSI/HTML driver\n");
     fprintf(fp, "      --trace-writes PATH    Write ANSI renderer-emission NDJSON trace to PATH or - for stderr\n");
 }
 
@@ -500,6 +717,21 @@ static int has_html_extension(const char *path)
     return 0;
 }
 
+static int has_markdown_extension(const char *path)
+{
+    const char *dot;
+
+    if (path == NULL) {
+        return 0;
+    }
+    dot = strrchr(path, '.');
+    return dot != NULL &&
+           (dot[0] == '.') &&
+           (dot[1] == 'm' || dot[1] == 'M') &&
+           (dot[2] == 'd' || dot[2] == 'D') &&
+           dot[3] == '\0';
+}
+
 int main(int argc, char **argv)
 {
     int opt;
@@ -515,6 +747,7 @@ int main(int argc, char **argv)
     const char *title_override;
     const char *trace_writes_path;
     int simulate_enabled;
+    int incremental_enabled;
     int format_explicit;
     int deck_requested;
     int deck_option_seen;
@@ -568,6 +801,7 @@ int main(int argc, char **argv)
         {"simulate", no_argument, NULL, 1004},
         {"simulate-chunk", required_argument, NULL, 'S'},
         {"simulate-delay", required_argument, NULL, 1005},
+        {"incremental", no_argument, NULL, 1021},
         {"trace-writes", required_argument, NULL, 1006},
         {"transition", required_argument, NULL, 'x'},
         {"slide-numbers", no_argument, NULL, 1010},
@@ -600,6 +834,7 @@ int main(int argc, char **argv)
     title_override = NULL;
     trace_writes_path = NULL;
     simulate_enabled = 0;
+    incremental_enabled = 0;
     format_explicit = 0;
     deck_requested = 0;
     deck_option_seen = 0;
@@ -748,6 +983,9 @@ int main(int argc, char **argv)
             }
             simulate_enabled = 1;
             break;
+        case 1021:
+            incremental_enabled = 1;
+            break;
         case 1006:
             trace_writes_path = optarg;
             break;
@@ -885,6 +1123,14 @@ int main(int argc, char **argv)
         fprintf(stderr, "cmdf: --trace-writes is only supported for ANSI output\n");
         return 2;
     }
+    if (incremental_enabled && format == MDF_FORMAT_HTML_DECK) {
+        fprintf(stderr, "cmdf: --incremental is not supported for deck output\n");
+        return 2;
+    }
+    if (incremental_enabled && format == MDF_FORMAT_HTML && title_override == NULL) {
+        fprintf(stderr, "cmdf: --incremental --html requires --title because automatic title detection is source-based\n");
+        return 2;
+    }
     if (format == MDF_FORMAT_ANSI && width_flag == 0) {
         opts.width = mdf_terminal_width(STDOUT_FILENO, 80);
     }
@@ -905,6 +1151,9 @@ int main(int argc, char **argv)
             simulate_enabled || simulate_chunk != 0 || simulate_delay_seconds > 0.0) {
             fprintf(stderr, "cmdf: --pager is only supported with ANSI file input and no output, trace, or simulation options\n");
             return 2;
+        }
+        if (incremental_enabled) {
+            return run_incremental_pager_file(in_path, &opts);
         }
         st = mdf_pager_file(in_path, &opts, MDF_PAGER_FORMAT_AUTO);
         if (st != MDF_OK) {
@@ -1015,10 +1264,21 @@ int main(int argc, char **argv)
     source.read = file_read;
     sink.userdata = &sink_data;
     sink.write = file_write;
-    st = renderer->render(renderer, &source, &sink);
+    if (incremental_enabled) {
+        int source_err;
+
+        st = render_incremental_source(renderer, &source, &sink, &source_err);
+        if (st != MDF_OK && source_err != 0) {
+            fprintf(stderr, "cmdf: read input: %s\n", strerror(source_err));
+        }
+    } else {
+        st = renderer->render(renderer, &source, &sink);
+    }
     rc = 0;
     if (st != MDF_OK) {
-        fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
+        if (!incremental_enabled || renderer->error(renderer)[0] != '\0') {
+            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
+        }
         rc = 1;
     }
     renderer->destroy(renderer);

@@ -207,6 +207,65 @@ local traced = mdf.render(sample, {
 assert_equal(traced, cmdf_ansi, "lua traced render parity")
 assert(#trace > 3, "lua write trace captures decision emissions")
 
+local incremental_chunks = {}
+local incremental = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  incremental_chunks[#incremental_chunks + 1] = chunk
+end)
+assert(incremental:write("Hello incremental"), "lua document stream accepts a fragment")
+assert(table.concat(incremental_chunks):match("Hello"),
+       "lua document stream emits decidable text before document finish")
+assert(incremental:flush(), "lua document stream flush is a soft boundary")
+assert(incremental:finish_document(), "lua document stream finishes once")
+local incremental_ok = pcall(function() incremental:write("late") end)
+assert(not incremental_ok, "lua document stream rejects post-finish writes")
+assert(incremental:begin_document(), "lua document stream starts a next document")
+assert(incremental:write("Second document"), "lua document stream accepts next-document input")
+assert(incremental:finish_document(), "lua document stream finishes next document")
+incremental:close()
+
+do
+  local weak = setmetatable({}, { __mode = "v" })
+  do
+    local opts = { format = "html", font_uri = {} }
+    local captured = {}
+    local sink = function()
+      return captured
+    end
+    weak.opts = opts
+    weak.sink = sink
+    weak.captured = captured
+    local ok = pcall(mdf.document_stream, opts, sink)
+    assert(not ok, "lua document stream rejects invalid font options")
+  end
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak.opts == nil and weak.sink == nil and weak.captured == nil,
+         "lua document stream constructor failure releases registry references")
+end
+
+do
+  local markdown = "# Split Lua\n\n- item\n\n`code` [link](https://example.com)\n"
+  local chunks = {}
+  local split = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+    chunks[#chunks + 1] = chunk
+  end)
+  for i = 1, #markdown do
+    assert(split:write(markdown:sub(i, i)), "lua document stream accepts byte-sized fragments")
+  end
+  assert(split:finish_document(), "lua document stream finishes byte-sized fragments")
+  assert_equal(table.concat(chunks), mdf.render(markdown, { boring = true }),
+               "lua document stream byte split parity")
+  split = nil
+  collectgarbage("collect")
+end
+
+local callback_failure = mdf.document_stream({ format = "ansi", boring = true }, function()
+  return false
+end)
+local callback_ok = pcall(function() callback_failure:write("callback failure") end)
+assert(not callback_ok, "lua document stream surfaces callback failure")
+callback_failure:close()
+
 local ok, err = pcall(function()
   mdf.render(sample, {
     boring = true,

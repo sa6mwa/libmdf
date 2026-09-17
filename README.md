@@ -94,14 +94,41 @@ and shared libraries.
 
 ## CMake
 
-After extracting an SDK archive, point CMake at the archive prefix:
+After extracting an SDK archive, point CMake at the archive prefix. On Linux,
+the consuming project must use its pinned Bootlin CMake toolchain. The SDK does
+not export a compiler, ELF interpreter, RPATH, or cache path. Apply the
+package's development-runtime helper to every local executable; it selects the
+same direct Bootlin runtime policy as libmdf's own examples and tests.
 
 ```cmake
 find_package(libmdf CONFIG REQUIRED)
 
 add_executable(app app.c)
 target_link_libraries(app PRIVATE libmdf::mdf_static)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  libmdf_configure_development_runtime(app)
+endif()
 ```
+
+For example, a native Linux consumer configures with its own lifecycle-owned
+Bootlin toolchain and the extracted SDK prefix:
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE=/path/to/your-project/cmake/toolchains/x86_64-linux-gnu.cmake \
+  -Dlibmdf_DIR=/path/to/libmdf-sdk/lib/cmake/libmdf
+cmake --build build
+```
+
+Set `libmdf_DIR` directly: the Bootlin toolchain intentionally restricts
+package lookup to its sysroot, so `CMAKE_PREFIX_PATH` alone cannot find an SDK
+prefix outside that sysroot.
+
+The consuming toolchain must set `LIBMDF_BOOTLIN_LOADER` and
+`LIBMDF_BOOTLIN_RUNTIME_RPATH`; `libmdf_configure_development_runtime` rejects
+a Linux consumer that has not done so. Do not copy a path from libmdf's pinned
+collection into a consumer or release artifact.
 
 The package exports `libmdf::mdf_static` and `libmdf::mdf_shared` when both
 library variants are present.
@@ -112,8 +139,10 @@ When building from source, the main CMake options are:
 LIBMDF_BUILD_STATIC=ON|OFF
 LIBMDF_BUILD_SHARED=ON|OFF
 LIBMDF_BUILD_BINARY=ON|OFF
+LIBMDF_BUILD_EXAMPLES=ON|OFF
 LIBMDF_BUILD_TESTS=ON|OFF
-LIBMDF_BUILD_FUZZ=ON|OFF
+LIBMDF_BUILD_FUZZERS=ON|OFF
+LIBMDF_INSTALL=ON|OFF
 LIBMDF_INSTALL_BINARY=ON|OFF
 LIBMDF_CMDF_STATIC_RUNTIME=ON|OFF
 ```
@@ -121,12 +150,30 @@ LIBMDF_CMDF_STATIC_RUNTIME=ON|OFF
 The project presets and `Makefile` targets are the preferred local entry points
 for development and release builds.
 
+On Linux, `cmake --install` excludes the development `cmdf`, whose interpreter
+and RPATH refer to the local Bootlin collection. To install the CLI, use
+`make install` or configure `LIBMDF_CMDF_STATIC_RUNTIME=ON` together with
+`LIBMDF_INSTALL_BINARY=ON`. That executable is fully static and relocatable.
+
 ## pkg-config
 
-The SDK also ships relocatable pkg-config metadata:
+The SDK also ships relocatable pkg-config metadata. On Linux, use it with the
+same consuming-project Bootlin compiler and direct ELF runtime policy shown
+above; the `.pc` file deliberately contains no local toolchain paths or runtime
+link flags. This development-only example assumes the consuming project vendors
+the lifecycle resolver and uses an SDK with the usual `lib` directory.
 
 ```sh
-cc app.c $(pkg-config --cflags --libs libmdf)
+SDK_PREFIX=/path/to/libmdf-sdk
+eval "$(./scripts/cpkt-toolchains.sh env x86_64-linux-gnu)"
+loader=$(find "$CPKT_TOOLCHAIN_SYSROOT/lib" -maxdepth 1 -type f \
+  \( -name 'ld-linux*.so*' -o -name 'ld-musl-*.so*' \) -print | sort | head -n 1)
+libgcc_dir=$(dirname -- "$("$CC" -print-file-name=libgcc_s.so.1)")
+export PKG_CONFIG_PATH="$SDK_PREFIX/lib/pkgconfig"
+"$CC" app.c \
+  $(pkg-config --cflags --libs libmdf) \
+  "-Wl,--dynamic-linker,$loader" \
+  "-Wl,--disable-new-dtags,-rpath,$SDK_PREFIX/lib:$CPKT_TOOLCHAIN_SYSROOT/lib:$CPKT_TOOLCHAIN_SYSROOT/usr/lib:$libgcc_dir"
 ```
 
 ## C API
@@ -219,7 +266,51 @@ Important options:
 - `allocator`, `emission_buffer`, `memory`: custom memory and emission-buffer
   control.
 
-The shared library uses SONAME ABI version `2`. Lua facade and `cmdf.lua`
+## Incremental documents
+
+For an event-loop or another producer that supplies Markdown fragments, keep
+one renderer for one document and use the additive document lifecycle. `feed`
+emits each final renderer decision as it is made. For example, a real input
+space normally closes and emits the preceding word while the renderer retains
+the separator until wrapping decides it. `flush` is an output-neutral
+soft-boundary check: it never emits, resolves input, or acts as EOF. Only
+`finish_document` resolves an unfinished construct and closes output. The
+supplied sink is synchronous and
+borrowed for each call, so its write callback must accept every complete
+decision emission or fail the document. libmdf deliberately supplies no
+partial-write, nonblocking-FD, or output-queue abstraction; an event-loop host
+owns that bounded transport layer above this API.
+
+```c
+static int stdout_write(void *userdata, const char *src, size_t len)
+{
+    FILE *out = (FILE *)userdata;
+    return fwrite(src, 1, len, out) == len ? 0 : -1;
+}
+
+mdf_sink sink;
+
+sink.userdata = stdout;
+sink.write = stdout_write;
+
+renderer->feed(renderer, "Hello ", 6, &sink);
+renderer->flush(renderer, &sink);              /* still not EOF */
+renderer->feed(renderer, "**world**", 9, &sink);
+renderer->finish_document(renderer, &sink);    /* the sole EOF operation */
+renderer->begin_document(renderer);            /* now a distinct document may start */
+```
+
+Fragments must be nonempty. After successful finalization, further `feed`,
+`flush`, or `finish_document` calls fail until `begin_document` succeeds.
+Sink failure makes that document failed; libmdf never retries or retains the
+sink. Pending table and chart constructs retain at most 65536 bytes, and tables
+retain at most 1024 rows; an oversized unfinished construct fails with
+`MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
+supports ANSI and HTML documents; HTML callers must set an explicit title before
+the first feed because automatic title detection is a one-shot source feature.
+HTML deck renderers remain whole-source only.
+
+The shared library uses SONAME ABI version `3`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.
@@ -364,6 +455,8 @@ cmdf --html README.md -o README.html
 cmdf README.md -o README.html
 cmdf -b -w 80 --margin-left 2 --margin-right 2 README.md
 cmdf --pager README.md
+cmdf --pager --incremental README.md
+cmdf --html --incremental --title "Document title" README.md
 cmdf -p /var/log/messages
 ```
 
@@ -402,6 +495,7 @@ Flags:
     --simulate
     --simulate-chunk N
     --simulate-delay D
+    --incremental
     --trace-writes PATH
 ```
 
@@ -410,6 +504,16 @@ them. `--simulate-delay` is an opt-in demo/probe option for making output timing
 visible; it accepts Go-style durations such as `20ms`, `1s`, `500us`, and
 compound values. `--trace-writes` is ANSI-only and writes NDJSON records
 containing sequence number, format, byte length, and base64 data.
+`--incremental` is an ANSI/HTML experimental driver that feeds each bounded
+source read through `feed` and non-EOF `flush`, then calls `finish_document` at
+EOF. Incremental HTML requires `--title`: automatic title detection is a
+one-shot source operation and cannot precede the first streamed emission.
+Deck output remains whole-source only. The driver is useful with the simulator
+to exercise the additive lifecycle; it does not add nonblocking-FD or
+output-queue behavior. With `--pager`, cmdf first reaches EOF and finishes the
+incremental ANSI document through its normal decision sink; only that completed
+ANSI document is then given to the pager. The pager therefore remains a finite
+post-EOD view, not a live output queue.
 
 `--pager` requires a named input file and terminal stdin/stdout. It uses the
 alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
@@ -419,7 +523,9 @@ viewed. Press `/` to search case-insensitively; matching text is highlighted as
 the query is entered, and `n`/`N` move to the next/previous match. `q` or `Esc`
 leaves search mode without leaving the pager. Markdown views rerender only after SIGWINCH has been quiet for at least
 250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
-HTML/deck output, `--output`, write tracing, or input simulation.
+HTML/deck output, `--output`, write tracing, or input simulation. It can be
+combined with `--incremental`; the pager starts after that document reaches
+EOD.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
 default. `--html-disable-embedded-font` instead references byte-identical,
@@ -495,6 +601,16 @@ cmdf --deck --slide-numbers -x fade -o deck.html testdata/deck-corpus/comprehens
 
 Lua bindings currently target Lua 5.5 only.
 
+Local tests and benchmarks build a pinned Lua 5.5.1 interpreter from the
+[official Lua source archive](https://www.lua.org/ftp/) using Bootlin. Its
+private loader and RPATH resolve both libc and the installed development SDK.
+`make lua-rock` builds this interpreter at `build/lua-runtime/bin/lua` and
+compiles the binding with the same compiler and Lua headers. Host LuaRocks
+remains package tooling. Use `make lua-env` for the local interpreter and module
+paths; no dependency `LD_LIBRARY_PATH` export is needed. The Lua source archive
+is checksum-verified in the shared `CPKT_DEPENDENCY_CACHE`; the interpreter and
+its build files remain under `build/` and are not shipped.
+
 ```lua
 local mdf = require("libmdf")
 
@@ -530,6 +646,24 @@ local mdf = require("libmdf")
 local h = mdf.new({ boring = true })
 io.write(h:render("# hello\n"))
 h:close()
+```
+
+Lua hosts can use the same incremental document boundaries with a synchronous
+callback. The callback runs only from `write` or `finish_document`; `flush`
+does not invoke it.
+
+```lua
+local chunks = {}
+local stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  chunks[#chunks + 1] = chunk
+end)
+
+assert(stream:write("Hello "))
+assert(stream:flush())             -- not EOF
+assert(stream:write("world"))
+assert(stream:finish_document())   -- EOF exactly once
+assert(stream:begin_document())
+stream:close()
 ```
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
@@ -630,7 +764,7 @@ Common commands:
 ```sh
 make build
 make test
-make asan
+make valgrind
 make parity
 make parity-quick
 make lua-test
@@ -642,14 +776,21 @@ make prerelease
 make release
 ```
 
-Hardening targets:
+Hardening targets use the Bootlin-built development executables directly. Valgrind
+is a host analysis tool; it checks the selected Bootlin runtime rather than
+substituting a host-built sanitizer configuration.
 
 ```sh
-make tsan
-make msan
+make valgrind
 make fuzz-smoke
 make fuzz
 ```
+
+AFL++ tools and fuzz targets use the selected Bootlin loader and runtime.
+Fuzz gates fail when AFL++ saves a crash, even if its time limit ends normally;
+reproducers remain under `build/fuzz/afl-output`. `make fuzz-smoke` also tests
+the gate with a deliberately crashing target, a clean target, and a startup
+failure.
 
 `make parity` runs the exhaustive ANSI, HTML, and streaming parity matrix across
 all configured chunks, widths, themes, boring modes, table buffers, and table
@@ -671,14 +812,15 @@ absolute paths to the current checkout's generated `cmdf.lua`, LuaRocks tree,
 and debug `libmdf` build. It is generated under `build/` intentionally and can
 be run from another working directory while testing local Lua CLI UX.
 
-`make benchmark` measures the direct C libmdf API and Lua binding ANSI, HTML,
-and deck paths against `testdata/deck-corpus/comprehensive.md`. Pass extra
-options with `BENCH_ARGS`, for example `make benchmark BENCH_ARGS="--rounds 30"`.
+`make benchmark` measures direct C libmdf API and Lua binding ANSI/HTML paths
+against `testdata/code-review-is-a-dead-end.md`. Pass extra options with
+`BENCH_ARGS`, for example `make benchmark BENCH_ARGS="--rounds 30"`.
 `make bench-check` compares those medians with
 `testdata/benchmarks/libmdf-baseline.json` and fails if any path is more than
 5% slower than baseline. Pass options with `BENCH_CHECK_ARGS`; keep enough
-rounds to avoid noise when using the 5% allowance.
-`make benchmark-cmdf` is available for the secondary CLI UX comparison.
+rounds to avoid noise when using the 5% allowance. `make benchmark-cmdf`
+measures the secondary C/Lua CLI UX comparison across ANSI, HTML, and deck
+output against `testdata/deck-corpus/comprehensive.md`.
 
 ## Release Cycle
 
@@ -693,7 +835,7 @@ The local lifecycle skill is the release authority for this repository.
 `make prerelease` runs the complete release proof graph without first removing
 generated state. `make release` first verifies the lightweight-tag version
 contract, then starts from a clean tree and runs that same proof graph:
-prerelease checks, sanitizer checks, fuzz smoke, Lua checks, full Go parity
+prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks, full Go parity
 matrix, release matrix builds, package generation, Lua release artifact
 generation, checksum generation, package verification, and artifact
 privacy/relocatability checks. `make lifecycle-version-contract` is the

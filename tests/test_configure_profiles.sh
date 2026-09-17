@@ -87,3 +87,18 @@ verify_profile x86_64-linux-gnu-release release ON ON ON ON ON OFF ON ON OFF
 verify_profile x86_64-linux-gnu-release package ON ON ON OFF OFF OFF ON OFF ON
 verify_profile x86_64-linux-gnu-release cmdf-static ON OFF ON OFF OFF OFF OFF OFF ON
 verify_profile fuzz fuzz ON OFF OFF OFF OFF ON OFF OFF OFF
+
+assert_reconfigure_preserves_build() {
+  preset=$1
+  profile=$2
+  marker="$ROOT/build/$preset/configure-preset-preserve.marker"
+
+  : > "$marker"
+  "$ROOT/scripts/configure_preset.sh" "$preset" "$profile" >>"$LOG" 2>&1
+  test -f "$marker"
+}
+
+# CMake may rewrite cache entry types between identical configures.  The
+# lifecycle must compare values, not delete a valid build due to that type.
+assert_reconfigure_preserves_build debug dev
+assert_reconfigure_preserves_build fuzz fuzz

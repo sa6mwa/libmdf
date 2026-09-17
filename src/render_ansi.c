@@ -41,6 +41,8 @@ int ansi_inline_append(mdf_impl *impl, char **buf, size_t *len, size_t *cap, con
 
 
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink);
+static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink,
+                                              char next, int *consumed);
 int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int closing);
 static const char *ansi_inline_emphasis_prefix(mdf_impl *impl, int continuation, char *buf, size_t buf_cap);
 static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, size_t reserve_cols);
@@ -59,6 +61,7 @@ static int ansi_emit_newline(mdf_impl *impl, mdf_sink *sink);
 int ansi_write_newline(mdf_impl *impl, mdf_sink *sink);
 int ansi_ensure_left_margin(mdf_impl *impl, mdf_sink *sink);
 static int ansi_write_word_byte(mdf_impl *impl, mdf_sink *sink, char c);
+static int ansi_handle_visible_space(mdf_impl *impl, mdf_sink *sink);
 int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len);
 static int ansi_write_direct_visible(mdf_impl *impl, mdf_sink *sink, const char *s, size_t len);
 static int ansi_begin_osc8_link(mdf_impl *impl, mdf_sink *sink, const char *prefix, const char *url, size_t url_len);
@@ -3328,6 +3331,56 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
 int ansi_flush_word(mdf_impl *impl, mdf_sink *sink)
 {
     return ansi_flush_word_reserved(impl, sink, 0);
+}
+
+int ansi_flush_ready(const mdf_impl *impl)
+{
+    return impl->inline_mode == 0 &&
+           !impl->inline_emph_pending &&
+           !impl->inline_outer_paren_candidate &&
+           !impl->inline_outer_paren_pending &&
+           !impl->inline_html_nbsp_pending &&
+           !impl->pending_fallback_exact &&
+           !impl->ansi_pending_emit_valid &&
+           !impl->ansi_pending_autolink_emit_valid &&
+           !impl->ansi_pending_fallback_emit_valid &&
+           impl->ansi_uri_scheme_pending == 0;
+}
+
+int ansi_space_boundary_ready(const mdf_impl *impl)
+{
+    char last;
+
+    if (!ansi_flush_ready(impl) || impl->ansi_word_len == 0) {
+        return 0;
+    }
+    last = impl->ansi_word[impl->ansi_word_len - 1];
+    return last != ' ' && last != '\t';
+}
+
+int ansi_emit_space_boundary_word(mdf_impl *impl, mdf_sink *sink)
+{
+    int consumed;
+
+    if (!ansi_space_boundary_ready(impl)) {
+        return 0;
+    }
+    if (impl->ansi_pending_final_emph_style != NULL) {
+        consumed = 0;
+        if (ansi_flush_pending_final_emph_word(impl, sink, ' ', &consumed) != 0) {
+            return -1;
+        }
+        return consumed;
+    }
+    return ansi_flush_word(impl, sink) == 0 ? 1 : -1;
+}
+
+int ansi_emit_final_decision(mdf_impl *impl, mdf_sink *sink)
+{
+    if (!ansi_flush_ready(impl) || impl->ansi_word_len == 0) {
+        return 0;
+    }
+    return ansi_flush_word(impl, sink);
 }
 
 static int ansi_flush_pending_space_for(mdf_impl *impl, mdf_sink *sink, size_t next_len)
