@@ -164,49 +164,73 @@ static int capture_contains(const capture *out, const char *needle)
     return capture_find_from(out, needle, 0, NULL);
 }
 
+static long elapsed_milliseconds(const struct timespec *start, const struct timespec *end)
+{
+    time_t seconds;
+    long nanoseconds;
+
+    seconds = end->tv_sec - start->tv_sec;
+    nanoseconds = end->tv_nsec - start->tv_nsec;
+    if (nanoseconds < 0) {
+        seconds--;
+        nanoseconds += 1000000000L;
+    }
+    return seconds < 0 ? -1 : seconds * 1000L + nanoseconds / 1000000L;
+}
+
 static int wait_for_output(int fd, capture *out, long milliseconds)
 {
-    long elapsed;
+    struct timespec started;
 
-    elapsed = 0;
-    while (elapsed < milliseconds) {
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) return -1;
+    for (;;) {
         fd_set reads;
+        struct timespec now;
         struct timeval timeout;
         char bytes[1024];
+        long elapsed;
+        long remaining;
         ssize_t n;
         int ready;
 
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        elapsed = elapsed_milliseconds(&started, &now);
+        if (elapsed < 0 || elapsed >= milliseconds) return 0;
+        remaining = milliseconds - elapsed;
+        if (remaining > 20) remaining = 20;
         FD_ZERO(&reads);
         FD_SET(fd, &reads);
-        timeout.tv_sec = 0;
-        timeout.tv_usec = 20000;
+        timeout.tv_sec = remaining / 1000;
+        timeout.tv_usec = (remaining % 1000) * 1000;
         ready = select(fd + 1, &reads, NULL, NULL, &timeout);
         if (ready < 0 && errno != EINTR) return -1;
         if (ready > 0) {
             n = read(fd, bytes, sizeof(bytes));
             if (n > 0 && capture_append(out, bytes, (size_t)n) != 0) return -1;
         }
-        elapsed += 20;
     }
-    return 0;
 }
 
 static int wait_for_marker_after(int fd, capture *out, const char *marker,
                                  size_t start, size_t *marker_end)
 {
-    long elapsed;
+    struct timespec started;
     size_t position;
 
-    elapsed = 0;
-    while (elapsed < 2000) {
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) return -1;
+    for (;;) {
+        struct timespec now;
+        long elapsed;
+
         if (capture_find_from(out, marker, start, &position)) {
             if (marker_end != NULL) *marker_end = position + strlen(marker);
             return 0;
         }
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        elapsed = elapsed_milliseconds(&started, &now);
+        if (elapsed < 0 || elapsed >= 2000) return -1;
         if (wait_for_output(fd, out, 20) != 0) return -1;
-        elapsed += 20;
     }
-    return -1;
 }
 
 static int wait_for_marker(int fd, capture *out, const char *marker)
@@ -239,50 +263,31 @@ static int wait_for_redraw(int fd, capture *out, const char *marker)
      * the status row, so use the status-row start to locate the final one. */
     static const char status_start[] = "\033[7m\033[1;32m";
     static const char redraw_end[] = "\033[K\033[0m";
-    long elapsed;
+    struct timespec started;
     size_t scan;
 
-    elapsed = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &started) != 0) return -1;
     scan = 0;
-    while (elapsed < 2000) {
+    for (;;) {
+        struct timespec now;
         size_t start;
         size_t status;
         size_t end;
+        long elapsed;
 
-        if (!capture_find_from(out, redraw_start, scan, &start)) {
-            if (wait_for_output(fd, out, 20) != 0) return -1;
-            elapsed += 20;
+        if (capture_find_from(out, redraw_start, scan, &start) &&
+            capture_find_from(out, status_start, start + strlen(redraw_start), &status) &&
+            capture_find_from(out, redraw_end, status + strlen(status_start), &end)) {
+            end += strlen(redraw_end);
+            if (capture_range_contains(out, marker, start, end)) return 0;
+            scan = end;
             continue;
         }
-        if (!capture_find_from(out, status_start, start + strlen(redraw_start), &status)) {
-            if (wait_for_output(fd, out, 20) != 0) return -1;
-            elapsed += 20;
-            continue;
-        }
-        if (!capture_find_from(out, redraw_end, status + strlen(status_start), &end)) {
-            if (wait_for_output(fd, out, 20) != 0) return -1;
-            elapsed += 20;
-            continue;
-        }
-        end += strlen(redraw_end);
-        if (capture_range_contains(out, marker, start, end)) return 0;
-        scan = end;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        elapsed = elapsed_milliseconds(&started, &now);
+        if (elapsed < 0 || elapsed >= 2000) return -1;
+        if (wait_for_output(fd, out, 20) != 0) return -1;
     }
-    return -1;
-}
-
-static long elapsed_milliseconds(const struct timespec *start, const struct timespec *end)
-{
-    time_t seconds;
-    long nanoseconds;
-
-    seconds = end->tv_sec - start->tv_sec;
-    nanoseconds = end->tv_nsec - start->tv_nsec;
-    if (nanoseconds < 0) {
-        seconds--;
-        nanoseconds += 1000000000L;
-    }
-    return seconds < 0 ? -1 : seconds * 1000L + nanoseconds / 1000000L;
 }
 
 static int write_all(int fd, const char *src, size_t len)
@@ -836,6 +841,30 @@ static int write_osc8_reflow_fixture(char *path, size_t cap)
     return 0;
 }
 
+static int write_incremental_resize_fixture(char *path, size_t cap)
+{
+    int fd;
+    char temporary[128];
+    static const char source[] =
+        "| first column | second column |\n"
+        "| --- | --- |\n"
+        "| alpha beta gamma | delta epsilon zeta |\n";
+
+    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-incremental-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    fd = mkstemp(temporary);
+    if (fd < 0) return -1;
+    if (write_all(fd, source, sizeof(source) - 1) != 0) {
+        close(fd);
+        unlink(temporary);
+        return -1;
+    }
+    if (close(fd) != 0 || snprintf(path, cap, "%s.md", temporary) >= (int)cap || rename(temporary, path) != 0) {
+        unlink(temporary);
+        return -1;
+    }
+    return 0;
+}
+
 static int write_wide_fixture(char *path, size_t cap)
 {
     int fd;
@@ -1184,6 +1213,7 @@ int main(int argc, char **argv)
     char utf8_search_path[128];
     char unicode_casefold_path[128];
     char initial_resize_path[128];
+    char incremental_resize_path[128];
     char control_path[128];
     char unicode_path[128];
     char styled_path[128];
@@ -1246,6 +1276,7 @@ int main(int argc, char **argv)
         write_utf8_search_fixture(utf8_search_path, sizeof(utf8_search_path)) != 0 ||
         write_unicode_casefold_fixture(unicode_casefold_path, sizeof(unicode_casefold_path)) != 0 ||
         write_initial_resize_fixture(initial_resize_path, sizeof(initial_resize_path)) != 0 ||
+        write_incremental_resize_fixture(incremental_resize_path, sizeof(incremental_resize_path)) != 0 ||
         write_status_path_fixture(control_path, sizeof(control_path), "\033]52;c;INJECT\a.txt") != 0 ||
         write_status_path_fixture(unicode_path, sizeof(unicode_path),
                                   "\346\227\245\346\234\254\350\252\236\346\227\245.txt") != 0 ||
@@ -1560,6 +1591,26 @@ int main(int argc, char **argv)
     pid = start_incremental_pager(argv[1], markdown_path, &master);
     if (pid < 0 || wait_for_marker(master, &out, "rendered heading") != 0 ||
         require_contains(&out, "\033[1;32m# ") != 0 ||
+        write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
+    close(master);
+    clear_capture(&out);
+
+    /* The 20-column table has distinct cell widths and borders. Its complete
+     * narrow layout proves SIGWINCH drives a fresh incremental Markdown render,
+     * rather than reflowing the ANSI emitted at 40 columns. */
+    stage = "incremental markdown resize rerender";
+    pid = start_incremental_pager(argv[1], incremental_resize_path, &master);
+    if (pid < 0 || wait_for_marker(master, &out, "first") != 0) goto done;
+    clear_capture(&out);
+    memset(&resized, 0, sizeof(resized));
+    resized.ws_col = 20;
+    resized.ws_row = 10;
+    if (ioctl(master, TIOCSWINSZ, &resized) != 0 || kill(pid, SIGWINCH) != 0 ||
+        wait_for_redraw(master, &out,
+                        "\342\224\214\342\224\200\342\224\200\342\224\200\342\224\200"
+                        "\342\224\200\342\224\200\342\224\200\342\224\200\342\224\254"
+                        "\342\224\200\342\224\200\342\224\200\342\224\200\342\224\200"
+                        "\342\224\200\342\224\200\342\224\200\342\224\200\342\224\220") != 0 ||
         write_all(master, "q", 1) != 0 || wait_for_exit(pid) != 0) goto done;
     close(master);
     clear_capture(&out);
@@ -1889,6 +1940,7 @@ done:
     unlink(utf8_search_path);
     unlink(unicode_casefold_path);
     unlink(initial_resize_path);
+    unlink(incremental_resize_path);
     unlink(control_path);
     unlink(unicode_path);
     unlink(styled_path);

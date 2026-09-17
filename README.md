@@ -510,10 +510,12 @@ EOF. Incremental HTML requires `--title`: automatic title detection is a
 one-shot source operation and cannot precede the first streamed emission.
 Deck output remains whole-source only. The driver is useful with the simulator
 to exercise the additive lifecycle; it does not add nonblocking-FD or
-output-queue behavior. With `--pager`, cmdf first reaches EOF and finishes the
-incremental ANSI document through its normal decision sink; only that completed
-ANSI document is then given to the pager. The pager therefore remains a finite
-post-EOD view, not a live output queue.
+output-queue behavior. With `--pager`, cmdf first reaches EOF and renders the
+named Markdown file through the incremental receiver into the pager's finite
+post-EOD view. On a settled terminal resize it reopens that file and repeats
+the same bounded sanitize/feed/flush/finish lifecycle at the new width; it
+does not retain a full Markdown copy or merely reflow prior ANSI. The pager is
+therefore not a live output queue.
 
 `--pager` requires a named input file and terminal stdin/stdout. It uses the
 alternate screen, restores the terminal on `q` or `Esc`, and provides `j`/`k`,
@@ -525,7 +527,7 @@ leaves search mode without leaving the pager. Markdown views rerender only after
 250 ms; rapid resize events are coalesced. Pager mode cannot be combined with
 HTML/deck output, `--output`, write tracing, or input simulation. It can be
 combined with `--incremental`; the pager starts after that document reaches
-EOD.
+EOD and rerenders its named Markdown source after a settled resize.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
 default. `--html-disable-embedded-font` instead references byte-identical,

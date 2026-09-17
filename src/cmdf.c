@@ -121,16 +121,6 @@ typedef struct file_sink {
     FILE *fp;
 } file_sink;
 
-/* The pager is intentionally a post-EOD consumer. This buffer holds the
- * completed ANSI document only until the pager takes its finite input. It is
- * not part of cmdf's incremental rendering path. */
-typedef struct pager_eod_buffer {
-    char *data;
-    size_t len;
-    size_t cap;
-    size_t offset;
-} pager_eod_buffer;
-
 typedef struct pager_incremental_sink {
     mdf *renderer;
     mdf_sink *sink;
@@ -258,35 +248,6 @@ static int file_write(void *userdata, const char *src, size_t len)
     return 0;
 }
 
-static int pager_eod_sink_write(void *userdata, const char *src, size_t len)
-{
-    pager_eod_buffer *buffer;
-    size_t required;
-    size_t cap;
-    char *next;
-
-    buffer = (pager_eod_buffer *)userdata;
-    if (len > (size_t)-1 - buffer->len) return -1;
-    required = buffer->len + len;
-    if (required > buffer->cap) {
-        cap = buffer->cap == 0 ? 4096 : buffer->cap;
-        while (cap < required) {
-            if (cap > (size_t)-1 / 2) {
-                cap = required;
-                break;
-            }
-            cap *= 2;
-        }
-        next = (char *)realloc(buffer->data, cap);
-        if (next == NULL) return -1;
-        buffer->data = next;
-        buffer->cap = cap;
-    }
-    if (len != 0) memcpy(buffer->data + buffer->len, src, len);
-    buffer->len += len;
-    return 0;
-}
-
 static int pager_incremental_sink_write(void *userdata, const char *src, size_t len)
 {
     pager_incremental_sink *state;
@@ -299,39 +260,67 @@ static int pager_incremental_sink_write(void *userdata, const char *src, size_t 
     return state->status == MDF_OK ? 0 : -1;
 }
 
-static size_t pager_eod_source_read(void *userdata, char *dst, size_t cap, int *err)
+static mdf_status render_incremental_pager_file(void *userdata, const mdf_options *opts,
+                                                mdf_sink *sink)
 {
-    pager_eod_buffer *buffer;
-    size_t len;
+    const char *path;
+    FILE *input;
+    struct stat input_st;
+    file_source file_data;
+    pager_incremental_sink incremental_sink;
+    mdf_source input_source;
+    mdf_sink sanitized_sink;
+    mdf *renderer;
+    mdf_status st;
+    int input_fd;
+    int close_failed;
 
-    buffer = (pager_eod_buffer *)userdata;
-    if (buffer->offset == buffer->len) {
-        *err = 0;
-        return 0;
+    path = (const char *)userdata;
+    input_fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (input_fd < 0) {
+        return MDF_ERROR_IO;
     }
-    len = buffer->len - buffer->offset;
-    if (len > cap) len = cap;
-    memcpy(dst, buffer->data + buffer->offset, len);
-    buffer->offset += len;
-    *err = 0;
-    return len;
+    if (fstat(input_fd, &input_st) != 0 || !S_ISREG(input_st.st_mode)) {
+        (void)close(input_fd);
+        return MDF_ERROR_INVALID;
+    }
+    input = fdopen(input_fd, "rb");
+    if (input == NULL) {
+        (void)close(input_fd);
+        return MDF_ERROR_IO;
+    }
+    memset(&file_data, 0, sizeof(file_data));
+    memset(&incremental_sink, 0, sizeof(incremental_sink));
+    file_data.fp = input;
+    input_source.userdata = &file_data;
+    input_source.read = file_read;
+    renderer = NULL;
+    st = mdf_create(MDF_FORMAT_ANSI, opts, &renderer);
+    if (st != MDF_OK) {
+        (void)fclose(input);
+        return st;
+    }
+    incremental_sink.renderer = renderer;
+    incremental_sink.sink = sink;
+    incremental_sink.status = MDF_OK;
+    sanitized_sink.userdata = &incremental_sink;
+    sanitized_sink.write = pager_incremental_sink_write;
+    /* Sanitization is a bounded source-to-renderer transform. The pager owns
+     * the finite post-EOD ANSI view; cmdf never materializes Markdown input. */
+    st = mdf_pager_sanitize_markdown_source(&input_source, &sanitized_sink, opts);
+    close_failed = fclose(input) != 0;
+    if (st == MDF_OK) st = incremental_sink.status;
+    if (st == MDF_OK) st = renderer->finish_document(renderer, sink);
+    if (st == MDF_OK && close_failed) st = MDF_ERROR_IO;
+    renderer->destroy(renderer);
+    return st;
 }
 
 static int run_incremental_pager_file(const char *path, const mdf_options *opts)
 {
-    FILE *input;
     struct stat input_st;
-    file_source file_data;
-    pager_eod_buffer rendered;
-    pager_incremental_sink incremental_sink;
-    mdf_source input_source;
-    mdf_source pager_source;
-    mdf_sink sanitized_sink;
-    mdf_sink rendered_sink;
-    mdf *renderer;
     mdf_status st;
     int input_fd;
-    int rc;
 
     input_fd = open(path, O_RDONLY | O_NONBLOCK);
     if (input_fd < 0) {
@@ -343,81 +332,24 @@ static int run_incremental_pager_file(const char *path, const mdf_options *opts)
         fprintf(stderr, "cmdf: --pager requires a named regular input file\n");
         return 2;
     }
-    input = fdopen(input_fd, "rb");
-    if (input == NULL) {
-        (void)close(input_fd);
-        fprintf(stderr, "cmdf: open input %s: %s\n", path, strerror(errno));
+    if (close(input_fd) != 0) {
+        fprintf(stderr, "cmdf: close input: %s\n", strerror(errno));
         return 1;
     }
-    memset(&file_data, 0, sizeof(file_data));
-    memset(&rendered, 0, sizeof(rendered));
-    memset(&incremental_sink, 0, sizeof(incremental_sink));
-    file_data.fp = input;
-    input_source.userdata = &file_data;
-    input_source.read = file_read;
     if (!has_markdown_extension(path)) {
-        st = mdf_pager_source(path, &input_source, opts, MDF_PAGER_FORMAT_TEXT);
-        if (fclose(input) != 0 && st == MDF_OK) {
-            fprintf(stderr, "cmdf: close input: %s\n", strerror(errno));
-            return 1;
-        }
+        st = mdf_pager_file(path, opts, MDF_PAGER_FORMAT_TEXT);
         if (st != MDF_OK) {
             fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
             return 1;
         }
         return 0;
     }
-    renderer = NULL;
-    st = mdf_create(MDF_FORMAT_ANSI, opts, &renderer);
+    st = mdf_pager_ansi_rerendered(path, opts, render_incremental_pager_file, (void *)path);
     if (st != MDF_OK) {
-        fprintf(stderr, "cmdf: create renderer: %s\n", mdf_status_string(st));
+        fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
         return 1;
     }
-    rendered_sink.userdata = &rendered;
-    rendered_sink.write = pager_eod_sink_write;
-    incremental_sink.renderer = renderer;
-    incremental_sink.sink = &rendered_sink;
-    incremental_sink.status = MDF_OK;
-    sanitized_sink.userdata = &incremental_sink;
-    sanitized_sink.write = pager_incremental_sink_write;
-    /* Sanitization is a bounded source-to-renderer transform. The only
-     * materialized bytes are completed ANSI held for the post-EOD pager. */
-    st = mdf_pager_sanitize_markdown_source(&input_source, &sanitized_sink, opts);
-    rc = 0;
-    if (fclose(input) != 0) {
-        fprintf(stderr, "cmdf: close input: %s\n", strerror(errno));
-        rc = 1;
-    }
-    if (st != MDF_OK) {
-        if (incremental_sink.status != MDF_OK) {
-            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(incremental_sink.status),
-                    renderer->error(renderer));
-        } else if (st == MDF_ERROR_IO) {
-            fprintf(stderr, "cmdf: read input: %s\n", strerror(errno));
-        } else {
-            fprintf(stderr, "cmdf: sanitize input: %s\n", mdf_status_string(st));
-        }
-        rc = 1;
-    }
-    if (rc == 0) {
-        st = renderer->finish_document(renderer, &rendered_sink);
-        if (st != MDF_OK) {
-            fprintf(stderr, "cmdf: render: %s: %s\n", mdf_status_string(st), renderer->error(renderer));
-            rc = 1;
-        }
-    }
-    renderer->destroy(renderer);
-    if (rc == 0) {
-        pager_source.userdata = &rendered;
-        pager_source.read = pager_eod_source_read;
-        st = mdf_pager_ansi_source(path, &pager_source, opts);
-        if (st != MDF_OK) {
-            fprintf(stderr, "cmdf: pager: %s\n", mdf_status_string(st));
-            rc = 1;
-        }
-    }
-    free(rendered.data);
-    return rc;
+    return 0;
 }
 
 static int trace_write_base64(FILE *fp, const unsigned char *src, size_t len)
@@ -721,15 +653,11 @@ static int has_markdown_extension(const char *path)
 {
     const char *dot;
 
-    if (path == NULL) {
-        return 0;
-    }
+    if (path == NULL) return 0;
     dot = strrchr(path, '.');
-    return dot != NULL &&
-           (dot[0] == '.') &&
+    return dot != NULL && dot[0] == '.' &&
            (dot[1] == 'm' || dot[1] == 'M') &&
-           (dot[2] == 'd' || dot[2] == 'D') &&
-           dot[3] == '\0';
+           (dot[2] == 'd' || dot[2] == 'D') && dot[3] == '\0';
 }
 
 int main(int argc, char **argv)
