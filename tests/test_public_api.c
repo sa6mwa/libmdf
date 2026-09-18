@@ -20,6 +20,13 @@ typedef struct grow_sink {
     size_t writes;
 } grow_sink;
 
+typedef struct emission_log {
+    char **chunks;
+    size_t *lengths;
+    size_t count;
+    size_t cap;
+} emission_log;
+
 typedef struct cstr_source {
     const char *src;
     size_t len;
@@ -369,6 +376,96 @@ static void grow_free(grow_sink *sink)
     sink->len = 0;
     sink->cap = 0;
     sink->writes = 0;
+}
+
+static int emission_log_append(emission_log *log, const char *src, size_t len)
+{
+    char **chunks;
+    size_t *lengths;
+    char *copy;
+    size_t cap;
+
+    if (log->count == log->cap) {
+        cap = log->cap == 0 ? 8 : log->cap * 2;
+        chunks = (char **)realloc(log->chunks, cap * sizeof(*chunks));
+        if (chunks == NULL) {
+            return -1;
+        }
+        lengths = (size_t *)realloc(log->lengths, cap * sizeof(*lengths));
+        if (lengths == NULL) {
+            log->chunks = chunks;
+            return -1;
+        }
+        log->chunks = chunks;
+        log->lengths = lengths;
+        log->cap = cap;
+    }
+    copy = (char *)malloc(len == 0 ? 1 : len);
+    if (copy == NULL) {
+        return -1;
+    }
+    if (len > 0) {
+        memcpy(copy, src, len);
+    }
+    log->chunks[log->count] = copy;
+    log->lengths[log->count] = len;
+    log->count++;
+    return 0;
+}
+
+static int emission_log_write(void *userdata, const char *src, size_t len)
+{
+    return emission_log_append((emission_log *)userdata, src, len);
+}
+
+static int emission_log_trace(void *userdata, mdf_format format, const char *src, size_t len)
+{
+    (void)format;
+    return emission_log_append((emission_log *)userdata, src, len);
+}
+
+static int emission_logs_equal(const emission_log *first, const emission_log *second)
+{
+    size_t i;
+
+    if (first->count != second->count) {
+        return 0;
+    }
+    for (i = 0; i < first->count; i++) {
+        if (first->lengths[i] != second->lengths[i] ||
+            memcmp(first->chunks[i], second->chunks[i], first->lengths[i]) != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int emission_log_equals_bytes(const emission_log *log, const char *src, size_t len)
+{
+    size_t i;
+    size_t off;
+
+    off = 0;
+    for (i = 0; i < log->count; i++) {
+        if (log->lengths[i] > len - off ||
+            memcmp(log->chunks[i], src + off, log->lengths[i]) != 0) {
+            return 0;
+        }
+        off += log->lengths[i];
+    }
+    return off == len;
+}
+
+static void emission_log_free(emission_log *log)
+{
+    size_t i;
+
+    for (i = 0; i < log->count; i++) {
+        free(log->chunks[i]);
+    }
+    free(log->chunks);
+    free(log->lengths);
+    memset(log, 0, sizeof(*log));
 }
 
 static int incremental_control_write(void *userdata, const char *src, size_t len)
@@ -2669,6 +2766,78 @@ int main(void)
 
     inst->destroy(inst);
     inst = NULL;
+
+    {
+        static const int initial_widths[] = {80, 3, 80, 3};
+        static const int target_widths[] = {3, 80, 3, 80};
+        static const int boring_values[] = {1, 1, 0, 0};
+        static const char pending_code[] = "`abcdefghij`";
+        static const char suffix[] = " text\n";
+        static const char complete[] = "`abcdefghij` text\n";
+        size_t case_index;
+
+        for (case_index = 0; case_index < sizeof(initial_widths) / sizeof(initial_widths[0]); case_index++) {
+            emission_log writes;
+            emission_log traces;
+            mdf_sink bound_sink;
+            mdf *reference;
+            char *expected;
+
+            memset(&writes, 0, sizeof(writes));
+            memset(&traces, 0, sizeof(traces));
+            mdf_options_init(&opts);
+            opts.boring = boring_values[case_index];
+            opts.width = initial_widths[case_index];
+            opts.write_trace.userdata = &traces;
+            opts.write_trace.emit = emission_log_trace;
+            bound_sink.userdata = &writes;
+            bound_sink.write = emission_log_write;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL,
+                            "pending inline-code width-change receiver creates");
+            if (inst != NULL) {
+                st = inst->set_sink(inst, &bound_sink);
+                fails += expect(st == MDF_OK, "pending inline-code width-change receiver binds its sink");
+                st = inst->feed(inst, pending_code, strlen(pending_code));
+                fails += expect(st == MDF_OK && writes.count == 0 && traces.count == 0,
+                                "complete inline code remains undecided before its following boundary");
+                st = inst->set_width(inst, target_widths[case_index]);
+                fails += expect(st == MDF_OK,
+                                "pending inline code accepts a runtime width change before emission");
+                st = inst->feed(inst, suffix, strlen(suffix));
+                if (st == MDF_OK) {
+                    st = inst->finish_document(inst);
+                }
+                fails += expect(st == MDF_OK,
+                                "pending inline code completes after a runtime width change");
+                fails += expect(emission_logs_equal(&writes, &traces),
+                                "pending inline-code sink writes and trace events stay byte-for-byte identical");
+
+                reference = NULL;
+                expected = NULL;
+                mdf_options_init(&opts);
+                opts.boring = boring_values[case_index];
+                opts.width = target_widths[case_index];
+                st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+                if (st == MDF_OK) {
+                    st = reference->render_cstr(reference, complete, &expected);
+                }
+                fails += expect(st == MDF_OK && expected != NULL &&
+                                emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                                "pending inline code is re-decided using the width in effect at emission");
+                if (expected != NULL) {
+                    reference->string_free(reference, expected);
+                }
+                if (reference != NULL) {
+                    reference->destroy(reference);
+                }
+                inst->destroy(inst);
+                inst = NULL;
+            }
+            emission_log_free(&writes);
+            emission_log_free(&traces);
+        }
+    }
 
     {
         grow_sink bound_capture;

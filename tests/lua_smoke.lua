@@ -337,6 +337,36 @@ do
 end
 
 do
+  local weak = setmetatable({}, { __mode = "v" })
+
+  local function create_cyclic_handle()
+    local handle
+
+    handle = mdf.new({ format = "ansi", boring = true })
+    assert(handle:set_sink(function()
+      return handle:set_width(80)
+    end), "lua handle accepts a sink that captures its receiver")
+    weak.handle = handle
+  end
+
+  local function create_cyclic_stream()
+    local stream
+
+    stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+      return stream:set_width(80)
+    end)
+    weak.stream = stream
+  end
+
+  create_cyclic_handle()
+  create_cyclic_stream()
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak.handle == nil and weak.stream == nil,
+         "persistent Lua callbacks that capture their receiver remain collectible")
+end
+
+do
   local markdown = "# Split Lua\n\n- item\n\n`code` [link](https://example.com)\n"
   local chunks = {}
   local split = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
