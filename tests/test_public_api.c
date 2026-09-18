@@ -65,6 +65,15 @@ typedef struct incremental_control_sink {
     mdf_status sink_status;
 } incremental_control_sink;
 
+typedef struct teardown_control_sink {
+    mdf *renderer;
+    const mdf_sink *replacement;
+    grow_sink capture;
+    int calls;
+    mdf_status feed_status;
+    mdf_status sink_status;
+} teardown_control_sink;
+
 typedef struct one_chunk_then_fail_source {
     const char *src;
     size_t len;
@@ -369,6 +378,20 @@ static int incremental_control_write(void *userdata, const char *src, size_t len
     sink = (incremental_control_sink *)userdata;
     if (sink->calls == 0) {
         sink->reset_status = sink->renderer->reset(sink->renderer);
+        sink->sink_status = sink->renderer->set_sink(sink->renderer, sink->replacement);
+    }
+    sink->calls++;
+    return grow_write(&sink->capture, src, len);
+}
+
+static int teardown_control_write(void *userdata, const char *src, size_t len)
+{
+    teardown_control_sink *sink;
+
+    sink = (teardown_control_sink *)userdata;
+    if (sink->calls < 2) {
+        sink->renderer->destroy(sink->renderer);
+        sink->feed_status = sink->renderer->feed(sink->renderer, "nested ", 7);
         sink->sink_status = sink->renderer->set_sink(sink->renderer, sink->replacement);
     }
     sink->calls++;
@@ -2264,6 +2287,83 @@ int main(void)
         }
         grow_free(&control_sink.capture);
         grow_free(&replacement_capture);
+    }
+
+    {
+        teardown_control_sink control_sink;
+        grow_sink replacement_capture;
+        mdf_sink bound_sink;
+        mdf_sink replacement_sink;
+        mdf_token token;
+
+        memset(&control_sink, 0, sizeof(control_sink));
+        memset(&replacement_capture, 0, sizeof(replacement_capture));
+        bound_sink.userdata = &control_sink;
+        bound_sink.write = teardown_control_write;
+        replacement_sink.userdata = &replacement_capture;
+        replacement_sink.write = grow_write;
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "teardown callback lifecycle guard renderer creates");
+        if (inst != NULL) {
+            control_sink.renderer = inst;
+            control_sink.replacement = &replacement_sink;
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) st = inst->reset(inst);
+            fails += expect(st == MDF_OK && control_sink.calls == 1 &&
+                            control_sink.feed_status == MDF_ERROR_INVALID &&
+                            control_sink.sink_status == MDF_ERROR_INVALID,
+                            "reset sink callback cannot destroy or reenter a renderer");
+            if (st == MDF_OK) st = inst->set_sink(inst, &replacement_sink);
+            fails += expect(st == MDF_OK && control_sink.calls == 2 &&
+                            control_sink.feed_status == MDF_ERROR_INVALID &&
+                            control_sink.sink_status == MDF_ERROR_INVALID,
+                            "sink replacement protects its terminal cleanup callback");
+            if (st == MDF_OK) st = inst->feed(inst, "fresh output\n", strlen("fresh output\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && replacement_capture.buf != NULL &&
+                            strstr(replacement_capture.buf, "fresh output") != NULL,
+                            "renderer remains usable after guarded terminal cleanup");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        grow_free(&control_sink.capture);
+        grow_free(&replacement_capture);
+
+        memset(&control_sink, 0, sizeof(control_sink));
+        bound_sink.userdata = &control_sink;
+        bound_sink.write = teardown_control_write;
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "manual-token callback lifecycle guard renderer creates");
+        if (inst != NULL) {
+            control_sink.renderer = inst;
+            control_sink.replacement = &replacement_sink;
+            memset(&token, 0, sizeof(token));
+            token.type = MDF_TOKEN_TEXT;
+            token.text = "manual";
+            token.len = 6;
+            st = mdf_write_token(inst, &token, &bound_sink);
+            if (st == MDF_OK) {
+                memset(&token, 0, sizeof(token));
+                token.type = MDF_TOKEN_DOCUMENT_END;
+                st = mdf_write_token(inst, &token, &bound_sink);
+            }
+            if (st == MDF_OK) st = mdf_finish(inst, &bound_sink);
+            fails += expect(st == MDF_OK, "manual-token render completes after guarded callback");
+            fails += expect(control_sink.calls > 0,
+                            "manual-token rendering invokes the control sink");
+            fails += expect(control_sink.feed_status == MDF_ERROR_INVALID &&
+                            control_sink.sink_status == MDF_ERROR_INVALID,
+                            "manual-token sink callback cannot destroy or reenter a renderer");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        grow_free(&control_sink.capture);
     }
 
     mdf_options_init(&opts);

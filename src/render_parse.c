@@ -6379,8 +6379,8 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
     }
     st = render_emit(renderer, sink, MDF_TOKEN_DOCUMENT_END, NULL, 0, 0);
     if (st != MDF_OK) return st;
-    (void)sink;
-    st = renderer->finish(renderer);
+    st = mdf_renderer_is_builtin(renderer) ?
+             mdf_renderer_finish_internal(renderer, sink) : renderer->finish(renderer);
     if (st == MDF_OK) {
         mdf_parser_release_stream(self);
     }
@@ -6394,6 +6394,7 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
     char buf[4096];
     size_t n;
     int err;
+    int owns_render_active;
     mdf_status st;
 
     if (self == NULL || self->impl == NULL || source == NULL || source->read == NULL || renderer == NULL || sink == NULL) {
@@ -6405,7 +6406,18 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
      * stack-owned sink record after parser->parse returns. */
     renderer_impl = (mdf_impl *)renderer->impl;
     previous_sink = NULL;
+    owns_render_active = 0;
     if (renderer_impl != NULL) {
+        if (renderer_impl->render_active && renderer_impl->render_parser != self) {
+            mdf_set_error(renderer, "parse cannot interrupt an active render operation");
+            mdf_parser_set_error(self, "parse cannot interrupt an active render operation");
+            return MDF_ERROR_INVALID;
+        }
+        if (!renderer_impl->render_active) {
+            renderer_impl->render_active = 1;
+            renderer_impl->render_parser = self;
+            owns_render_active = 1;
+        }
         previous_sink = renderer_impl->active_sink;
         renderer_impl->active_sink = sink;
     }
@@ -6430,6 +6442,10 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
 done:
     if (renderer_impl != NULL) {
         renderer_impl->active_sink = previous_sink;
+        if (owns_render_active) {
+            renderer_impl->render_parser = NULL;
+            renderer_impl->render_active = 0;
+        }
     }
     return st;
 }

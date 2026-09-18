@@ -405,8 +405,8 @@ struct mdf {
     const char *(*error)(const mdf *self);
     /**
      * Destroy the renderer and release its owned state. NULL is accepted.
-     * Destruction cannot interrupt an active render operation, including its
-     * source and sink callbacks; in that case it leaves the renderer intact
+     * Destruction cannot interrupt an active output operation, including its
+     * source, sink, and trace callbacks; in that case it leaves the renderer intact
      * and records a diagnostic available through error.
      */
     void (*destroy)(mdf *self);
@@ -442,8 +442,8 @@ struct mdf {
     /**
      * Close terminal styling through the bound sink, then discard the active
      * renderer and incremental-parser session. See mdf_reset. This may not
-     * interrupt an active render operation, including callbacks invoked by
-     * synchronous and incremental rendering calls.
+     * interrupt an active output operation, including callbacks invoked by
+     * synchronous, incremental, reset, and manual-token rendering calls.
      */
     mdf_status (*reset)(mdf *self);
     /** Replace the renderer's one bound output sink. See mdf_set_sink. */
@@ -480,8 +480,8 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * identical callback and userdata leaves the current rendering state intact.
  * The explicit-sink
  * free functions below borrow their sink only for their call and never replace
- * this receiver binding. A binding cannot be changed while an active render
- * operation is invoking source or sink callbacks.
+ * this receiver binding. A binding cannot be changed while an active output
+ * operation is invoking source, sink, or trace callbacks.
  */
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
 /**
@@ -502,13 +502,20 @@ mdf_status mdf_set_width(mdf *renderer, int width);
  * configuration such as width and an explicit HTML title. No Markdown input is
  * retained for replay; callers own and resend source if they need reflow. A
  * sink failure returns MDF_ERROR_IO after state has been discarded. It cannot
- * interrupt an active render operation, including callbacks invoked by
- * synchronous and incremental rendering calls.
+ * interrupt an active output operation, including callbacks invoked by
+ * synchronous, incremental, reset, and manual-token rendering calls.
  */
 mdf_status mdf_reset(mdf *renderer);
-/** Render a token through an explicit sink borrowed for this call only; it does not bind that sink. */
+/**
+ * Render a token through an explicit sink borrowed for this call only; it does
+ * not bind that sink and cannot interrupt another active output operation.
+ */
 mdf_status mdf_write_token(mdf *renderer, const mdf_token *token, mdf_sink *sink);
-/** Finish manual token rendering through an explicit sink borrowed for this call only; it does not bind that sink. */
+/**
+ * Finish manual token rendering through an explicit sink borrowed for this
+ * call only; it does not bind that sink and cannot interrupt an active output
+ * operation.
+ */
 mdf_status mdf_finish(mdf *renderer, mdf_sink *sink);
 /** Render source through an explicit sink borrowed for this call only; it does not bind that sink. */
 mdf_status mdf_render(mdf *renderer, mdf_source *source, mdf_sink *sink);

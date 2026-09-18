@@ -605,6 +605,93 @@ do
   close_stream:close()
   assert(table.concat(close_stream_chunks):match("close callback remains live"),
          "lua document stream preserves its sink after rejected callback close")
+
+  local reset_chunks = {}
+  local reset_trace = {}
+  local reset_handle
+  local reset_reentered = false
+  reset_handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    write_trace = function(_, chunk)
+      reset_trace[#reset_trace + 1] = chunk
+    end,
+  })
+  assert(reset_handle:set_sink(function(chunk)
+    reset_chunks[#reset_chunks + 1] = chunk
+    if not reset_reentered then
+      local feed_ok
+
+      reset_reentered = true
+      feed_ok = pcall(function() reset_handle:feed("nested ") end)
+      assert(not feed_ok, "lua reset sink callback cannot reenter feed")
+    end
+  end), "lua handle binds a reset reentry regression sink")
+  assert(reset_handle:reset(), "lua handle resets through its guarded sink")
+  assert(#reset_chunks == #reset_trace,
+         "lua reset sink writes and traces have matching event counts")
+  for index, chunk in ipairs(reset_chunks) do
+    assert_equal(reset_trace[index], chunk,
+                 "lua reset sink writes and traces preserve exact bytes")
+  end
+  reset_handle:close()
+
+  local handle_a_chunks = {}
+  local handle_b_chunks = {}
+  local handle_c_chunks = {}
+  local replacement_handle
+  local handle_nested_replace_ok
+  replacement_handle = mdf.new({ format = "ansi", boring = true })
+  assert(replacement_handle:set_sink(function(chunk)
+    handle_a_chunks[#handle_a_chunks + 1] = chunk
+    if handle_nested_replace_ok == nil then
+      handle_nested_replace_ok = pcall(function()
+        replacement_handle:set_sink(function(next_chunk)
+          handle_c_chunks[#handle_c_chunks + 1] = next_chunk
+        end)
+      end)
+    end
+  end), "lua handle binds the old replacement sink")
+  assert(replacement_handle:set_sink(function(chunk)
+    handle_b_chunks[#handle_b_chunks + 1] = chunk
+  end), "lua handle installs the requested replacement sink")
+  assert(not handle_nested_replace_ok,
+         "lua handle rejects nested sink replacement during terminal cleanup")
+  assert(replacement_handle:feed("handle replacement target\n"),
+         "lua handle accepts output after guarded sink replacement")
+  assert(replacement_handle:finish_document(),
+         "lua handle finishes after guarded sink replacement")
+  replacement_handle:close()
+  assert(table.concat(handle_b_chunks):match("handle replacement target") and #handle_c_chunks == 0,
+         "lua handle retains the outer replacement rather than a nested sink")
+
+  local stream_a_chunks = {}
+  local stream_b_chunks = {}
+  local stream_c_chunks = {}
+  local replacement_stream
+  local stream_nested_replace_ok
+  replacement_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+    stream_a_chunks[#stream_a_chunks + 1] = chunk
+    if stream_nested_replace_ok == nil then
+      stream_nested_replace_ok = pcall(function()
+        replacement_stream:set_sink(function(next_chunk)
+          stream_c_chunks[#stream_c_chunks + 1] = next_chunk
+        end)
+      end)
+    end
+  end)
+  assert(replacement_stream:set_sink(function(chunk)
+    stream_b_chunks[#stream_b_chunks + 1] = chunk
+  end), "lua document stream installs the requested replacement sink")
+  assert(not stream_nested_replace_ok,
+         "lua document stream rejects nested sink replacement during terminal cleanup")
+  assert(replacement_stream:write("stream replacement target\n"),
+         "lua document stream accepts output after guarded sink replacement")
+  assert(replacement_stream:finish_document(),
+         "lua document stream finishes after guarded sink replacement")
+  replacement_stream:close()
+  assert(table.concat(stream_b_chunks):match("stream replacement target") and #stream_c_chunks == 0,
+         "lua document stream retains the outer replacement rather than a nested sink")
 end
 
 handle:close()

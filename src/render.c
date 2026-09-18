@@ -62,6 +62,9 @@ mdf_status render_emit(mdf_renderer *renderer, mdf_sink *sink, mdf_token_type ty
     tok.text = text;
     tok.len = len;
     tok.level = level;
+    if (mdf_renderer_is_builtin(renderer)) {
+        return mdf_renderer_write_token_internal(renderer, &tok, sink);
+    }
     (void)sink;
     return renderer->write_token(renderer, &tok);
 }

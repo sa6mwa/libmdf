@@ -1106,6 +1106,10 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
         lua_pushboolean(L, 1);
         return 1;
     }
+    if (lua_mdf_document_stream_callbacks_active(stream)) {
+        luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        return luaL_error(L, "mdf_document_stream.set_sink: cannot replace a sink during an active callback");
+    }
     new_slot = old_slot == 0 ? 1 : 0;
     old_ref = old_slot >= 0 ? stream->sink_ctx[old_slot].ref : LUA_NOREF;
     stream->sink_ctx[new_slot].L = L;
@@ -1113,10 +1117,12 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
     stream->sink_ctx[new_slot].active = 0;
     sink.userdata = &stream->sink_ctx[new_slot];
     sink.write = lua_mdf_sink_write;
+    stream->sink_slot = new_slot;
     st = stream->mdf->set_sink(stream->mdf, &sink);
     if (st != MDF_OK) {
         luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
         stream->sink_ctx[new_slot].ref = LUA_NOREF;
+        stream->sink_slot = old_slot;
         return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
     }
@@ -1124,7 +1130,6 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
         stream->sink_ctx[old_slot].ref = LUA_NOREF;
     }
-    stream->sink_slot = new_slot;
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1306,6 +1311,10 @@ static int lua_mdf_handle_set_sink(lua_State *L)
         lua_pushboolean(L, 1);
         return 1;
     }
+    if (lua_mdf_handle_callbacks_active(handle)) {
+        luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        return luaL_error(L, "mdf_handle.set_sink: cannot replace a sink during an active callback");
+    }
     new_slot = old_slot == 0 ? 1 : 0;
     old_ref = old_slot >= 0 ? handle->sink_ctx[old_slot].ref : LUA_NOREF;
     handle->sink_ctx[new_slot].L = L;
@@ -1313,10 +1322,12 @@ static int lua_mdf_handle_set_sink(lua_State *L)
     handle->sink_ctx[new_slot].active = 0;
     sink.userdata = &handle->sink_ctx[new_slot];
     sink.write = lua_mdf_sink_write;
+    handle->sink_slot = new_slot;
     st = handle->mdf->set_sink(handle->mdf, &sink);
     if (st != MDF_OK) {
         luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
         handle->sink_ctx[new_slot].ref = LUA_NOREF;
+        handle->sink_slot = old_slot;
         return luaL_error(L, "mdf_handle.set_sink: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
     }
@@ -1324,7 +1335,6 @@ static int lua_mdf_handle_set_sink(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
         handle->sink_ctx[old_slot].ref = LUA_NOREF;
     }
-    handle->sink_slot = new_slot;
     lua_pushboolean(L, 1);
     return 1;
 }

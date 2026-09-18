@@ -3029,6 +3029,7 @@ mdf_status mdf_reset(mdf *renderer)
         mdf_set_error(renderer, "reset cannot interrupt an active render operation");
         return MDF_ERROR_INVALID;
     }
+    impl->render_active = 1;
     st = MDF_OK;
     if (impl->format == MDF_FORMAT_ANSI && impl->sink_bound) {
         if (mdf_emit_buffer_reset(impl) != 0 ||
@@ -3050,6 +3051,7 @@ mdf_status mdf_reset(mdf *renderer)
     } else if (st == MDF_ERROR_IO) {
         mdf_set_error(renderer, "sink write failed while resetting renderer");
     }
+    impl->render_active = 0;
     return st;
 }
 
@@ -3123,10 +3125,16 @@ mdf_status mdf_write_token(mdf *renderer, const mdf_token *token, mdf_sink *sink
         return mdf_renderer_write_token_internal(renderer, token, sink);
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "write_token cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
+    impl->render_active = 1;
     previous_sink = impl->active_sink;
     impl->active_sink = sink;
     st = mdf_renderer_write_token_internal(renderer, token, sink);
     impl->active_sink = previous_sink;
+    impl->render_active = 0;
     return st;
 }
 
@@ -3140,10 +3148,16 @@ mdf_status mdf_finish(mdf *renderer, mdf_sink *sink)
         return mdf_renderer_finish_internal(renderer, sink);
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "finish cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
+    impl->render_active = 1;
     previous_sink = impl->active_sink;
     impl->active_sink = sink;
     st = mdf_renderer_finish_internal(renderer, sink);
     impl->active_sink = previous_sink;
+    impl->render_active = 0;
     return st;
 }
 
@@ -3157,7 +3171,7 @@ static mdf_status mdf_method_write_token(mdf *self, const mdf_token *token)
     mdf_sink *sink;
 
     sink = mdf_receiver_sink(self);
-    return sink == NULL ? MDF_ERROR_INVALID : mdf_renderer_write_token_internal(self, token, sink);
+    return sink == NULL ? MDF_ERROR_INVALID : mdf_write_token(self, token, sink);
 }
 
 static mdf_status mdf_method_finish(mdf *self)
@@ -3165,7 +3179,13 @@ static mdf_status mdf_method_finish(mdf *self)
     mdf_sink *sink;
 
     sink = mdf_receiver_sink(self);
-    return sink == NULL ? MDF_ERROR_INVALID : mdf_renderer_finish_internal(self, sink);
+    return sink == NULL ? MDF_ERROR_INVALID : mdf_finish(self, sink);
+}
+
+int mdf_renderer_is_builtin(const mdf_renderer *self)
+{
+    return self != NULL && self->impl != NULL &&
+           self->write_token == mdf_method_write_token && self->finish == mdf_method_finish;
 }
 
 static mdf_status mdf_method_render(mdf *self, mdf_source *source)

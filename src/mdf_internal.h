@@ -268,6 +268,7 @@ mdf_status mdf_configure_html_font(mdf_impl *impl);
 int mdf_path_relative_to(char *dst, size_t cap, const char *from_dir, const char *target_path);
 int mdf_path_relative_uri(char *dst, size_t cap, const char *from_dir, const char *target_path);
 void mdf_renderer_reset_session_state(mdf_renderer *self);
+int mdf_renderer_is_builtin(const mdf_renderer *self);
 void mdf_render_reset_state(mdf_impl *impl);
 void mdf_render_release_state(mdf_impl *impl);
 void mdf_set_error(mdf_renderer *self, const char *msg);

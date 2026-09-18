@@ -675,8 +675,10 @@ the object itself. `reset` closes ANSI state and discards unfinished parser
 state even when the terminal callback fails; replay remains the caller's job.
 A `render_stream` reader may change width for later decisions, but `reset` and
 sink replacement are rejected until
-that synchronous render returns. `close` is likewise rejected from an active
-reader, sink, or trace callback, preserving the receiver for the outer call.
+that synchronous render returns. This rejection also applies while terminal
+reset and manual-token output invoke a sink or trace callback. `close` is
+likewise rejected from an active reader, sink, or trace callback, preserving
+the receiver for the outer call.
 Rebinding the identical callback is a no-op.
 
 ```lua
