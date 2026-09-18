@@ -472,7 +472,8 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * rendering state even when that close fails, and then binds the new sink;
  * callers replay their own source to render on the new sink. The explicit-sink
  * free functions below borrow their sink only for their call and never replace
- * this receiver binding.
+ * this receiver binding. A binding cannot be changed while a synchronous
+ * render call is active.
  */
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
 /**

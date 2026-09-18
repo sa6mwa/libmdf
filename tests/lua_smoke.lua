@@ -347,6 +347,12 @@ do
     phase = phase + 1
     if phase == 1 then return "alpha " end
     if phase == 2 then
+      local reset_ok = pcall(function() handle:reset() end)
+      local sink_ok = pcall(function()
+        handle:set_sink(function() end)
+      end)
+      assert(not reset_ok, "lua handle reset rejects interruption from its reader")
+      assert(not sink_ok, "lua handle set_sink rejects interruption from its reader")
       assert(handle:set_width(5), "lua handle changes width from its source callback")
       return "beta\n"
     end

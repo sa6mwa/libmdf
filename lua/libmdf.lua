@@ -10,6 +10,8 @@ mdf.version_patch = core.version_patch
 
 ---Create a renderer handle. Bind one persistent output callback with
 ---`handle:set_sink(write)` before calling its streaming receiver methods.
+---A `render_stream` reader may change width, but cannot reset or replace the
+---sink until that synchronous render returns.
 function mdf.new(opts)
   return core.new(opts or {})
 end

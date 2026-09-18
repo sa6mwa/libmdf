@@ -2967,6 +2967,10 @@ mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink)
     if (impl->sink_bound && impl->sink.userdata == sink->userdata && impl->sink.write == sink->write) {
         return MDF_OK;
     }
+    if (impl->render_parser != NULL) {
+        mdf_set_error(renderer, "set_sink cannot interrupt a synchronous render");
+        return MDF_ERROR_INVALID;
+    }
     if (impl->sink_bound) {
         /* A failed old sink must not strand the receiver. reset still makes
          * its best effort to close terminal state on the old destination

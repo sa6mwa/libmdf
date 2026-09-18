@@ -39,6 +39,14 @@ typedef struct width_change_source {
     mdf_status width_status;
 } width_change_source;
 
+typedef struct render_control_source {
+    mdf *renderer;
+    const mdf_sink *replacement;
+    int reads;
+    mdf_status reset_status;
+    mdf_status sink_status;
+} render_control_source;
+
 typedef struct one_chunk_then_fail_source {
     const char *src;
     size_t len;
@@ -391,6 +399,34 @@ static size_t width_change_source_read(void *userdata, char *dst, size_t cap, in
         chunk = first;
     } else if (src->reads == 1) {
         src->width_status = src->renderer->set_width(src->renderer, 5);
+        chunk = second;
+    } else {
+        return 0;
+    }
+    len = strlen(chunk);
+    if (cap < len) {
+        return 0;
+    }
+    memcpy(dst, chunk, len);
+    src->reads++;
+    return len;
+}
+
+static size_t render_control_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    render_control_source *src;
+    static const char first[] = "alpha ";
+    static const char second[] = "beta\n";
+    const char *chunk;
+    size_t len;
+
+    (void)err;
+    src = (render_control_source *)userdata;
+    if (src->reads == 0) {
+        chunk = first;
+    } else if (src->reads == 1) {
+        src->reset_status = src->renderer->reset(src->renderer);
+        src->sink_status = src->renderer->set_sink(src->renderer, src->replacement);
         chunk = second;
     } else {
         return 0;
@@ -2404,6 +2440,7 @@ int main(void)
         mdf_sink borrowed_sink;
         mdf_sink replacement_sink;
         width_change_source width_source;
+        render_control_source control_source;
         cstr_source receiver_source;
         size_t bound_len;
 
@@ -2456,6 +2493,21 @@ int main(void)
             st = inst->set_width(inst, 0);
             fails += expect(st == MDF_ERROR_INVALID,
                             "receiver set_width rejects an invalid width");
+
+            grow_free(&bound_capture);
+            memset(&control_source, 0, sizeof(control_source));
+            control_source.renderer = inst;
+            control_source.replacement = &replacement_sink;
+            src.userdata = &control_source;
+            src.read = render_control_source_read;
+            st = inst->render(inst, &src);
+            fails += expect(st == MDF_OK &&
+                            control_source.reset_status == MDF_ERROR_INVALID &&
+                            control_source.sink_status == MDF_ERROR_INVALID &&
+                            bound_capture.buf != NULL &&
+                            strstr(bound_capture.buf, "alpha beta") != NULL &&
+                            replacement_capture.len == 0,
+                            "synchronous render rejects reset and sink replacement from its source callback");
 
             memset(&receiver_source, 0, sizeof(receiver_source));
             receiver_source.src = "borrowed free sink\n";

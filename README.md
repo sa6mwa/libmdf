@@ -315,8 +315,10 @@ affects only later layout, including decisions made after a source callback
 changes it during `render`. It never reflows bytes already written, so call
 `renderer->reset` and replay caller-owned source for a complete reflow. Reset
 and sink replacement close ANSI terminal state before discarding parser state;
-reset is rejected while a synchronous `render` call is active. libmdf never
-retains input for replay.
+reset and sink replacement are rejected while a synchronous `render` call is
+active. A source callback may change width for subsequent decisions, but it
+cannot reset or move a live render to a different sink. libmdf never retains
+input for replay.
 Pending table and chart constructs retain at most 65536 bytes, and tables
 retain at most 1024 rows; an oversized unfinished construct fails with
 `MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
@@ -668,7 +670,9 @@ The top-level `mdf.render_stream(read, write, opts)` is the explicit-callback
 form: its callbacks are borrowed for that call. For streaming receiver methods,
 bind one callback once, then change width, reset, or replace the callback on
 the object itself. `reset` closes ANSI state and discards unfinished parser
-state; replay remains the caller's job.
+state; replay remains the caller's job. A `render_stream` reader may change
+width for later decisions, but `reset` and `set_sink` are rejected until that
+synchronous render returns.
 
 ```lua
 local h = mdf.new({ boring = true })
