@@ -2983,6 +2983,10 @@ mdf_status mdf_set_width(mdf *renderer, int width)
     if (impl->format == MDF_FORMAT_ANSI && impl->opts.margin_right > 0) {
         effective_width -= impl->opts.margin_right;
     }
+    if (impl->emission_active) {
+        mdf_set_error(renderer, "set_width cannot change width during an output callback");
+        return MDF_ERROR_INVALID;
+    }
     impl->opts.width = effective_width;
     if (impl->format == MDF_FORMAT_ANSI && ansi_reflow_pending_code(impl) != 0) {
         return MDF_ERROR_NOMEM;
@@ -3551,16 +3555,19 @@ int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)
     }
     memmove(impl->emit_buf, src, len);
     impl->emit_len = len;
+    impl->emission_active++;
     if (mdf_write_all(sink, impl->emit_buf, len) != 0) {
+        impl->emission_active--;
         impl->emit_len = 0;
         return -1;
     }
-    if (impl->opts.write_trace.emit != NULL) {
-        if (impl->opts.write_trace.emit(impl->opts.write_trace.userdata, impl->format, impl->emit_buf, len) != 0) {
-            impl->emit_len = 0;
-            return -1;
-        }
+    if (impl->opts.write_trace.emit != NULL &&
+        impl->opts.write_trace.emit(impl->opts.write_trace.userdata, impl->format, impl->emit_buf, len) != 0) {
+        impl->emission_active--;
+        impl->emit_len = 0;
+        return -1;
     }
+    impl->emission_active--;
     impl->emit_len = 0;
     return 0;
 }

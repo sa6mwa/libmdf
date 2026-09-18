@@ -36,7 +36,8 @@ end
 
 ---Create an incremental document stream with one persistent writer callback.
 ---Use `set_width`, `reset`, `set_sink`, or `set_html_title` on the returned
----stream as needed; `error` exposes the latest core diagnostic and `close` or
+---stream as needed; `set_width` may run from a source callback but not from
+---writer or trace callbacks. `error` exposes the latest core diagnostic and `close` or
 ---`destroy` releases the renderer, except it is rejected while one of its
 ---callbacks is active. Callbacks run on the Lua state invoking each method, so
 ---a stream returned from a collected coroutine remains usable.

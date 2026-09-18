@@ -436,7 +436,8 @@ struct mdf {
     /**
      * Change the ANSI wrap width for future rendering decisions. Existing sink
      * writes are not reflowed; the width includes configured margins and must
-     * leave at least three content columns. See mdf_set_width.
+     * leave at least three content columns. It may run from a source callback,
+     * but not a sink or trace callback. See mdf_set_width.
      */
     mdf_status (*set_width)(mdf *self, int width);
     /**
@@ -492,6 +493,8 @@ mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
  * including active incremental documents. It never rewrites prior sink
  * emissions, so callers that need complete reflow should call mdf_reset and
  * resend their own source. This operation has no terminal or signal handling.
+ * It may run from a source callback, but returns MDF_ERROR_INVALID from a sink
+ * or write-trace callback so the active emission stays intact.
  */
 mdf_status mdf_set_width(mdf *renderer, int width);
 /**

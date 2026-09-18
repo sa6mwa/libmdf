@@ -337,6 +337,16 @@ do
 end
 
 do
+  local handle_ok, handle_error = pcall(mdf.new, { width = 1 })
+  local stream_ok, stream_error = pcall(mdf.document_stream, { width = 1 }, function() end)
+
+  assert(not handle_ok and type(handle_error) == "string",
+         "lua handle constructor reports invalid width without crashing")
+  assert(not stream_ok and type(stream_error) == "string",
+         "lua document stream constructor reports invalid width without crashing")
+end
+
+do
   local weak = setmetatable({}, { __mode = "v" })
 
   local function create_cyclic_handle()
@@ -452,6 +462,50 @@ do
   end), "lua handle renders through its bound sink")
   assert(table.concat(handle_chunks):match("alpha\nbeta"),
          "lua handle applies source-time width changes to later decisions")
+end
+
+do
+  local writes = {}
+  local traces = {}
+  local width_change_ok
+  local trace_width_change_ok
+  local handle
+
+  handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    width = 80,
+    write_trace = function(_, chunk)
+      traces[#traces + 1] = chunk
+      if trace_width_change_ok == nil then
+        trace_width_change_ok = pcall(function() handle:set_width(3) end)
+      end
+    end,
+  })
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+    if width_change_ok == nil then
+      width_change_ok = pcall(function() handle:set_width(3) end)
+    end
+  end), "lua handle binds an output-callback width-change regression sink")
+  assert(handle:feed("`abcdefghij` text\n"),
+         "lua handle renders while its sink attempts a width change")
+  assert(handle:finish_document(),
+         "lua handle finishes after rejecting an output-callback width change")
+  assert(not width_change_ok,
+         "lua handle rejects a width change from an output callback")
+  assert(not trace_width_change_ok,
+         "lua handle rejects a width change from a trace callback")
+  assert_equal(table.concat(writes),
+               mdf.render("`abcdefghij` text\n", { format = "ansi", boring = true, width = 80 }),
+               "lua output-callback width rejection preserves the active layout")
+  assert(#writes == #traces,
+         "lua output-callback width rejection keeps sink and trace event counts aligned")
+  for index, chunk in ipairs(writes) do
+    assert_equal(traces[index], chunk,
+                 "lua output-callback width rejection keeps sink and trace bytes aligned")
+  end
+  handle:close()
 end
 
 do
@@ -572,10 +626,11 @@ do
       nested_once = true
       nested_co = coroutine.create(function()
         local reset_ok = pcall(function() nested_handle:reset() end)
+        local width_ok = pcall(function() nested_handle:set_width(80) end)
 
         assert(not reset_ok)
         assert(nested_handle:set_sink(nested_sink))
-        assert(nested_handle:set_width(80))
+        assert(not width_ok)
       end)
       assert(coroutine.resume(nested_co),
              "nested coroutine can inspect and configure an active lua handle")

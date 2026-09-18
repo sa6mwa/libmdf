@@ -27,6 +27,13 @@ typedef struct emission_log {
     size_t cap;
 } emission_log;
 
+typedef struct width_change_output_sink {
+    mdf *renderer;
+    emission_log capture;
+    int calls;
+    mdf_status width_status;
+} width_change_output_sink;
+
 typedef struct cstr_source {
     const char *src;
     size_t len;
@@ -466,6 +473,18 @@ static void emission_log_free(emission_log *log)
     free(log->chunks);
     free(log->lengths);
     memset(log, 0, sizeof(*log));
+}
+
+static int width_change_output_write(void *userdata, const char *src, size_t len)
+{
+    width_change_output_sink *sink;
+
+    sink = (width_change_output_sink *)userdata;
+    if (sink->calls == 0) {
+        sink->width_status = sink->renderer->set_width(sink->renderer, 3);
+    }
+    sink->calls++;
+    return emission_log_append(&sink->capture, src, len);
 }
 
 static int incremental_control_write(void *userdata, const char *src, size_t len)
@@ -2837,6 +2856,66 @@ int main(void)
             emission_log_free(&writes);
             emission_log_free(&traces);
         }
+    }
+
+    {
+        static const char markdown[] = "`abcdefghij` text\n";
+        width_change_output_sink output;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+
+        memset(&output, 0, sizeof(output));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &output;
+        bound_sink.write = width_change_output_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "output-callback width-change receiver creates");
+        if (inst != NULL) {
+            output.renderer = inst;
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, markdown, strlen(markdown));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK && output.calls > 0 &&
+                            output.width_status == MDF_ERROR_INVALID,
+                            "output callbacks cannot change width during an emission");
+            fails += expect(emission_logs_equal(&output.capture, &traces),
+                            "rejected output-callback width changes preserve exact sink and trace bytes");
+
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, markdown, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_log_equals_bytes(&output.capture, expected, strlen(expected)),
+                            "rejected output-callback width changes leave the active decision unchanged");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&output.capture);
+        emission_log_free(&traces);
     }
 
     {

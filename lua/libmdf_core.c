@@ -94,8 +94,11 @@ static void lua_mdf_set_owned_value(lua_State *L, int owner_index, int key, int 
 
 static void lua_mdf_clear_owned_value(lua_State *L, int owner_index, int key)
 {
+    int owner;
+
+    owner = lua_absindex(L, owner_index);
     lua_pushnil(L);
-    lua_mdf_set_owned_value(L, owner_index, key, -1);
+    lua_mdf_set_owned_value(L, owner, key, -1);
     lua_pop(L, 1);
 }
 

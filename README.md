@@ -316,8 +316,9 @@ changes it during `render`. It never reflows bytes already written, so call
 `renderer->reset` and replay caller-owned source for a complete reflow. Reset
 and sink replacement close ANSI terminal state before discarding parser state;
 reset and sink replacement are rejected while a synchronous `render` call is
-active. A source callback may change width for subsequent decisions, but it
-cannot reset or move a live render to a different sink. libmdf never retains
+active. A source callback may change width for subsequent decisions. Sink and
+trace callbacks cannot change width, reset, or move a live render to a
+different sink. libmdf never retains
 input for replay. If terminal cleanup on the old sink fails during replacement,
 the renderer still discards state and binds the new sink; replay remains the
 caller's responsibility.
