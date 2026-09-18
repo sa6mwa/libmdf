@@ -33,6 +33,12 @@ typedef struct chunked_cstr_source {
     size_t max_chunk;
 } chunked_cstr_source;
 
+typedef struct width_change_source {
+    mdf *renderer;
+    int reads;
+    mdf_status width_status;
+} width_change_source;
+
 typedef struct one_chunk_then_fail_source {
     const char *src;
     size_t len;
@@ -369,6 +375,33 @@ static size_t chunked_cstr_read(void *userdata, char *dst, size_t cap, int *err)
     memcpy(dst, src->src + src->off, n);
     src->off += n;
     return n;
+}
+
+static size_t width_change_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    width_change_source *src;
+    static const char first[] = "alpha ";
+    static const char second[] = "beta\n";
+    const char *chunk;
+    size_t len;
+
+    (void)err;
+    src = (width_change_source *)userdata;
+    if (src->reads == 0) {
+        chunk = first;
+    } else if (src->reads == 1) {
+        src->width_status = src->renderer->set_width(src->renderer, 5);
+        chunk = second;
+    } else {
+        return 0;
+    }
+    len = strlen(chunk);
+    if (cap < len) {
+        return 0;
+    }
+    memcpy(dst, chunk, len);
+    src->reads++;
+    return len;
 }
 
 static size_t fail_read(void *userdata, char *dst, size_t cap, int *err)
@@ -2362,6 +2395,147 @@ int main(void)
 
     inst->destroy(inst);
     inst = NULL;
+
+    {
+        grow_sink bound_capture;
+        grow_sink borrowed_capture;
+        grow_sink replacement_capture;
+        mdf_sink bound_sink;
+        mdf_sink borrowed_sink;
+        mdf_sink replacement_sink;
+        width_change_source width_source;
+        cstr_source receiver_source;
+        size_t bound_len;
+
+        memset(&bound_capture, 0, sizeof(bound_capture));
+        memset(&borrowed_capture, 0, sizeof(borrowed_capture));
+        memset(&replacement_capture, 0, sizeof(replacement_capture));
+        bound_sink.userdata = &bound_capture;
+        bound_sink.write = grow_write;
+        borrowed_sink.userdata = &borrowed_capture;
+        borrowed_sink.write = grow_write;
+        replacement_sink.userdata = &replacement_capture;
+        replacement_sink.write = grow_write;
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "bound-sink receiver renderer creates");
+        if (inst != NULL) {
+            fails += expect(inst->set_sink != NULL && inst->set_width != NULL &&
+                            inst->reset != NULL && inst->render != NULL &&
+                            inst->feed != NULL && inst->flush != NULL &&
+                            inst->finish_document != NULL,
+                            "bound-sink receiver methods are populated");
+            memset(&receiver_source, 0, sizeof(receiver_source));
+            receiver_source.src = "missing sink\n";
+            receiver_source.len = strlen(receiver_source.src);
+            src.userdata = &receiver_source;
+            src.read = cstr_read;
+            st = inst->render(inst, &src);
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "receiver render requires a previously bound sink");
+            st = inst->set_sink(inst, NULL);
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "receiver set_sink rejects a null sink");
+            st = inst->set_sink(inst, &bound_sink);
+            fails += expect(st == MDF_OK, "receiver set_sink binds one persistent sink");
+
+            memset(&width_source, 0, sizeof(width_source));
+            width_source.renderer = inst;
+            src.userdata = &width_source;
+            src.read = width_change_source_read;
+            st = inst->render(inst, &src);
+            fails += expect(st == MDF_OK && width_source.width_status == MDF_OK &&
+                            bound_capture.buf != NULL &&
+                            strcmp(bound_capture.buf, "alpha\nbeta\n") == 0,
+                            "receiver source callback changes width before later layout decisions");
+            st = inst->set_width(inst, 80);
+            fails += expect(st == MDF_OK, "receiver restores width after a source-time change");
+            st = inst->set_width(inst, 0);
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "receiver set_width rejects an invalid width");
+
+            memset(&receiver_source, 0, sizeof(receiver_source));
+            receiver_source.src = "borrowed free sink\n";
+            receiver_source.len = strlen(receiver_source.src);
+            src.userdata = &receiver_source;
+            src.read = cstr_read;
+            bound_len = bound_capture.len;
+            st = mdf_render(inst, &src, &borrowed_sink);
+            fails += expect(st == MDF_OK && borrowed_capture.buf != NULL &&
+                            strstr(borrowed_capture.buf, "borrowed free sink") != NULL &&
+                            bound_capture.len == bound_len,
+                            "explicit render sink is borrowed and does not replace the receiver sink");
+
+            bound_len = bound_capture.len;
+            st = mdf_feed(inst, "borrowed incremental sink\n",
+                          strlen("borrowed incremental sink\n"), &borrowed_sink);
+            if (st == MDF_OK) st = mdf_flush(inst, &borrowed_sink);
+            if (st == MDF_OK) st = mdf_finish_document(inst, &borrowed_sink);
+            fails += expect(st == MDF_OK && borrowed_capture.buf != NULL &&
+                            strstr(borrowed_capture.buf, "borrowed incremental sink") != NULL &&
+                            bound_capture.len == bound_len,
+                            "explicit incremental sinks are borrowed and do not replace the receiver sink");
+
+            memset(&receiver_source, 0, sizeof(receiver_source));
+            receiver_source.src = "bound receiver sink\n";
+            receiver_source.len = strlen(receiver_source.src);
+            src.userdata = &receiver_source;
+            src.read = cstr_read;
+            st = inst->begin_document(inst);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, receiver_source.src, receiver_source.len);
+            }
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && bound_capture.buf != NULL &&
+                            strstr(bound_capture.buf, "bound receiver sink") != NULL,
+                            "receiver incremental methods continue through the original bound sink");
+
+            memset(&tok, 0, sizeof(tok));
+            tok.type = MDF_TOKEN_TEXT;
+            tok.text = "manual receiver sink";
+            tok.len = strlen(tok.text);
+            st = inst->begin_document(inst);
+            if (st == MDF_OK) st = inst->write_token(inst, &tok);
+            if (st == MDF_OK) {
+                tok.type = MDF_TOKEN_DOCUMENT_END;
+                tok.text = NULL;
+                tok.len = 0;
+                st = inst->write_token(inst, &tok);
+            }
+            if (st == MDF_OK) st = inst->finish(inst);
+            fails += expect(st == MDF_OK && bound_capture.buf != NULL &&
+                            strstr(bound_capture.buf, "manual receiver sink") != NULL,
+                            "receiver manual-token methods use the persistent sink");
+
+            st = inst->feed(inst, "discarded", strlen("discarded"));
+            if (st == MDF_OK) st = inst->reset(inst);
+            if (st == MDF_OK) st = inst->feed(inst, "fresh\n", strlen("fresh\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && bound_capture.buf != NULL &&
+                            strstr(bound_capture.buf, "discarded") == NULL &&
+                            strstr(bound_capture.buf, "fresh") != NULL &&
+                            strstr(bound_capture.buf, "\033[0m") != NULL,
+                            "receiver reset closes ANSI state and requires caller-owned replay");
+
+            st = inst->begin_document(inst);
+            if (st == MDF_OK) st = inst->feed(inst, "old sink", strlen("old sink"));
+            if (st == MDF_OK) st = inst->set_sink(inst, &replacement_sink);
+            if (st == MDF_OK) st = inst->feed(inst, "replacement sink\n", strlen("replacement sink\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && replacement_capture.buf != NULL &&
+                            strstr(replacement_capture.buf, "replacement sink") != NULL &&
+                            strstr(replacement_capture.buf, "old sink") == NULL,
+                            "receiver sink replacement discards state and requires replay on the new sink");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        grow_free(&bound_capture);
+        grow_free(&borrowed_capture);
+        grow_free(&replacement_capture);
+    }
 
     mdf_options_init(&opts);
     opts.boring = 1;
