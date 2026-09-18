@@ -403,7 +403,12 @@ struct mdf {
     mdf_status (*render_cstr)(mdf *self, const char *markdown, char **out);
     /** Return a borrowed latest diagnostic string, valid until the next renderer call or destroy. */
     const char *(*error)(const mdf *self);
-    /** Destroy the renderer and release its owned state. NULL is accepted. */
+    /**
+     * Destroy the renderer and release its owned state. NULL is accepted.
+     * Destruction cannot interrupt an active render operation, including its
+     * source and sink callbacks; in that case it leaves the renderer intact
+     * and records a diagnostic available through error.
+     */
     void (*destroy)(mdf *self);
     /** Free a string returned by this renderer, including render_cstr output. */
     void (*string_free)(mdf *self, char *s);
@@ -437,7 +442,8 @@ struct mdf {
     /**
      * Close terminal styling through the bound sink, then discard the active
      * renderer and incremental-parser session. See mdf_reset. This may not
-     * interrupt a synchronous render call.
+     * interrupt an active render operation, including callbacks invoked by
+     * synchronous and incremental rendering calls.
      */
     mdf_status (*reset)(mdf *self);
     /** Replace the renderer's one bound output sink. See mdf_set_sink. */
@@ -474,8 +480,8 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * identical callback and userdata leaves the current rendering state intact.
  * The explicit-sink
  * free functions below borrow their sink only for their call and never replace
- * this receiver binding. A binding cannot be changed while a synchronous
- * render call is active.
+ * this receiver binding. A binding cannot be changed while an active render
+ * operation is invoking source or sink callbacks.
  */
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
 /**
@@ -496,7 +502,8 @@ mdf_status mdf_set_width(mdf *renderer, int width);
  * configuration such as width and an explicit HTML title. No Markdown input is
  * retained for replay; callers own and resend source if they need reflow. A
  * sink failure returns MDF_ERROR_IO after state has been discarded. It cannot
- * interrupt a synchronous render call.
+ * interrupt an active render operation, including callbacks invoked by
+ * synchronous and incremental rendering calls.
  */
 mdf_status mdf_reset(mdf *renderer);
 /** Render a token through an explicit sink borrowed for this call only; it does not bind that sink. */

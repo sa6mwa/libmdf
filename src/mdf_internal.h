@@ -53,6 +53,7 @@ typedef struct mdf_impl {
     mdf_sink sink;
     int sink_bound;
     mdf_sink *active_sink;
+    int render_active;
     char error[256];
     char emit_fixed[512];
     char *emit_buf;

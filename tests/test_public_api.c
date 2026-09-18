@@ -47,6 +47,24 @@ typedef struct render_control_source {
     mdf_status sink_status;
 } render_control_source;
 
+typedef struct early_render_control_source {
+    mdf *renderer;
+    const mdf_sink *replacement;
+    const char *markdown;
+    int reads;
+    mdf_status reset_status;
+    mdf_status sink_status;
+} early_render_control_source;
+
+typedef struct incremental_control_sink {
+    mdf *renderer;
+    const mdf_sink *replacement;
+    grow_sink capture;
+    int calls;
+    mdf_status reset_status;
+    mdf_status sink_status;
+} incremental_control_sink;
+
 typedef struct one_chunk_then_fail_source {
     const char *src;
     size_t len;
@@ -344,6 +362,19 @@ static void grow_free(grow_sink *sink)
     sink->writes = 0;
 }
 
+static int incremental_control_write(void *userdata, const char *src, size_t len)
+{
+    incremental_control_sink *sink;
+
+    sink = (incremental_control_sink *)userdata;
+    if (sink->calls == 0) {
+        sink->reset_status = sink->renderer->reset(sink->renderer);
+        sink->sink_status = sink->renderer->set_sink(sink->renderer, sink->replacement);
+    }
+    sink->calls++;
+    return grow_write(&sink->capture, src, len);
+}
+
 static size_t cstr_read(void *userdata, char *dst, size_t cap, int *err)
 {
     cstr_source *src;
@@ -437,6 +468,28 @@ static size_t render_control_source_read(void *userdata, char *dst, size_t cap, 
     }
     memcpy(dst, chunk, len);
     src->reads++;
+    return len;
+}
+
+static size_t early_render_control_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    early_render_control_source *src;
+    size_t len;
+
+    src = (early_render_control_source *)userdata;
+    *err = 0;
+    if (src->reads != 0) {
+        return 0;
+    }
+    src->reset_status = src->renderer->reset(src->renderer);
+    src->sink_status = src->renderer->set_sink(src->renderer, src->replacement);
+    len = strlen(src->markdown);
+    if (cap < len) {
+        *err = 1;
+        return 0;
+    }
+    memcpy(dst, src->markdown, len);
+    src->reads = 1;
     return len;
 }
 
@@ -2126,6 +2179,91 @@ int main(void)
         grow_free(&stream_sink.capture);
         inst->destroy(inst);
         inst = NULL;
+    }
+
+    {
+        grow_sink original_capture;
+        grow_sink replacement_capture;
+        mdf_sink original_sink;
+        mdf_sink replacement_sink;
+        early_render_control_source control_source;
+        const mdf_format formats[] = {MDF_FORMAT_HTML, MDF_FORMAT_HTML_DECK};
+        size_t format_index;
+
+        memset(&original_capture, 0, sizeof(original_capture));
+        memset(&replacement_capture, 0, sizeof(replacement_capture));
+        original_sink.userdata = &original_capture;
+        original_sink.write = grow_write;
+        replacement_sink.userdata = &replacement_capture;
+        replacement_sink.write = grow_write;
+        for (format_index = 0; format_index < sizeof(formats) / sizeof(formats[0]); format_index++) {
+            mdf_options_init(&opts);
+            st = mdf_create(formats[format_index], &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL,
+                            "early lifecycle guard renderer creates");
+            if (inst == NULL) {
+                continue;
+            }
+            st = inst->set_sink(inst, &original_sink);
+            memset(&control_source, 0, sizeof(control_source));
+            control_source.renderer = inst;
+            control_source.replacement = &replacement_sink;
+            control_source.markdown = "# Guarded Title\n\nbody\n";
+            src.userdata = &control_source;
+            src.read = early_render_control_source_read;
+            if (st == MDF_OK) st = inst->render(inst, &src);
+            fails += expect(st == MDF_OK &&
+                            control_source.reset_status == MDF_ERROR_INVALID &&
+                            control_source.sink_status == MDF_ERROR_INVALID &&
+                            original_capture.buf != NULL &&
+                            strstr(original_capture.buf, "Guarded Title") != NULL &&
+                            replacement_capture.len == 0,
+                            "automatic-title source callback cannot interrupt an active render");
+            inst->destroy(inst);
+            inst = NULL;
+            grow_free(&original_capture);
+        }
+        fails += expect(replacement_capture.len == 0,
+                        "automatic-title lifecycle guard preserves the original sink for html and deck");
+        grow_free(&replacement_capture);
+    }
+
+    {
+        incremental_control_sink control_sink;
+        grow_sink replacement_capture;
+        mdf_sink bound_sink;
+        mdf_sink replacement_sink;
+
+        memset(&control_sink, 0, sizeof(control_sink));
+        memset(&replacement_capture, 0, sizeof(replacement_capture));
+        bound_sink.userdata = &control_sink;
+        bound_sink.write = incremental_control_write;
+        replacement_sink.userdata = &replacement_capture;
+        replacement_sink.write = grow_write;
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.memory.max_retained_bytes = 1;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "incremental callback lifecycle guard renderer creates");
+        if (inst != NULL) {
+            control_sink.renderer = inst;
+            control_sink.replacement = &replacement_sink;
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) st = inst->feed(inst, "hello world\n", strlen("hello world\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && control_sink.calls > 0 &&
+                            control_sink.reset_status == MDF_ERROR_INVALID &&
+                            control_sink.sink_status == MDF_ERROR_INVALID &&
+                            control_sink.capture.buf != NULL &&
+                            strstr(control_sink.capture.buf, "hello world") != NULL &&
+                            replacement_capture.len == 0,
+                            "incremental sink callback cannot reset or replace an active renderer");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        grow_free(&control_sink.capture);
+        grow_free(&replacement_capture);
     }
 
     mdf_options_init(&opts);

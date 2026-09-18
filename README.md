@@ -675,7 +675,9 @@ the object itself. `reset` closes ANSI state and discards unfinished parser
 state even when the terminal callback fails; replay remains the caller's job.
 A `render_stream` reader may change width for later decisions, but `reset` and
 sink replacement are rejected until
-that synchronous render returns. Rebinding the identical callback is a no-op.
+that synchronous render returns. `close` is likewise rejected from an active
+reader, sink, or trace callback, preserving the receiver for the outer call.
+Rebinding the identical callback is a no-op.
 
 ```lua
 local h = mdf.new({ boring = true })
@@ -712,7 +714,10 @@ callback resets the current document, so resend the source you want on the new
 sink; Lua does not buffer it for you. A failed terminal cleanup callback does
 not prevent replacement: the old state is discarded and the new callback is
 bound for caller-owned replay. Rebinding the identical callback is a no-op and
-preserves the current document.
+preserves the current document. `close` is rejected while its sink or trace
+callback is active. Sink and optional `write_trace` callbacks run
+on the Lua state making each method call, so streams returned from collected
+coroutines remain usable.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
@@ -792,7 +797,9 @@ from Lua. Handle objects expose `set_sink`, `set_width`, `reset`,
 `feed`, `flush`, `finish_document`, `begin_document`, and `close`. `render`
 returns a string and needs no sink; the other output receiver methods use the
 callback previously supplied to `set_sink`. After `finish_document`, call
-`begin_document` before feeding another incremental document.
+`begin_document` before feeding another incremental document. Bound sink and
+optional `write_trace` callbacks are refreshed to the Lua state making each
+call, so handles returned from collected coroutines remain valid.
 
 ## Markdown And HTML Safety
 

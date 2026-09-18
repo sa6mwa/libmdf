@@ -2107,6 +2107,10 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)self->impl;
+    if (impl->render_active) {
+        mdf_set_error(self, "render cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
     if (impl->incremental_state != MDF_INCREMENTAL_IDLE) {
         mdf_set_error(self, "render cannot run during or after an incremental document");
         return MDF_ERROR_INVALID;
@@ -2116,6 +2120,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         return MDF_ERROR_INVALID;
     }
     mdf_renderer_reset_session_state(self);
+    impl->render_active = 1;
     memset(&title_source_data, 0, sizeof(title_source_data));
     title_source_data.source = source;
     title_source_data.prefix.allocator = &impl->allocator;
@@ -2124,6 +2129,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         if (auto_title_detect_from_source(impl, &title_source_data) != 0) {
             deck_string_dispose(&title_source_data.prefix);
             mdf_set_error(self, title_source_data.err == -1 ? "out of memory" : "source read failed");
+            impl->render_active = 0;
             return title_source_data.err == -1 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
         }
         title_source.userdata = &title_source_data;
@@ -2133,6 +2139,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     if (impl->format == MDF_FORMAT_HTML_DECK) {
         st = deck_render(self, source, sink);
         deck_string_dispose(&title_source_data.prefix);
+        impl->render_active = 0;
         return st;
     }
     parser = NULL;
@@ -2144,12 +2151,14 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         } else {
             mdf_set_error(self, "parser creation failed");
         }
+        impl->render_active = 0;
         return st;
     }
     st = self->write_token == NULL || self->finish == NULL ? MDF_ERROR_INVALID : mdf_renderer_begin_internal(self, sink);
     if (st != MDF_OK) {
         parser->destroy(parser);
         deck_string_dispose(&title_source_data.prefix);
+        impl->render_active = 0;
         return st;
     }
     previous_sink = impl->active_sink;
@@ -2166,6 +2175,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     }
     parser->destroy(parser);
     deck_string_dispose(&title_source_data.prefix);
+    impl->render_active = 0;
     return st;
 }
 
@@ -2809,6 +2819,11 @@ mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "feed cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
+    impl->render_active = 1;
     previous_sink = impl->active_sink;
     impl->active_sink = sink;
     st = mdf_incremental_start(renderer, sink);
@@ -2822,6 +2837,7 @@ mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink)
 
 done:
     impl->active_sink = previous_sink;
+    impl->render_active = 0;
     return st;
 }
 
@@ -2836,6 +2852,11 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "flush cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
+    impl->render_active = 1;
     previous_sink = impl->active_sink;
     impl->active_sink = sink;
     if (impl->format == MDF_FORMAT_HTML_DECK) {
@@ -2866,6 +2887,7 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
 
 done:
     impl->active_sink = previous_sink;
+    impl->render_active = 0;
     return st;
 }
 
@@ -2879,6 +2901,11 @@ mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "finish_document cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
+    impl->render_active = 1;
     previous_sink = impl->active_sink;
     impl->active_sink = sink;
     st = mdf_incremental_start(renderer, sink);
@@ -2894,6 +2921,7 @@ mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink)
 
 done:
     impl->active_sink = previous_sink;
+    impl->render_active = 0;
     return st;
 }
 
@@ -2905,6 +2933,10 @@ mdf_status mdf_begin_document(mdf *renderer)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->render_active) {
+        mdf_set_error(renderer, "begin_document cannot interrupt an active render operation");
+        return MDF_ERROR_INVALID;
+    }
     if (impl->incremental_state != MDF_INCREMENTAL_FINISHED) {
         mdf_set_error(renderer, "begin_document requires a successfully finished document");
         return MDF_ERROR_INVALID;
@@ -2967,8 +2999,8 @@ mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink)
     if (impl->sink_bound && impl->sink.userdata == sink->userdata && impl->sink.write == sink->write) {
         return MDF_OK;
     }
-    if (impl->render_parser != NULL) {
-        mdf_set_error(renderer, "set_sink cannot interrupt a synchronous render");
+    if (impl->render_active) {
+        mdf_set_error(renderer, "set_sink cannot interrupt an active render operation");
         return MDF_ERROR_INVALID;
     }
     if (impl->sink_bound) {
@@ -2993,8 +3025,8 @@ mdf_status mdf_reset(mdf *renderer)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
-    if (impl->render_parser != NULL) {
-        mdf_set_error(renderer, "reset cannot interrupt a synchronous render");
+    if (impl->render_active) {
+        mdf_set_error(renderer, "reset cannot interrupt an active render operation");
         return MDF_ERROR_INVALID;
     }
     st = MDF_OK;
@@ -3035,7 +3067,7 @@ mdf_status mdf_set_html_title(mdf *self, const char *title)
     if (impl->format != MDF_FORMAT_HTML && impl->format != MDF_FORMAT_HTML_DECK) {
         return MDF_ERROR_INVALID;
     }
-    if (impl->render_parser != NULL || impl->incremental_state == MDF_INCREMENTAL_ACTIVE || impl->html_open) {
+    if (impl->render_active || impl->incremental_state == MDF_INCREMENTAL_ACTIVE || impl->html_open) {
         mdf_set_error(self, "HTML title must be set before rendering starts");
         return MDF_ERROR_INVALID;
     }
@@ -3205,6 +3237,10 @@ static void mdf_method_destroy(mdf *self)
         return;
     }
     impl = (mdf_impl *)self->impl;
+    if (impl->render_active) {
+        mdf_set_error(self, "destroy cannot interrupt an active render operation");
+        return;
+    }
     allocator = impl->allocator;
     if (impl->incremental_parser != NULL) {
         mdf_parser_destroy(impl->incremental_parser);

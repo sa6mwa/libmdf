@@ -464,6 +464,149 @@ do
          "lua handle failed reset discards state without buffering replay")
 end
 
+do
+  local stream_old_chunks = {}
+  local stream_new_chunks = {}
+  local stream_trace = {}
+  local stream_co = coroutine.create(function()
+    return mdf.document_stream({
+      format = "ansi",
+      boring = true,
+      write_trace = function(_, chunk)
+        stream_trace[#stream_trace + 1] = chunk
+      end,
+    }, function(chunk)
+      stream_old_chunks[#stream_old_chunks + 1] = chunk
+    end)
+  end)
+  local stream_ok, coroutine_stream = coroutine.resume(stream_co)
+  assert(stream_ok, "lua coroutine creates a document stream")
+  stream_co = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(coroutine_stream:set_sink(function(chunk)
+    stream_new_chunks[#stream_new_chunks + 1] = chunk
+  end), "lua document stream replaces a coroutine-created sink after collection")
+  assert(coroutine_stream:write("stream after coroutine collection\n"),
+         "lua document stream refreshes its collected coroutine callback context")
+  assert(coroutine_stream:finish_document(), "lua document stream finishes after coroutine collection")
+  coroutine_stream:close()
+  assert(table.concat(stream_old_chunks):match("\27%[0m") and
+         table.concat(stream_new_chunks):match("stream after coroutine collection") and
+         #stream_trace > 0,
+         "lua document stream refreshes sink and trace callbacks for each caller state")
+
+  local handle_old_chunks = {}
+  local handle_new_chunks = {}
+  local handle_trace = {}
+  local handle_co = coroutine.create(function()
+    local coroutine_handle = mdf.new({
+      format = "ansi",
+      boring = true,
+      write_trace = function(_, chunk)
+        handle_trace[#handle_trace + 1] = chunk
+      end,
+    })
+    assert(coroutine_handle:set_sink(function(chunk)
+      handle_old_chunks[#handle_old_chunks + 1] = chunk
+    end))
+    return coroutine_handle
+  end)
+  local handle_ok, coroutine_handle = coroutine.resume(handle_co)
+  assert(handle_ok, "lua coroutine creates a bound handle")
+  handle_co = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(coroutine_handle:reset(), "lua handle resets a coroutine-created sink after collection")
+  assert(coroutine_handle:set_sink(function(chunk)
+    handle_new_chunks[#handle_new_chunks + 1] = chunk
+  end), "lua handle replaces its sink after coroutine collection")
+  assert(coroutine_handle:feed("handle after coroutine collection\n"),
+         "lua handle refreshes its collected coroutine callback context")
+  assert(coroutine_handle:finish_document(), "lua handle finishes after coroutine collection")
+  coroutine_handle:close()
+  assert(table.concat(handle_old_chunks):match("\27%[0m") and
+         table.concat(handle_new_chunks):match("handle after coroutine collection") and
+         #handle_trace > 0,
+         "lua handle refreshes sink and trace callbacks for each caller state")
+
+  local nested_chunks = {}
+  local nested_handle = mdf.new({ format = "ansi", boring = true })
+  local nested_once = false
+  local nested_sink
+  nested_sink = function(chunk)
+    nested_chunks[#nested_chunks + 1] = chunk
+    if not nested_once then
+      local nested_co
+
+      nested_once = true
+      nested_co = coroutine.create(function()
+        local reset_ok = pcall(function() nested_handle:reset() end)
+
+        assert(not reset_ok)
+        assert(nested_handle:set_sink(nested_sink))
+        assert(nested_handle:set_width(80))
+      end)
+      assert(coroutine.resume(nested_co),
+             "nested coroutine can inspect and configure an active lua handle")
+    end
+  end
+  assert(nested_handle:set_sink(nested_sink), "lua handle binds a nested-coroutine regression sink")
+  assert(nested_handle:feed("nested coroutine callback\n"),
+         "nested coroutine leaves the active sink callback context intact")
+  assert(nested_handle:finish_document(), "nested coroutine handle finishes its document")
+  nested_handle:close()
+  assert(table.concat(nested_chunks):match("nested coroutine callback"),
+         "nested coroutine callback preserves subsequent Lua sink writes")
+
+  local source_chunks = {}
+  local source_handle = mdf.new({ format = "ansi", boring = true })
+  local source_done = false
+  assert(source_handle:set_sink(function(chunk)
+    source_chunks[#source_chunks + 1] = chunk
+  end), "lua handle binds a nested-source regression sink")
+  assert(source_handle:render_stream(function()
+    if source_done then return nil end
+    source_done = true
+    local source_co = coroutine.create(function()
+      local render_ok = pcall(function()
+        source_handle:render_stream(function()
+          return nil
+        end)
+      end)
+      local reset_ok = pcall(function() source_handle:reset() end)
+      local close_ok = pcall(function() source_handle:close() end)
+
+      assert(not render_ok)
+      assert(not reset_ok)
+      assert(not close_ok)
+    end)
+    assert(coroutine.resume(source_co),
+           "nested coroutine cannot reset an active lua source render")
+    source_co = nil
+    collectgarbage("collect")
+    return "source callback after nested coroutine\n"
+  end), "nested source coroutine leaves later sink callback context valid")
+  source_handle:close()
+  assert(table.concat(source_chunks):match("source callback after nested coroutine"),
+         "nested source coroutine preserves Lua sink writes after collection")
+
+  local close_stream_chunks = {}
+  local close_stream
+  close_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+    close_stream_chunks[#close_stream_chunks + 1] = chunk
+    local close_ok = pcall(function() close_stream:close() end)
+    assert(not close_ok, "lua document stream rejects close from its sink callback")
+  end)
+  assert(close_stream:write("close callback remains live\n"),
+         "lua document stream remains valid after rejected callback close")
+  assert(close_stream:finish_document(),
+         "lua document stream finishes after rejected callback close")
+  close_stream:close()
+  assert(table.concat(close_stream_chunks):match("close callback remains live"),
+         "lua document stream preserves its sink after rejected callback close")
+end
+
 handle:close()
 
 local html_handle = mdf.new({ format = "html" })

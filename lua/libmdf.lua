@@ -37,7 +37,9 @@ end
 ---Create an incremental document stream with one persistent writer callback.
 ---Use `set_width`, `reset`, `set_sink`, or `set_html_title` on the returned
 ---stream as needed; `error` exposes the latest core diagnostic and `close` or
----`destroy` releases the renderer.
+---`destroy` releases the renderer, except it is rejected while one of its
+---callbacks is active. Callbacks run on the Lua state invoking each method, so
+---a stream returned from a collected coroutine remains usable.
 ---A failed terminal reset reports an error after discarding current state.
 ---Rebinding the identical callback leaves the current document intact.
 ---Replacing a callback discards state and still binds the new callback if old
