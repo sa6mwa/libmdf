@@ -274,10 +274,10 @@ emits each final renderer decision as it is made. For example, a real input
 space normally closes and emits the preceding word while the renderer retains
 the separator until wrapping decides it. `flush` is an output-neutral
 soft-boundary check: it never emits, resolves input, or acts as EOF. Only
-`finish_document` resolves an unfinished construct and closes output. The
-supplied sink is synchronous and
-borrowed for each call, so its write callback must accept every complete
-decision emission or fail the document. libmdf deliberately supplies no
+`finish_document` resolves an unfinished construct and closes output. The one
+bound sink is synchronous and borrowed until it is replaced or the renderer is
+destroyed, so its write callback must accept every complete decision emission
+or fail the document. libmdf deliberately supplies no
 partial-write, nonblocking-FD, or output-queue abstraction; an event-loop host
 owns that bounded transport layer above this API.
 
@@ -293,24 +293,29 @@ mdf_sink sink;
 sink.userdata = stdout;
 sink.write = stdout_write;
 
-renderer->feed(renderer, "Hello ", 6, &sink);
-renderer->flush(renderer, &sink);              /* still not EOF */
-renderer->feed(renderer, "**world**", 9, &sink);
-renderer->finish_document(renderer, &sink);    /* the sole EOF operation */
+renderer->set_sink(renderer, &sink);
+renderer->feed(renderer, "Hello ", 6);
+renderer->flush(renderer);                     /* still not EOF */
+renderer->feed(renderer, "**world**", 9);
+renderer->finish_document(renderer);           /* the sole EOF operation */
 renderer->begin_document(renderer);            /* now a distinct document may start */
 ```
 
 Fragments must be nonempty. After successful finalization, further `feed`,
 `flush`, or `finish_document` calls fail until `begin_document` succeeds.
 Sink failure makes that document failed; libmdf never retries or retains the
-sink. Pending table and chart constructs retain at most 65536 bytes, and tables
+sink. To change width at any decision boundary, call `renderer->set_width`; it
+affects only later layout, so call `renderer->reset` and replay caller-owned
+source for a complete reflow. Reset and sink replacement close ANSI terminal
+state before discarding parser state; libmdf never retains input for replay.
+Pending table and chart constructs retain at most 65536 bytes, and tables
 retain at most 1024 rows; an oversized unfinished construct fails with
 `MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
 supports ANSI and HTML documents; HTML callers must set an explicit title before
 the first feed because automatic title detection is a one-shot source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `3`. Lua facade and `cmdf.lua`
+The shared library uses SONAME ABI version `4`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.

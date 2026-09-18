@@ -24,9 +24,9 @@ int main(void)
         opts.deck_center_front_text != 1) {
         return 1;
     }
-    (void)renderer->feed(renderer, "x", 1, &sink);
-    (void)renderer->flush(renderer, &sink);
-    (void)renderer->finish_document(renderer, &sink);
+    (void)mdf_feed(renderer, "x", 1, &sink);
+    (void)mdf_flush(renderer, &sink);
+    (void)mdf_finish_document(renderer, &sink);
     (void)renderer->begin_document(renderer);
     return mdf_create(format, &opts, &renderer) == MDF_OK && renderer != NULL ? 0 : 1;
 }

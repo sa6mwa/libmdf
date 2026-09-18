@@ -1281,12 +1281,12 @@ int main(void)
     tok.text = "manual";
     tok.len = strlen(tok.text);
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_INVALID && sink_data.len == 0,
                     "html deck write_token rejects manual token streaming");
     fails += expect(strcmp(inst->error(inst), "deck renderers do not support token streaming") == 0,
                     "html deck write_token reports unsupported token streaming");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_ERROR_INVALID && sink_data.len == 0,
                     "html deck finish rejects manual token streaming");
     grow_free(&sink_data);
@@ -1953,7 +1953,7 @@ int main(void)
     src.read = fail_read;
     sink.userdata = NULL;
     sink.write = discard_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "html deck render surfaces source read failure");
     fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
                     "html deck source failure exposes error text");
@@ -1977,7 +1977,7 @@ int main(void)
     src.read = cstr_read;
     sink.userdata = NULL;
     sink.write = fail_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "html deck render surfaces sink write failure");
     fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
                     "html deck sink failure exposes error text");
@@ -2006,7 +2006,7 @@ int main(void)
     src.read = one_chunk_then_fail_read;
     sink.userdata = NULL;
     sink.write = discard_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "html deck render surfaces delayed source read failure");
     fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
                     "html deck delayed source read failure exposes error text");
@@ -2045,7 +2045,7 @@ int main(void)
         sink.userdata = &stream_sink;
         sink.write = source_offset_probe_write;
         second = strstr(deck_stream_markdown, "# Second Slide");
-        st = inst->render(inst, &source, &sink);
+        st = mdf_render(inst, &source, &sink);
         fails += expect(st == MDF_OK, "html deck streaming render succeeds");
         fails += expect(stream_sink.saw_needle, "html deck streaming emits first slide");
         fails += expect(second != NULL &&
@@ -2154,7 +2154,7 @@ int main(void)
         sink.userdata = &stream_sink;
         sink.write = source_offset_probe_write;
         second = strstr(deck_stream_markdown, "# Second Numbered Slide");
-        st = inst->render(inst, &source, &sink);
+        st = mdf_render(inst, &source, &sink);
         fails += expect(st == MDF_OK, "html deck slide-number streaming render succeeds");
         fails += expect(stream_sink.saw_needle, "html deck slide-number streaming emits first slide");
         fails += expect(second != NULL &&
@@ -2190,7 +2190,7 @@ int main(void)
         source.read = chunked_cstr_read;
         sink.userdata = &stream_sink;
         sink.write = source_offset_probe_write;
-        st = inst->render(inst, &source, &sink);
+        st = mdf_render(inst, &source, &sink);
         fails += expect(st == MDF_OK, "html deck ambiguous leading separator streaming render succeeds");
         fails += expect(stream_sink.saw_needle, "html deck ambiguous leading separator preserves first slide");
         fails += expect(stream_sink.capture.buf != NULL &&
@@ -2312,45 +2312,45 @@ int main(void)
         out = NULL;
     }
 
-    st = inst->render(NULL, NULL, NULL);
+    st = mdf_render(NULL, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null self");
-    st = inst->render(inst, NULL, NULL);
+    st = mdf_render(inst, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null source and sink");
     src.userdata = NULL;
     src.read = NULL;
     sink.userdata = NULL;
     sink.write = grow_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null source callback");
     sink.write = NULL;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null sink callback");
     st = inst->render_cstr(inst, NULL, &out);
     fails += expect(st == MDF_ERROR_INVALID && out == NULL, "render_cstr rejects null markdown");
     st = inst->render_cstr(inst, "# hi\n", NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render_cstr rejects null out");
-    st = inst->write_token(NULL, NULL, NULL);
+    st = mdf_write_token(NULL, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "write_token rejects null self");
-    st = inst->write_token(inst, NULL, NULL);
+    st = mdf_write_token(inst, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "write_token rejects null token and sink");
     sink.userdata = NULL;
     sink.write = NULL;
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_INVALID, "write_token rejects null sink callback");
-    st = inst->finish(NULL, NULL);
+    st = mdf_finish(NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "finish rejects null self");
-    st = inst->finish(inst, NULL);
+    st = mdf_finish(inst, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "finish rejects null sink");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_ERROR_INVALID, "finish rejects null sink callback");
 
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_TEXT;
     tok.text = NULL;
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_INVALID, "text token without bytes rejects");
 
     st = inst->render_cstr(inst, "# Title\n\nBody.\n", &out);
@@ -2576,7 +2576,7 @@ int main(void)
             src.read = cstr_read;
             sink.userdata = &sink_data;
             sink.write = grow_write;
-            st = inst->render(inst, &src, &sink);
+            st = mdf_render(inst, &src, &sink);
             fails += expect(st == MDF_OK &&
                             sink_data.buf != NULL &&
                             strstr(sink_data.buf, "\033]8;;https://example.com\033\\") != NULL,
@@ -2585,7 +2585,7 @@ int main(void)
             memset(&sink_data, 0, sizeof(sink_data));
             link_src.off = 0;
             osc8_start_allocs_before_render = allocs.allocs_26;
-            st = inst->render(inst, &src, &sink);
+            st = mdf_render(inst, &src, &sink);
             fails += expect(st == MDF_OK &&
                             sink_data.buf != NULL &&
                             strstr(sink_data.buf, "\033]8;;https://example.com\033\\") != NULL,
@@ -2917,7 +2917,7 @@ int main(void)
             src.read = cstr_read;
             sink.userdata = &sink_data;
             sink.write = grow_write;
-            st = tracked_inst->render(tracked_inst, &src, &sink);
+            st = mdf_render(tracked_inst, &src, &sink);
             fails += expect(st == MDF_OK, "adversarial invalid-byte table render succeeds");
             grow_free(&sink_data);
             tracked_inst->destroy(tracked_inst);
@@ -2942,24 +2942,24 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Hello";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts text");
     tok.type = MDF_TOKEN_SPACE;
     tok.text = " ";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts space");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "world";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts second text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL, "ansi finish completes manual token stream");
     fails += expect(strstr(sink_data.buf, "Hello world") != NULL, "ansi manual token stream renders expected text");
     grow_free(&sink_data);
@@ -2971,32 +2971,32 @@ int main(void)
     tok.type = MDF_TOKEN_LIST_ITEM_START;
     tok.text = "-";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts list item start");
     tok.type = MDF_TOKEN_TASK_CHECKED;
     tok.text = "X";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts checked task marker");
     tok.type = MDF_TOKEN_SPACE;
     tok.text = " ";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi task session accepts following space token");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "done";
     tok.len = 4;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi task session accepts task text");
     tok.type = MDF_TOKEN_LIST_ITEM_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi task session accepts list item end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi task session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "- [X] done") != NULL,
                     "ansi manual task token stream renders checked task line");
@@ -3008,24 +3008,24 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_HEADING_START;
     tok.level = 2;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts heading start");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Head";
     tok.len = 4;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi heading session accepts heading text");
     tok.type = MDF_TOKEN_HEADING_END;
     tok.text = NULL;
     tok.len = 0;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi heading session accepts heading end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi heading session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "## Head") != NULL,
                     "ansi manual heading token stream renders heading text");
@@ -3037,23 +3037,23 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_BLOCKQUOTE_START;
     tok.level = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts blockquote start");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "quote";
     tok.len = 5;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi blockquote session accepts quote text");
     tok.type = MDF_TOKEN_BLOCKQUOTE_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi blockquote session accepts blockquote end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi blockquote session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "> quote") != NULL,
                     "ansi manual blockquote token stream renders quoted content");
@@ -3065,22 +3065,22 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_CODE_BLOCK_START;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts code block start");
     tok.type = MDF_TOKEN_CODE_TEXT;
     tok.text = "code();";
     tok.len = 7;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi code block session accepts code text");
     tok.type = MDF_TOKEN_CODE_BLOCK_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi code block session accepts code block end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi code block session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "code();") != NULL,
                     "ansi manual code block token stream renders code content");
@@ -3093,32 +3093,32 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "a";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts paragraph text");
     tok.type = MDF_TOKEN_NEWLINE;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi paragraph session accepts newline");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "b";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi paragraph session accepts second line text");
     tok.type = MDF_TOKEN_PARAGRAPH_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi paragraph session accepts paragraph end");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "c";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi paragraph session accepts following paragraph text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi paragraph session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "a\nb\n\nc") != NULL,
                     "ansi manual newline and paragraph-end token stream preserves paragraph structure");
@@ -3131,25 +3131,25 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "before";
     tok.len = 6;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi thematic session accepts leading text");
     tok.type = MDF_TOKEN_THEMATIC_BREAK;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi thematic session accepts thematic break");
     tok.type = MDF_TOKEN_NEWLINE;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi thematic session accepts following newline");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "after";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi thematic session accepts trailing text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi thematic session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "before") != NULL &&
                     strstr(sink_data.buf, "after") != NULL,
@@ -3163,27 +3163,27 @@ int main(void)
     tok.type = MDF_TOKEN_LIST_ITEM_START;
     tok.text = "1.";
     tok.len = 2;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token accepts ordered list item start");
     tok.type = MDF_TOKEN_SPACE;
     tok.text = " ";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi ordered list session accepts following space");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "first";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi ordered list session accepts item text");
     tok.type = MDF_TOKEN_LIST_ITEM_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi ordered list session accepts list item end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi ordered list session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "1. first") != NULL,
                     "ansi manual ordered list token stream renders ordered marker");
@@ -3192,7 +3192,7 @@ int main(void)
     memset(&sink_data, 0, sizeof(sink_data));
     sink.userdata = &sink_data;
     sink.write = grow_write;
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf == NULL,
                     "ansi finish on a fresh handle is a no-op");
     grow_free(&sink_data);
@@ -3204,14 +3204,14 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Again";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token starts a second manual session on the same handle");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi second manual session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL && strstr(sink_data.buf, "Again") != NULL,
                     "ansi handle resets cleanly between manual sessions");
     grow_free(&sink_data);
@@ -3224,9 +3224,9 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Oops";
     tok.len = 4;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi write_token can buffer text before a finish failure");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_ERROR_IO, "ansi finish surfaces sink write failure");
     fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
                     "ansi finish failure sets sink write error text");
@@ -3238,14 +3238,14 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Retry";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi manual session restarts cleanly after finish failure");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "ansi restarted manual session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL && strstr(sink_data.buf, "Retry") != NULL,
                     "ansi restarted manual session finishes after prior failure");
     grow_free(&sink_data);
@@ -3286,7 +3286,7 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "x";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_NOMEM, "ansi write_token surfaces allocator exhaustion");
     fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
                     "ansi write_token exposes allocator exhaustion text");
@@ -3322,14 +3322,14 @@ int main(void)
     memset(&sink_data, 0, sizeof(sink_data));
     sink.userdata = &sink_data;
     sink.write = grow_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL, "render streams through source and sink");
     fails += expect(strstr(sink_data.buf, "- item") != NULL, "render sink output matches markdown content");
     grow_free(&sink_data);
 
     src.userdata = NULL;
     src.read = fail_read;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "render surfaces source read failure");
     fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
                     "render exposes source read failure text");
@@ -3359,7 +3359,7 @@ int main(void)
     src.read = one_chunk_then_fail_read;
     sink.userdata = NULL;
     sink.write = discard_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "render surfaces delayed source read failure");
     fails += expect(strcmp(inst->error(inst), "source read failed") == 0,
                     "delayed source read failure sets error text");
@@ -3384,7 +3384,7 @@ int main(void)
     src.read = one_chunk_then_fail_read;
     sink.userdata = NULL;
     sink.write = discard_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "render surfaces delayed table source read failure");
     inst->destroy(inst);
     inst = NULL;
@@ -3408,7 +3408,7 @@ int main(void)
     src.read = cstr_read;
     sink.userdata = NULL;
     sink.write = fail_write;
-    st = inst->render(inst, &src, &sink);
+    st = mdf_render(inst, &src, &sink);
     fails += expect(st == MDF_ERROR_IO, "render surfaces sink write failure");
     fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
                     "render exposes sink write failure text");
@@ -3451,13 +3451,13 @@ int main(void)
     tok.text = "Body";
     tok.len = 4;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts plain text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL, "html finish completes manual token stream");
     fails += expect(strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "Body") != NULL &&
@@ -3472,32 +3472,32 @@ int main(void)
     tok.type = MDF_TOKEN_LIST_ITEM_START;
     tok.text = "-";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts list item start");
     tok.type = MDF_TOKEN_TASK_UNCHECKED;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts unchecked task marker");
     tok.type = MDF_TOKEN_SPACE;
     tok.text = " ";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html task session accepts following space token");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "todo";
     tok.len = 4;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html task session accepts task text");
     tok.type = MDF_TOKEN_LIST_ITEM_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html task session accepts list item end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html task session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "[ ]") != NULL &&
                     strstr(sink_data.buf, "todo") != NULL &&
@@ -3511,24 +3511,24 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_HEADING_START;
     tok.level = 3;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts heading start");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Head";
     tok.len = 4;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html heading session accepts heading text");
     tok.type = MDF_TOKEN_HEADING_END;
     tok.text = NULL;
     tok.len = 0;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html heading session accepts heading end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html heading session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<span class=\"mdf-heading\"") != NULL &&
                     strstr(sink_data.buf, "Head") != NULL &&
@@ -3542,23 +3542,23 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_BLOCKQUOTE_START;
     tok.level = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts blockquote start");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "quote";
     tok.len = 5;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html blockquote session accepts quote text");
     tok.type = MDF_TOKEN_BLOCKQUOTE_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html blockquote session accepts blockquote end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html blockquote session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<span class=\"mdf-prefix\">") != NULL &&
                     strstr(sink_data.buf, "quote") != NULL &&
@@ -3572,22 +3572,22 @@ int main(void)
     memset(&tok, 0, sizeof(tok));
     tok.type = MDF_TOKEN_CODE_BLOCK_START;
     tok.level = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts code block start");
     tok.type = MDF_TOKEN_CODE_TEXT;
     tok.text = "code();";
     tok.len = 7;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html code block session accepts code text");
     tok.type = MDF_TOKEN_CODE_BLOCK_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html code block session accepts code block end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html code block session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "code();") != NULL &&
@@ -3602,32 +3602,32 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "a";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts paragraph text");
     tok.type = MDF_TOKEN_NEWLINE;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html paragraph session accepts newline");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "b";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html paragraph session accepts second line text");
     tok.type = MDF_TOKEN_PARAGRAPH_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html paragraph session accepts paragraph end");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "c";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html paragraph session accepts following paragraph text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html paragraph session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "a") != NULL &&
@@ -3644,25 +3644,25 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "before";
     tok.len = 6;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html thematic session accepts leading text");
     tok.type = MDF_TOKEN_THEMATIC_BREAK;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html thematic session accepts thematic break");
     tok.type = MDF_TOKEN_NEWLINE;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html thematic session accepts following newline");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "after";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html thematic session accepts trailing text");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html thematic session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "before") != NULL &&
@@ -3678,27 +3678,27 @@ int main(void)
     tok.type = MDF_TOKEN_LIST_ITEM_START;
     tok.text = "1.";
     tok.len = 2;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token accepts ordered list item start");
     tok.type = MDF_TOKEN_SPACE;
     tok.text = " ";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html ordered list session accepts following space");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "first";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html ordered list session accepts item text");
     tok.type = MDF_TOKEN_LIST_ITEM_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html ordered list session accepts list item end");
     tok.type = MDF_TOKEN_DOCUMENT_END;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html ordered list session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "1.") != NULL &&
                     strstr(sink_data.buf, "first") != NULL &&
@@ -3709,7 +3709,7 @@ int main(void)
     memset(&sink_data, 0, sizeof(sink_data));
     sink.userdata = &sink_data;
     sink.write = grow_write;
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "</html>") != NULL,
@@ -3734,14 +3734,14 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Again";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token starts a second manual session on the same handle");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html second manual session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "Again") != NULL &&
@@ -3757,7 +3757,7 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Oops";
     tok.len = 4;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_IO, "html write_token surfaces sink write failure");
     fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
                     "html write_token failure sets sink write error text");
@@ -3769,14 +3769,14 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Retry";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html manual session restarts cleanly after write_token failure");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html restarted manual session accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "Retry") != NULL &&
@@ -3801,15 +3801,15 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Body";
     tok.len = 4;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html write_token can buffer text before a finish failure");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html buffered session accepts document end before finish failure");
     armed_sink.armed = 1;
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_ERROR_IO, "html finish surfaces sink write failure");
     fails += expect(strcmp(inst->error(inst), "sink write failed") == 0,
                     "html finish failure sets sink write error text");
@@ -3821,14 +3821,14 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Retry";
     tok.len = 5;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html manual session restarts cleanly after finish failure");
     tok.type = MDF_TOKEN_DOCUMENT_END;
     tok.text = NULL;
     tok.len = 0;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_OK, "html restarted session after finish failure accepts document end");
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_OK && sink_data.buf != NULL &&
                     strstr(sink_data.buf, "<!doctype html>") != NULL &&
                     strstr(sink_data.buf, "Retry") != NULL &&
@@ -3875,7 +3875,7 @@ int main(void)
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "x";
     tok.len = 1;
-    st = inst->write_token(inst, &tok, &sink);
+    st = mdf_write_token(inst, &tok, &sink);
     fails += expect(st == MDF_ERROR_NOMEM, "html write_token surfaces allocator exhaustion");
     fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
                     "html write_token exposes allocator exhaustion text");
@@ -3913,7 +3913,7 @@ int main(void)
     memset(&sink_data, 0, sizeof(sink_data));
     sink.userdata = &sink_data;
     sink.write = grow_write;
-    st = inst->finish(inst, &sink);
+    st = mdf_finish(inst, &sink);
     fails += expect(st == MDF_ERROR_NOMEM, "html finish on a fresh handle surfaces allocator exhaustion");
     fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
                     "html fresh finish exposes allocator exhaustion text");
@@ -4070,7 +4070,7 @@ int main(void)
                 before_allocs = allocs.allocs;
                 before_reallocs = allocs.reallocs;
                 before_frees = allocs.frees;
-                st = inst->render(inst, &src, &sink);
+                st = mdf_render(inst, &src, &sink);
                 fails += expect(st == MDF_OK, "memory workspace repeated ansi render succeeds");
                 if (i >= 4) {
                     fails += expect(allocs.allocs == before_allocs &&
@@ -4103,7 +4103,7 @@ int main(void)
                 before_allocs = allocs.allocs;
                 before_reallocs = allocs.reallocs;
                 before_frees = allocs.frees;
-                st = inst->render(inst, &src, &sink);
+                st = mdf_render(inst, &src, &sink);
                 fails += expect(st == MDF_OK, "memory workspace repeated html render succeeds");
                 if (i >= 4) {
                     fails += expect(allocs.allocs == before_allocs &&
@@ -4137,7 +4137,7 @@ int main(void)
                 sink.write = discard_write;
                 before_allocs = allocs.allocs;
                 before_frees = allocs.frees;
-                st = inst->render(inst, &src, &sink);
+                st = mdf_render(inst, &src, &sink);
                 fails += expect(st == MDF_OK, "memory workspace repeated table render succeeds");
                 if (i >= 10) {
                     late_table_allocs += allocs.allocs - before_allocs;
@@ -4183,7 +4183,7 @@ int main(void)
             src_data.off = 0;
             src.userdata = &src_data;
             src.read = cstr_read;
-            st = inst->render(inst, &src, &sink);
+            st = mdf_render(inst, &src, &sink);
             fails += expect(st == MDF_OK, "incremental reference render succeeds");
             inst->destroy(inst);
             inst = NULL;
@@ -4195,31 +4195,30 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental renderer creates");
         if (inst != NULL) {
-            fails += expect(inst->feed == mdf_feed && inst->flush == mdf_flush &&
-                            inst->finish_document == mdf_finish_document &&
-                            inst->begin_document == mdf_begin_document,
-                            "incremental lifecycle receiver methods are bound to their exported wrappers");
-            st = inst->feed(inst, ordinary, strlen(ordinary), &incremental_output);
+            fails += expect(inst->feed != NULL && inst->flush != NULL &&
+                            inst->finish_document != NULL && inst->begin_document != NULL,
+                            "incremental lifecycle receiver methods are populated");
+            st = mdf_feed(inst, ordinary, strlen(ordinary), &incremental_output);
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL &&
                             strstr(incremental_sink.buf, "ordinary") != NULL,
                             "incremental feed emits decidable ordinary text before eof");
-            st = inst->flush(inst, &incremental_output);
+            st = mdf_flush(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental flush is a non-eof boundary");
             st = inst->begin_document(inst);
             fails += expect(st == MDF_ERROR_INVALID, "incremental begin rejects an unfinished document");
-            st = inst->finish_document(inst, &incremental_output);
+            st = mdf_finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental finish closes the first document");
-            st = inst->feed(inst, "later", 5, &incremental_output);
+            st = mdf_feed(inst, "later", 5, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental feed rejects post-finish input");
-            st = inst->flush(inst, &incremental_output);
+            st = mdf_flush(inst, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental flush rejects post-finish calls");
-            st = inst->finish_document(inst, &incremental_output);
+            st = mdf_finish_document(inst, &incremental_output);
             fails += expect(st == MDF_ERROR_INVALID, "incremental finish is not repeatable");
             st = inst->begin_document(inst);
             fails += expect(st == MDF_OK, "incremental begin starts a distinct next document");
-            st = inst->feed(inst, "second document", strlen("second document"), &incremental_output);
+            st = mdf_feed(inst, "second document", strlen("second document"), &incremental_output);
             fails += expect(st == MDF_OK, "incremental next document accepts input");
-            st = inst->finish_document(inst, &incremental_output);
+            st = mdf_finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental next document finishes");
             inst->destroy(inst);
             inst = NULL;
@@ -4232,17 +4231,17 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental separator renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "Hello ", strlen("Hello "), &incremental_output);
+            st = mdf_feed(inst, "Hello ", strlen("Hello "), &incremental_output);
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL &&
                             strcmp(incremental_sink.buf, "Hello") == 0 &&
                             incremental_sink.writes == 1,
                             "incremental feed emits the first word at its space boundary");
-            st = inst->feed(inst, "world ", strlen("world "), &incremental_output);
+            st = mdf_feed(inst, "world ", strlen("world "), &incremental_output);
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL &&
                             strcmp(incremental_sink.buf, "Hello world") == 0 &&
                             incremental_sink.writes == 3,
                             "incremental feed emits each later word once its boundary is decided");
-            st = inst->finish_document(inst, &incremental_output);
+            st = mdf_finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK, "incremental separator renderer finishes");
             inst->destroy(inst);
             inst = NULL;
@@ -4255,17 +4254,17 @@ int main(void)
             incremental_output.write = grow_write;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             if (st == MDF_OK) {
-                st = inst->feed(inst, incremental_markdown, split, &incremental_output);
+                st = mdf_feed(inst, incremental_markdown, split, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = inst->flush(inst, &incremental_output);
+                st = mdf_flush(inst, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = inst->feed(inst, incremental_markdown + split,
+                st = mdf_feed(inst, incremental_markdown + split,
                                 incremental_len - split, &incremental_output);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &incremental_output);
+                st = mdf_finish_document(inst, &incremental_output);
             }
             fails += expect(st == MDF_OK && incremental_sink.buf != NULL && expected_sink.buf != NULL &&
                             strcmp(incremental_sink.buf, expected_sink.buf) == 0,
@@ -4279,7 +4278,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental empty fragment renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "", 0, &sink);
+            st = mdf_feed(inst, "", 0, &sink);
             fails += expect(st == MDF_ERROR_INVALID, "incremental feed rejects an empty fragment");
             inst->destroy(inst);
             inst = NULL;
@@ -4294,10 +4293,10 @@ int main(void)
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL, "incremental failing sink renderer creates");
             if (inst != NULL) {
-                st = inst->feed(inst, "sink failure\n", strlen("sink failure\n"), &incremental_output);
+                st = mdf_feed(inst, "sink failure\n", strlen("sink failure\n"), &incremental_output);
                 fails += expect(st == MDF_ERROR_IO && strcmp(inst->error(inst), "sink write failed") == 0,
                                 "incremental sink failure enters a failed state");
-                st = inst->finish_document(inst, &incremental_output);
+                st = mdf_finish_document(inst, &incremental_output);
                 fails += expect(st == MDF_ERROR_INVALID, "incremental failed state does not replay output");
                 inst->destroy(inst);
                 inst = NULL;
@@ -4329,14 +4328,14 @@ int main(void)
             fails += expect(st == MDF_OK && inst != NULL,
                             "incremental flush allocation-failure renderer creates");
             if (inst != NULL) {
-                st = inst->feed(inst, long_markdown, strlen(long_markdown), &incremental_output);
+                st = mdf_feed(inst, long_markdown, strlen(long_markdown), &incremental_output);
                 fails += expect(st == MDF_OK && incremental_sink.len == 0,
                                 "incremental long word remains pending before EOF");
                 fail_allocs.alloc_calls = 0;
                 fail_allocs.realloc_calls = 0;
                 fail_allocs.fail_after = 0;
                 if (st == MDF_OK) {
-                    st = inst->flush(inst, &incremental_output);
+                    st = mdf_flush(inst, &incremental_output);
                 }
                 fails += expect(st == MDF_OK,
                                 "incremental flush does not attempt an unresolved emission");
@@ -4344,7 +4343,7 @@ int main(void)
                                 "incremental flush does not invoke the sink");
                 fail_allocs.fail_after = (size_t)-1;
                 if (st == MDF_OK) {
-                    st = inst->finish_document(inst, &incremental_output);
+                    st = mdf_finish_document(inst, &incremental_output);
                 }
                 fails += expect(st == MDF_OK && incremental_sink.len > 0,
                                 "incremental EOF emits the retained long-word decision");
@@ -4362,12 +4361,12 @@ int main(void)
         fails += expect(st == MDF_OK && inst != NULL, "incremental html renderer creates");
         if (inst != NULL) {
             st = mdf_set_html_title(inst, "Incremental HTML");
-            if (st == MDF_OK) st = inst->flush(inst, &incremental_output);
+            if (st == MDF_OK) st = mdf_flush(inst, &incremental_output);
             fails += expect(st == MDF_OK && armed_sink.capture.len == 0,
                             "initial incremental html flush does not write to the sink");
             armed_sink.armed = 0;
-            if (st == MDF_OK) st = inst->feed(inst, "# Heading\n", strlen("# Heading\n"), &incremental_output);
-            if (st == MDF_OK) st = inst->finish_document(inst, &incremental_output);
+            if (st == MDF_OK) st = mdf_feed(inst, "# Heading\n", strlen("# Heading\n"), &incremental_output);
+            if (st == MDF_OK) st = mdf_finish_document(inst, &incremental_output);
             fails += expect(st == MDF_OK && armed_sink.capture.buf != NULL &&
                             strstr(armed_sink.capture.buf, "<title>Incremental HTML</title>") != NULL &&
                             strstr(armed_sink.capture.buf, "</html>") != NULL,
@@ -4379,7 +4378,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental deck renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "# deck\n", strlen("# deck\n"), &sink);
+            st = mdf_feed(inst, "# deck\n", strlen("# deck\n"), &sink);
             fails += expect(st == MDF_ERROR_INVALID, "incremental lifecycle rejects whole-source deck rendering");
             inst->destroy(inst);
             inst = NULL;
@@ -4387,7 +4386,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental untitled html renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "# Heading\n", strlen("# Heading\n"), &sink);
+            st = mdf_feed(inst, "# Heading\n", strlen("# Heading\n"), &sink);
             fails += expect(st == MDF_ERROR_INVALID &&
                             strcmp(inst->error(inst), "incremental HTML requires an explicit title") == 0,
                             "incremental html rejects ambiguous automatic title detection");
@@ -4406,9 +4405,9 @@ int main(void)
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
                 fails += expect(st == MDF_OK && inst != NULL, "incremental bounded chart renderer creates");
                 if (inst != NULL) {
-                    st = inst->feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
+                    st = mdf_feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
                     if (st == MDF_OK) {
-                        st = inst->feed(inst, oversized, oversized_len, &sink);
+                        st = mdf_feed(inst, oversized, oversized_len, &sink);
                     }
                     fails += expect(st == MDF_ERROR_PARSE &&
                                     strstr(inst->error(inst), "retention limit") != NULL,
@@ -4433,14 +4432,14 @@ int main(void)
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
                 fails += expect(st == MDF_OK && inst != NULL, "incremental eof-sized chart renderer creates");
                 if (inst != NULL) {
-                    st = inst->feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
+                    st = mdf_feed(inst, "```mdf-bar-chart\n", strlen("```mdf-bar-chart\n"), &sink);
                     if (st == MDF_OK) {
-                        st = inst->feed(inst, eof_sized_chart, eof_sized_chart_len, &sink);
+                        st = mdf_feed(inst, eof_sized_chart, eof_sized_chart_len, &sink);
                     }
                     fails += expect(st == MDF_OK,
                                     "incremental eof-sized chart body is accepted before eof completion");
                     if (st == MDF_OK) {
-                        st = inst->finish_document(inst, &sink);
+                        st = mdf_finish_document(inst, &sink);
                     }
                     fails += expect(st == MDF_ERROR_PARSE &&
                                     strstr(inst->error(inst), "retention limit") != NULL,
@@ -4492,11 +4491,11 @@ int main(void)
                         if (n > chunk_sizes[case_index]) {
                             n = chunk_sizes[case_index];
                         }
-                        st = inst->feed(inst, row_mode_table + off, n, &row_mode_sink);
+                        st = mdf_feed(inst, row_mode_table + off, n, &row_mode_sink);
                         off += n;
                     }
                     if (st == MDF_OK) {
-                        st = inst->finish_document(inst, &row_mode_sink);
+                        st = mdf_finish_document(inst, &row_mode_sink);
                     }
                     fails += expect(st == MDF_OK,
                                     "incremental row-mode utf8 table retention is independent of fragment size");
@@ -4514,10 +4513,10 @@ int main(void)
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL, "incremental bounded table renderer creates");
             if (inst != NULL) {
-                st = inst->feed(inst, "| left | right |\n|---|---|\n",
+                st = mdf_feed(inst, "| left | right |\n|---|---|\n",
                                 strlen("| left | right |\n|---|---|\n"), &sink);
                 for (row = 0; st == MDF_OK && row <= 1024; row++) {
-                    st = inst->feed(inst, "| one | two |\n", strlen("| one | two |\n"), &sink);
+                    st = mdf_feed(inst, "| one | two |\n", strlen("| one | two |\n"), &sink);
                 }
                 fails += expect(st == MDF_ERROR_PARSE &&
                                 strstr(inst->error(inst), "retention limit") != NULL,
@@ -4546,11 +4545,11 @@ int main(void)
                 fails += expect(st == MDF_OK && inst != NULL,
                                 "incremental EOF frontmatter table renderer creates");
                 if (inst != NULL) {
-                    st = inst->feed(inst, frontmatter_table, frontmatter_table_len, &sink);
+                    st = mdf_feed(inst, frontmatter_table, frontmatter_table_len, &sink);
                     fails += expect(st == MDF_OK,
                                     "incremental EOF frontmatter table is accepted before replay");
                     if (st == MDF_OK) {
-                        st = inst->finish_document(inst, &sink);
+                        st = mdf_finish_document(inst, &sink);
                     }
                     fails += expect(st == MDF_ERROR_PARSE &&
                                     strstr(inst->error(inst), "retention limit") != NULL,
@@ -4589,17 +4588,17 @@ int main(void)
                 }
                 allocation_start = fail_allocs.alloc_calls + fail_allocs.realloc_calls;
                 fail_allocs.fail_after = allocation_start + fail_step;
-                st = inst->feed(inst, allocation_markdown, strlen(allocation_markdown), &sink);
+                st = mdf_feed(inst, allocation_markdown, strlen(allocation_markdown), &sink);
                 if (st == MDF_ERROR_NOMEM) {
                     saw_nomem = 1;
                     fails += expect(strstr(inst->error(inst), "out of memory") != NULL,
                                     "incremental allocator failure preserves an actionable error");
-                    fails += expect(inst->finish_document(inst, &sink) == MDF_ERROR_INVALID,
+                    fails += expect(mdf_finish_document(inst, &sink) == MDF_ERROR_INVALID,
                                     "incremental allocator failure enters a non-replayable failed state");
                 } else {
                     fail_allocs.fail_after = (size_t)-1;
                     if (st == MDF_OK) {
-                        st = inst->finish_document(inst, &sink);
+                        st = mdf_finish_document(inst, &sink);
                     }
                     fails += expect(st == MDF_OK,
                                     "incremental allocator injection either fails cleanly or completes cleanly");
@@ -4633,7 +4632,7 @@ int main(void)
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "blocking incremental source renderer creates");
         if (inst != NULL) {
-            st = inst->render(inst, &src, &sink);
+            st = mdf_render(inst, &src, &sink);
             fails += expect(st == MDF_OK && stream_sink.saw_needle &&
                             stream_sink.needle_source_off <= strlen("plain "),
                             "blocking source emits a word closed by input before its next read");

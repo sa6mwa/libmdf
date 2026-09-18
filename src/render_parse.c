@@ -1770,15 +1770,18 @@ static int table_render_cell_markdown_to_ansi(mdf_impl *impl,
     tok.type = MDF_TOKEN_TEXT;
     tok.text = cell_src;
     tok.len = cell_src_len;
-    st = tmp->write_token(tmp, &tok, &sink);
+    st = tmp->set_sink(tmp, &sink);
+    if (st == MDF_OK) {
+        st = tmp->write_token(tmp, &tok);
+    }
     if (st == MDF_OK) {
         tok.type = MDF_TOKEN_DOCUMENT_END;
         tok.text = NULL;
         tok.len = 0;
-        st = tmp->write_token(tmp, &tok, &sink);
+        st = tmp->write_token(tmp, &tok);
     }
     if (st == MDF_OK) {
-        st = tmp->finish(tmp, &sink);
+        st = tmp->finish(tmp);
     }
     tmp->destroy(tmp);
     mdf_free_mem(&impl->allocator, cell_src, cell_src_len + 1);
@@ -6104,9 +6107,7 @@ static mdf_status feed_decided(parse_state *ps, mdf_parser_impl *impl, mdf_rende
              * the space itself remains parser-owned until the next token or
              * line boundary decides whether it is visible, trailing, or a
              * hard-break marker. */
-            if (c == ' ' && ps->immediate_spaces_len == 0 &&
-                renderer->impl != NULL &&
-                renderer->write_token == mdf_renderer_write_token_internal) {
+            if (c == ' ' && ps->immediate_spaces_len == 0 && renderer->impl != NULL) {
                 mdf_impl *render_impl;
                 int decision;
 
@@ -6378,7 +6379,8 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
     }
     st = render_emit(renderer, sink, MDF_TOKEN_DOCUMENT_END, NULL, 0, 0);
     if (st != MDF_OK) return st;
-    st = renderer->finish(renderer, sink);
+    (void)sink;
+    st = renderer->finish(renderer);
     if (st == MDF_OK) {
         mdf_parser_release_stream(self);
     }
@@ -6387,6 +6389,8 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
 
 mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink)
 {
+    mdf_impl *renderer_impl;
+    mdf_sink *previous_sink;
     char buf[4096];
     size_t n;
     int err;
@@ -6396,20 +6400,36 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
         mdf_parser_set_error(self, "parse requires parser, source, renderer, and sink");
         return MDF_ERROR_INVALID;
     }
+    /* Parser entry remains an explicit-sink API.  A standard receiver borrows
+     * this call's sink only while parsing; it must not retain a potentially
+     * stack-owned sink record after parser->parse returns. */
+    renderer_impl = (mdf_impl *)renderer->impl;
+    previous_sink = NULL;
+    if (renderer_impl != NULL) {
+        previous_sink = renderer_impl->active_sink;
+        renderer_impl->active_sink = sink;
+    }
     err = 0;
     for (;;) {
         n = source->read(source->userdata, buf, sizeof(buf), &err);
         if (err != 0) {
             mdf_parser_set_error(self, "source read failed");
-            return MDF_ERROR_IO;
+            st = MDF_ERROR_IO;
+            goto done;
         }
         if (n == 0) {
             break;
         }
         st = mdf_parser_feed(self, renderer, sink, buf, n);
         if (st != MDF_OK) {
-            return st;
+            goto done;
         }
     }
-    return mdf_parser_finish_document(self, renderer, sink);
+    st = mdf_parser_finish_document(self, renderer, sink);
+
+done:
+    if (renderer_impl != NULL) {
+        renderer_impl->active_sink = previous_sink;
+    }
+    return st;
 }

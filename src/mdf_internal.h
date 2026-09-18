@@ -50,6 +50,9 @@ typedef struct mdf_impl {
     mdf_allocator user_allocator;
     mdf_memory memory;
     mdf_allocator allocator;
+    mdf_sink sink;
+    int sink_bound;
+    mdf_sink *active_sink;
     char error[256];
     char emit_fixed[512];
     char *emit_buf;
@@ -195,6 +198,7 @@ typedef struct mdf_impl {
     int inline_html_nbsp_pending;
     int inline_html_nbsp_prev_digit;
     int chart_suppress_centering;
+    mdf_parser *render_parser;
     mdf_parser *incremental_parser;
     int incremental_state;
 } mdf_impl;

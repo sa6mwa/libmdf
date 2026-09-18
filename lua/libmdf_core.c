@@ -41,6 +41,7 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_DOCUMENT_STREAM "libmdf.document_stream"
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
+static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, size_t len);
 
 static const char *lua_mdf_format_name(mdf_format format)
 {
@@ -804,7 +805,7 @@ static int lua_mdf_render_stream(lua_State *L)
         st = mdf_set_html_title(inst, html_title);
     }
     if (st == MDF_OK) {
-        st = inst->render(inst, &source, &sink);
+        st = mdf_render(inst, &source, &sink);
     }
     if (inst != NULL) {
         inst->destroy(inst);
@@ -901,6 +902,13 @@ static int lua_mdf_document_stream_new(lua_State *L)
     if (st == MDF_OK) {
         st = mdf_create(format, &opts, &stream->mdf);
     }
+    if (st == MDF_OK) {
+        mdf_sink sink;
+
+        sink.userdata = stream;
+        sink.write = lua_mdf_document_stream_sink_write;
+        st = mdf_set_sink(stream->mdf, &sink);
+    }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(stream->mdf, html_title);
     }
@@ -926,30 +934,27 @@ static int lua_mdf_document_stream_new(lua_State *L)
     return 1;
 }
 
-static void lua_mdf_document_stream_sink(lua_State *L,
-                                         lua_mdf_document_stream *stream,
-                                         lua_mdf_sink_ctx *ctx,
-                                         mdf_sink *sink)
+static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, size_t len)
 {
-    ctx->L = L;
-    ctx->ref = stream->sink_ref;
-    sink->userdata = ctx;
-    sink->write = lua_mdf_sink_write;
+    lua_mdf_document_stream *stream;
+    lua_mdf_sink_ctx ctx;
+
+    stream = (lua_mdf_document_stream *)userdata;
+    ctx.L = stream->trace_ctx.L;
+    ctx.ref = stream->sink_ref;
+    return lua_mdf_sink_write(&ctx, src, len);
 }
 
 static int lua_mdf_document_stream_write(lua_State *L)
 {
     lua_mdf_document_stream *stream;
-    lua_mdf_sink_ctx ctx;
-    mdf_sink sink;
     const char *data;
     size_t len;
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
     data = luaL_checklstring(L, 2, &len);
-    lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = stream->mdf->feed(stream->mdf, data, len, &sink);
+    st = stream->mdf->feed(stream->mdf, data, len);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.write: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -961,13 +966,10 @@ static int lua_mdf_document_stream_write(lua_State *L)
 static int lua_mdf_document_stream_flush(lua_State *L)
 {
     lua_mdf_document_stream *stream;
-    lua_mdf_sink_ctx ctx;
-    mdf_sink sink;
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
-    lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = stream->mdf->flush(stream->mdf, &sink);
+    st = stream->mdf->flush(stream->mdf);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.flush: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -979,13 +981,10 @@ static int lua_mdf_document_stream_flush(lua_State *L)
 static int lua_mdf_document_stream_finish_document(lua_State *L)
 {
     lua_mdf_document_stream *stream;
-    lua_mdf_sink_ctx ctx;
-    mdf_sink sink;
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
-    lua_mdf_document_stream_sink(L, stream, &ctx, &sink);
-    st = stream->mdf->finish_document(stream->mdf, &sink);
+    st = stream->mdf->finish_document(stream->mdf);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.finish_document: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -1076,7 +1075,7 @@ static int lua_mdf_handle_render_stream(lua_State *L)
     source.read = lua_mdf_source_read;
     sink.userdata = &sink_ctx;
     sink.write = lua_mdf_sink_write;
-    st = handle->mdf->render(handle->mdf, &source, &sink);
+    st = mdf_render(handle->mdf, &source, &sink);
     luaL_unref(L, LUA_REGISTRYINDEX, source_ctx.ref);
     luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
     if (st != MDF_OK) {
@@ -1122,7 +1121,7 @@ static int lua_mdf_handle_write_token(lua_State *L)
     sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
     sink.userdata = &sink_ctx;
     sink.write = lua_mdf_sink_write;
-    st = handle->mdf->write_token(handle->mdf, &tok, &sink);
+    st = mdf_write_token(handle->mdf, &tok, &sink);
     luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_write_token: %s: %s",
@@ -1147,7 +1146,7 @@ static int lua_mdf_handle_finish(lua_State *L)
     sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
     sink.userdata = &sink_ctx;
     sink.write = lua_mdf_sink_write;
-    st = handle->mdf->finish(handle->mdf, &sink);
+    st = mdf_finish(handle->mdf, &sink);
     luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_finish: %s: %s",

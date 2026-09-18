@@ -103,13 +103,13 @@ static mdf_status render_incremental_source(mdf *renderer,
                 *source_err = err;
                 return MDF_ERROR_IO;
             }
-            return renderer->finish_document(renderer, sink);
+            return mdf_finish_document(renderer, sink);
         }
-        st = renderer->feed(renderer, buf, n, sink);
+        st = mdf_feed(renderer, buf, n, sink);
         if (st != MDF_OK) {
             return st;
         }
-        st = renderer->flush(renderer, sink);
+        st = mdf_flush(renderer, sink);
         if (st != MDF_OK) {
             return st;
         }
@@ -253,9 +253,9 @@ static int pager_incremental_sink_write(void *userdata, const char *src, size_t 
     pager_incremental_sink *state;
 
     state = (pager_incremental_sink *)userdata;
-    state->status = state->renderer->feed(state->renderer, src, len, state->sink);
+    state->status = mdf_feed(state->renderer, src, len, state->sink);
     if (state->status == MDF_OK) {
-        state->status = state->renderer->flush(state->renderer, state->sink);
+        state->status = mdf_flush(state->renderer, state->sink);
     }
     return state->status == MDF_OK ? 0 : -1;
 }
@@ -310,7 +310,7 @@ static mdf_status render_incremental_pager_file(void *userdata, const mdf_option
     st = mdf_pager_sanitize_markdown_source(&input_source, &sanitized_sink, opts);
     close_failed = fclose(input) != 0;
     if (st == MDF_OK) st = incremental_sink.status;
-    if (st == MDF_OK) st = renderer->finish_document(renderer, sink);
+    if (st == MDF_OK) st = mdf_finish_document(renderer, sink);
     if (st == MDF_OK && close_failed) st = MDF_ERROR_IO;
     renderer->destroy(renderer);
     return st;
@@ -1200,7 +1200,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "cmdf: read input: %s\n", strerror(source_err));
         }
     } else {
-        st = renderer->render(renderer, &source, &sink);
+        st = mdf_render(renderer, &source, &sink);
     }
     rc = 0;
     if (st != MDF_OK) {

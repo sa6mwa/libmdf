@@ -1755,7 +1755,7 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     reflow.styled = 1;
     sink.userdata = &reflow;
     sink.write = mdf_pager_reflow_sink_write;
-    st = renderer->render(renderer, &source, &sink);
+    st = mdf_render(renderer, &source, &sink);
     mdf_pager_buffer_destroy(&reflow.osc8_start);
     mdf_pager_buffer_destroy(&reflow.sgr_start);
     if (st == MDF_OK &&

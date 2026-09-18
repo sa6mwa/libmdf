@@ -215,7 +215,7 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     source.read = chunk_read;
     sink.userdata = cap;
     sink.write = capture_write;
-    st = inst->render(inst, &source, &sink);
+    st = mdf_render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
 }
@@ -244,14 +244,14 @@ static mdf_status incremental_capture(mdf_options *opts, const char *markdown,
         if (n > fragment) {
             n = fragment;
         }
-        st = inst->feed(inst, markdown + off, n, &sink);
+        st = mdf_feed(inst, markdown + off, n, &sink);
         if (st == MDF_OK) {
-            st = inst->flush(inst, &sink);
+            st = mdf_flush(inst, &sink);
         }
         off += n;
     }
     if (st == MDF_OK) {
-        st = inst->finish_document(inst, &sink);
+        st = mdf_finish_document(inst, &sink);
     }
     if (inst != NULL) {
         inst->destroy(inst);
@@ -282,7 +282,7 @@ static mdf_status render_count(mdf_format format, mdf_options *opts, const char 
     source.read = chunk_read;
     sink.userdata = count;
     sink.write = count_write;
-    st = inst->render(inst, &source, &sink);
+    st = mdf_render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
 }
@@ -681,7 +681,7 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental flush trace renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "Hello ", strlen("Hello "), &sink);
+            st = mdf_feed(inst, "Hello ", strlen("Hello "), &sink);
             fails += expect(st == MDF_OK && cap.write_count == 1,
                             "incremental feed emits a word closed by real input");
             fails += expect_write_sequence(&cap,
@@ -689,7 +689,7 @@ static int test_stream_trace_contract(void)
                                            sizeof(expected) / sizeof(expected[0]),
                                            "incremental feed emits the closed word exactly once");
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental flush succeeds without manufacturing a decision");
@@ -698,7 +698,7 @@ static int test_stream_trace_contract(void)
             fails += expect(cap.write_count == 1,
                             "incremental flush does not emit after a feed decision");
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental EOF resolves the pending decision");
@@ -728,9 +728,9 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental wrapped-decision renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "12345 abc", strlen("12345 abc"), &sink);
+            st = mdf_feed(inst, "12345 abc", strlen("12345 abc"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental flush retains a trailing undecided suffix");
@@ -739,10 +739,10 @@ static int test_stream_trace_contract(void)
             fails += expect_no_write_contains(&cap, "abc",
                                               "incremental flush does not emit an incomplete suffix");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "defghi", strlen("defghi"), &sink);
+                st = mdf_feed(inst, "defghi", strlen("defghi"), &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental wrapped partial suffix finishes");
@@ -819,19 +819,19 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental tab-boundary renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "hello\t", strlen("hello\t"), &sink);
+            st = mdf_feed(inst, "hello\t", strlen("hello\t"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental tab boundary flush succeeds");
             fails += expect(cap.out_len == 0,
                             "incremental flush retains a trailing tab decision");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "\n", 1, &sink);
+                st = mdf_feed(inst, "\n", 1, &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental tab-boundary document finishes");
@@ -859,14 +859,14 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental unresolved-delimiter renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "hello* ", strlen("hello* "), &sink);
+            st = mdf_feed(inst, "hello* ", strlen("hello* "), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.out_len == 0,
                             "incremental flush retains delimiter plus trailing space");
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental unresolved-delimiter document finishes");
@@ -895,17 +895,17 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental pending-tab wrapping renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "helloabcde\t", strlen("helloabcde\t"), &sink);
+            st = mdf_feed(inst, "helloabcde\t", strlen("helloabcde\t"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.out_len == 0,
                             "incremental flush retains a tab-dependent wrap decision");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "world\n", strlen("world\n"), &sink);
+                st = mdf_feed(inst, "world\n", strlen("world\n"), &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental pending-tab wrapping document finishes");
@@ -943,12 +943,12 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental empty-heading renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, markdown, strlen(markdown), &sink);
+            st = mdf_feed(inst, markdown, strlen(markdown), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental empty-heading document finishes");

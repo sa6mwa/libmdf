@@ -244,7 +244,7 @@ int libmdf_bridge_render(int format,
     source.read = bridge_read;
     sink.userdata = &sink_data;
     sink.write = bridge_write;
-    st = renderer->render(renderer, &source, &sink);
+    st = mdf_render(renderer, &source, &sink);
     renderer->destroy(renderer);
     if (st != MDF_OK || sink_data.failed) {
         free(sink_data.out.buf);

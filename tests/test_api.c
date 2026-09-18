@@ -132,6 +132,15 @@ typedef struct emission_probe {
     chunk_log trace;
 } emission_probe;
 
+typedef struct width_switch_source {
+    const char *first;
+    const char *second;
+    int phase;
+    mdf *renderer;
+    int width;
+    mdf_status width_status;
+} width_switch_source;
+
 static int mem_write(void *userdata, const char *src, size_t len)
 {
     mem_sink *m;
@@ -168,6 +177,33 @@ static size_t chunk_read(void *userdata, char *dst, size_t cap, int *err)
     memcpy(dst, src->src + src->off, n);
     src->off += n;
     return n;
+}
+
+static size_t width_switch_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    width_switch_source *source;
+    const char *part;
+    size_t len;
+
+    source = (width_switch_source *)userdata;
+    *err = 0;
+    if (source->phase == 0) {
+        part = source->first;
+        source->phase = 1;
+    } else if (source->phase == 1) {
+        source->width_status = source->renderer->set_width(source->renderer, source->width);
+        part = source->second;
+        source->phase = 2;
+    } else {
+        return 0;
+    }
+    len = strlen(part);
+    if (len > cap) {
+        *err = 1;
+        return 0;
+    }
+    memcpy(dst, part, len);
+    return len;
 }
 
 static int grow_write(void *userdata, const char *src, size_t len)
@@ -305,13 +341,12 @@ static void grow_sink_free(grow_sink *sink)
     sink->cap = 0;
 }
 
-static mdf_status token_capture_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
+static mdf_status token_capture_write_token(mdf_renderer *self, const mdf_token *token)
 {
     token_capture *capture;
     char line[64];
     int n;
 
-    (void)sink;
     capture = (token_capture *)self;
     n = sprintf(line, "%d:%lu\n", (int)token->type, (unsigned long)token->len);
     if (n < 0 || (size_t)n >= sizeof(line)) {
@@ -324,10 +359,9 @@ static mdf_status token_capture_write_token(mdf_renderer *self, const mdf_token 
     return MDF_OK;
 }
 
-static mdf_status token_capture_finish(mdf_renderer *self, mdf_sink *sink)
+static mdf_status token_capture_finish(mdf_renderer *self)
 {
     (void)self;
-    (void)sink;
     return MDF_OK;
 }
 
@@ -1100,7 +1134,7 @@ static mdf_status render_chunked_cstr(mdf *renderer, const char *src, size_t chu
     source.read = chunk_read;
     sink.userdata = &output;
     sink.write = grow_write;
-    st = renderer->render(renderer, &source, &sink);
+    st = mdf_render(renderer, &source, &sink);
     if (st != MDF_OK) {
         grow_sink_free(&output);
         *out = NULL;
@@ -1953,7 +1987,10 @@ int main(void)
                     renderer->feed != NULL &&
                     renderer->flush != NULL &&
                     renderer->finish_document != NULL &&
-                    renderer->begin_document != NULL,
+                    renderer->begin_document != NULL &&
+                    renderer->set_width != NULL &&
+                    renderer->reset != NULL &&
+                    renderer->set_sink != NULL,
                     "single-handle api populates receiver methods");
     for (reserved_index = 0; reserved_index < MDF_RECEIVER_RESERVED_SLOTS; reserved_index++) {
         fails += expect(renderer->reserved[reserved_index] == NULL,
@@ -1961,9 +1998,9 @@ int main(void)
     }
     fails += expect(strcmp(renderer->error(NULL), "invalid instance") == 0,
                     "error reports invalid instance for null handle");
-    st = renderer->render(NULL, NULL, NULL);
+    st = mdf_render(NULL, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null self");
-    st = renderer->render(renderer, NULL, NULL);
+    st = mdf_render(renderer, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null source and sink");
     st = renderer->render_cstr(renderer, NULL, &out);
     fails += expect(st == MDF_ERROR_INVALID && out == NULL, "render_cstr rejects null markdown");
@@ -2025,6 +2062,128 @@ int main(void)
         renderer = NULL;
     }
 
+    {
+        mdf_options width_opts;
+        mdf *width_renderer;
+        mdf_source source;
+        mdf_sink probe_sink;
+        width_switch_source switch_source;
+        emission_probe probe;
+
+        mdf_options_init(&width_opts);
+        width_opts.boring = 1;
+        width_opts.width = 80;
+        width_opts.write_trace.userdata = &probe;
+        width_opts.write_trace.emit = emission_probe_trace_emit;
+        width_renderer = NULL;
+        memset(&probe, 0, sizeof(probe));
+        st = mdf_create(MDF_FORMAT_ANSI, &width_opts, &width_renderer);
+        fails += expect(st == MDF_OK && width_renderer != NULL,
+                        "runtime-width renderer create");
+        if (width_renderer != NULL) {
+            probe_sink.userdata = &probe;
+            probe_sink.write = emission_probe_sink_write;
+            st = width_renderer->render(width_renderer, &source);
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "receiver render requires a bound sink");
+            st = width_renderer->set_sink(width_renderer, &probe_sink);
+            fails += expect(st == MDF_OK, "receiver set_sink binds one sink");
+            st = width_renderer->set_width(width_renderer, 0);
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "receiver set_width rejects non-positive width");
+
+            memset(&switch_source, 0, sizeof(switch_source));
+            switch_source.first = "alpha ";
+            switch_source.second = "beta\n";
+            switch_source.renderer = width_renderer;
+            switch_source.width = 5;
+            switch_source.width_status = MDF_ERROR_INVALID;
+            source.userdata = &switch_source;
+            source.read = width_switch_read;
+            st = width_renderer->render(width_renderer, &source);
+            fails += expect(st == MDF_OK && switch_source.width_status == MDF_OK,
+                            "receiver render applies width changed by its source before later decisions");
+            fails += expect(bytes_contain(probe.sink.bytes, probe.sink.len,
+                                          "alpha\nbeta", strlen("alpha\nbeta")),
+                            "receiver render wraps later word at runtime width");
+            fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
+                            "runtime-width render keeps sink and trace decisions identical");
+
+            memset(&probe, 0, sizeof(probe));
+            st = width_renderer->set_width(width_renderer, 80);
+            fails += expect(st == MDF_OK, "receiver set_width restores wide incremental layout");
+            st = width_renderer->feed(width_renderer, "alpha ", 6);
+            fails += expect(st == MDF_OK, "receiver feed uses its bound sink");
+            st = width_renderer->set_width(width_renderer, 5);
+            fails += expect(st == MDF_OK, "receiver set_width updates active incremental parser");
+            st = width_renderer->feed(width_renderer, "beta\n", 5);
+            fails += expect(st == MDF_OK, "incremental feed continues after runtime width change");
+            st = width_renderer->finish_document(width_renderer);
+            fails += expect(st == MDF_OK, "incremental document finishes after runtime width change");
+            fails += expect(bytes_contain(probe.sink.bytes, probe.sink.len,
+                                          "alpha\nbeta", strlen("alpha\nbeta")),
+                            "incremental feed wraps later word at runtime width");
+            fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
+                            "runtime-width incremental feed keeps sink and trace decisions identical");
+
+            width_renderer->destroy(width_renderer);
+        }
+    }
+
+    {
+        mdf_options reset_opts;
+        mdf *reset_renderer;
+        mdf_sink first_sink;
+        mdf_sink second_sink;
+        emission_probe first_probe;
+        emission_probe second_probe;
+
+        memset(&first_probe, 0, sizeof(first_probe));
+        memset(&second_probe, 0, sizeof(second_probe));
+        mdf_options_init(&reset_opts);
+        reset_opts.boring = 0;
+        reset_opts.osc8 = 1;
+        reset_opts.write_trace.userdata = &first_probe;
+        reset_opts.write_trace.emit = emission_probe_trace_emit;
+        reset_renderer = NULL;
+        st = mdf_create(MDF_FORMAT_ANSI, &reset_opts, &reset_renderer);
+        fails += expect(st == MDF_OK && reset_renderer != NULL,
+                        "reset renderer create");
+        if (reset_renderer != NULL) {
+            first_sink.userdata = &first_probe;
+            first_sink.write = emission_probe_sink_write;
+            second_sink.userdata = &second_probe;
+            second_sink.write = emission_probe_sink_write;
+            st = reset_renderer->set_sink(reset_renderer, &first_sink);
+            fails += expect(st == MDF_OK, "reset renderer binds initial sink");
+            st = reset_renderer->reset(reset_renderer);
+            fails += expect(st == MDF_OK, "receiver reset succeeds with a bound ANSI sink");
+            fails += expect(first_probe.sink.count == 1 &&
+                            first_probe.sink.len == strlen("\033]8;;\033\\\033[0m") &&
+                            memcmp(first_probe.sink.bytes, "\033]8;;\033\\\033[0m", first_probe.sink.len) == 0,
+                            "reset closes OSC8 and all ANSI styles in one decision emission");
+            fails += expect(chunk_logs_equal(&first_probe.sink, &first_probe.trace),
+                            "reset closure has exact sink and trace parity");
+
+            memset(&first_probe, 0, sizeof(first_probe));
+            st = reset_renderer->feed(reset_renderer, "discarded ", 10);
+            fails += expect(st == MDF_OK, "incremental document starts before sink replacement");
+            st = reset_renderer->set_sink(reset_renderer, &second_sink);
+            fails += expect(st == MDF_OK, "set_sink discards incomplete document for caller-owned replay");
+            fails += expect(first_probe.sink.len > 0 &&
+                            bytes_contain(first_probe.sink.bytes, first_probe.sink.len, "\033[0m", 4),
+                            "set_sink closes terminal state on its previous sink");
+            st = reset_renderer->feed(reset_renderer, "fresh\n", 6);
+            fails += expect(st == MDF_OK, "replacement sink accepts replayed input");
+            st = reset_renderer->finish_document(reset_renderer);
+            fails += expect(st == MDF_OK &&
+                            bytes_contain(second_probe.sink.bytes, second_probe.sink.len, "fresh", 5) &&
+                            !bytes_contain(second_probe.sink.bytes, second_probe.sink.len, "discarded", 9),
+                            "reset leaves replay ownership with the caller instead of buffering input");
+            reset_renderer->destroy(reset_renderer);
+        }
+    }
+
     mdf_options_init(&opts);
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2052,7 +2211,7 @@ int main(void)
             tok.text = streamed_emph + probe.input_index;
             tok.len = 1;
             tok.level = 0;
-            st = renderer->write_token(renderer, &tok, &probe_sink);
+            st = mdf_write_token(renderer, &tok, &probe_sink);
             if (st != MDF_OK || (close != NULL && probe.input_index >= (size_t)(close - streamed_emph))) {
                 break;
             }
@@ -2069,7 +2228,7 @@ int main(void)
         tok.text = NULL;
         tok.len = 0;
         tok.level = 0;
-        st = renderer->write_token(renderer, &tok, &probe_sink);
+        st = mdf_write_token(renderer, &tok, &probe_sink);
         fails += expect(st == MDF_OK, "streaming invariant renderer finishes");
     }
     renderer->destroy(renderer);
@@ -2096,7 +2255,7 @@ int main(void)
             source.read = chunk_read;
             probe_sink.userdata = &probe;
             probe_sink.write = emission_probe_sink_write;
-            st = renderer->render(renderer, &source, &probe_sink);
+            st = mdf_render(renderer, &source, &probe_sink);
             fails += expect(st == MDF_OK, "emission identity render succeeds");
             fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
                             "decision emissions and sink writes are one-to-one");
@@ -2122,7 +2281,7 @@ int main(void)
             source.read = chunk_read;
             probe_sink.userdata = &probe;
             probe_sink.write = emission_probe_sink_write;
-            st = renderer->render(renderer, &source, &probe_sink);
+            st = mdf_render(renderer, &source, &probe_sink);
             fails += expect(st == MDF_OK, "styled heading emphasis render succeeds under ubsan");
             fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
                             "styled heading emphasis keeps emission identity");
@@ -2148,7 +2307,7 @@ int main(void)
             stream_probe.needle_len = strlen(stream_probe.needle);
             probe_sink.userdata = &stream_probe;
             probe_sink.write = parser_stream_probe_write;
-            st = renderer->render(renderer, &source, &probe_sink);
+            st = mdf_render(renderer, &source, &probe_sink);
             newline_off = (size_t)(strchr(src.src, '\n') - src.src) + 1;
             fails += expect(st == MDF_OK, "parser stream invariant render succeeds");
             fails += expect(stream_probe.first_needle_source_off > 0,
@@ -2385,7 +2544,7 @@ int main(void)
     tok.len = 5;
     tok.level = MDF_CHART_KIND_HORIZONTAL_BAR;
     allocs.fail_at_alloc = allocs.allocs + 1;
-    st = renderer->write_token(renderer, &tok, &sink);
+    st = mdf_write_token(renderer, &tok, &sink);
     fails += expect(st == MDF_ERROR_NOMEM, "chart value allocation failure reports NOMEM");
     fails += expect(renderer->error(renderer) != NULL &&
                     strstr(renderer->error(renderer), "out of memory") != NULL,
@@ -2805,7 +2964,7 @@ int main(void)
             trace_source.read = chunk_read;
             trace_sink.userdata = &probe;
             trace_sink.write = emission_probe_sink_write;
-            st = renderer->render(renderer, &trace_source, &trace_sink);
+            st = mdf_render(renderer, &trace_source, &trace_sink);
             fails += expect(st == MDF_OK, "chart trace render succeeds");
             fails += expect(chunk_logs_equal(&probe.sink, &probe.trace),
                             "chart trace events match sink writes one-to-one");
@@ -3989,17 +4148,17 @@ int main(void)
     tok.text = NULL;
     tok.len = 0;
     tok.level = 2;
-    fails += expect(renderer->write_token(renderer, &tok, &sink) == MDF_OK, "token heading start");
+    fails += expect(mdf_write_token(renderer, &tok, &sink) == MDF_OK, "token heading start");
     tok.type = MDF_TOKEN_TEXT;
     tok.text = "Token";
     tok.len = 5;
     tok.level = 0;
-    fails += expect(renderer->write_token(renderer, &tok, &sink) == MDF_OK, "token text");
+    fails += expect(mdf_write_token(renderer, &tok, &sink) == MDF_OK, "token text");
     tok.type = MDF_TOKEN_HEADING_END;
     tok.text = NULL;
     tok.len = 0;
     tok.level = 2;
-    fails += expect(renderer->write_token(renderer, &tok, &sink) == MDF_OK, "token heading end");
+    fails += expect(mdf_write_token(renderer, &tok, &sink) == MDF_OK, "token heading end");
     fails += expect(strstr(sink_data.buf, "Token") != NULL, "token output");
     fails += expect(mdf_theme_count() > 1, "theme count");
     fails += expect(mdf_theme_exists("default"), "default theme exists");

@@ -125,7 +125,7 @@ verify_install_tree() {
   test -f "$install/share/doc/libmdf/OFL.txt"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.3"
+    test -f "$libdir/libmdf.so.4"
   fi
 
   write_consumer_sources "$consumer/src"

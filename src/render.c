@@ -62,7 +62,8 @@ mdf_status render_emit(mdf_renderer *renderer, mdf_sink *sink, mdf_token_type ty
     tok.text = text;
     tok.len = len;
     tok.level = level;
-    return renderer->write_token(renderer, &tok, sink);
+    (void)sink;
+    return renderer->write_token(renderer, &tok);
 }
 
 static const mdf_theme_style *theme_or_default(const mdf_impl *impl)

@@ -66,7 +66,7 @@ static void fuzz_one_format(mdf_format format, const unsigned char *data, size_t
     src.read = fuzz_read;
     sink.userdata = 0;
     sink.write = discard_write;
-    (void)inst->render(inst, &src, &sink);
+    (void)mdf_render(inst, &src, &sink);
     inst->destroy(inst);
 }
 
