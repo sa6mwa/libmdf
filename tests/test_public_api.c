@@ -2993,6 +2993,77 @@ int main(void)
     }
 
     {
+        static const char pending_code[] = "hello `abcdefghij` ";
+        static const char suffix[] = "next\n";
+        static const char complete[] = "hello `abcdefghij` next\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+        size_t write_count;
+        size_t trace_count;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "repeated pending-code reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_code, strlen(pending_code));
+            }
+            write_count = writes.count;
+            trace_count = traces.count;
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 5);
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 80);
+            }
+            fails += expect(st == MDF_OK && writes.count == write_count && traces.count == trace_count,
+                            "repeated pending-code reflows do not emit before a following boundary");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, suffix, strlen(suffix));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 80;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, complete, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "the final pending-code layout uses the last width before emission");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
         static const char prefix[] = "a `b`";
         static const char suffix[] = " tail\n";
         static const char complete[] = "a `b` tail\n";

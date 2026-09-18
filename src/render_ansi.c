@@ -2696,7 +2696,7 @@ static int ansi_pending_code_store(mdf_impl *impl, const char *code, size_t code
         impl->ansi_pending_code = next;
         impl->ansi_pending_code_cap = code_len;
     }
-    if (code_len > 0) {
+    if (code_len > 0 && code != impl->ansi_pending_code) {
         memcpy(impl->ansi_pending_code, code, code_len);
     }
     impl->ansi_pending_code_len = code_len;
@@ -6325,6 +6325,9 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl,
 int ansi_reflow_pending_code(mdf_impl *impl)
 {
     mdf_ansi_pending_state state;
+    const char *code;
+    size_t code_len;
+    int rc;
 
     if (!impl->ansi_pending_code_valid || !impl->ansi_pending_emit_valid) {
         return 0;
@@ -6344,12 +6347,14 @@ int ansi_reflow_pending_code(mdf_impl *impl)
     state.line_has_space = impl->ansi_pending_code_line_has_space;
     state.prev_char = impl->ansi_pending_code_prev_char;
     state.outer_paren_pending = impl->ansi_pending_code_outer_paren_pending;
+    code = impl->ansi_pending_code;
+    code_len = impl->ansi_pending_code_len;
     ansi_restore_pending_state(impl, &state);
-    return ansi_capture_inline_code_wrapped(impl,
-                                            impl->ansi_pending_code,
-                                            impl->ansi_pending_code_len,
-                                            0,
-                                            1);
+    rc = ansi_capture_inline_code_wrapped(impl, code, code_len, 0, 1);
+    if (rc != 0) {
+        return rc;
+    }
+    return ansi_store_pending_inline_code(impl, code, code_len, &state);
 }
 
 int ansi_reflow_pending_link(mdf_impl *impl)
