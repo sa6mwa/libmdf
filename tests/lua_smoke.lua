@@ -509,6 +509,39 @@ do
 end
 
 do
+  local weak = setmetatable({}, { __mode = "v" })
+  local handle_trace = function() end
+  local stream_trace = function() end
+  local ok
+
+  weak[1] = handle_trace
+  ok = pcall(function()
+    mdf.new({
+      format = "html",
+      write_trace = handle_trace,
+      html_font = { regular_format = "invalid" },
+    })
+  end)
+  assert(not ok, "lua handle constructor rejects invalid HTML font options after trace options")
+  handle_trace = nil
+
+  weak[2] = stream_trace
+  ok = pcall(function()
+    mdf.document_stream({
+      format = "html",
+      write_trace = stream_trace,
+      html_font = { regular_format = "invalid" },
+    }, function() end)
+  end)
+  assert(not ok, "lua stream constructor rejects invalid HTML font options after trace options")
+  stream_trace = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak[1] == nil and weak[2] == nil,
+         "failed Lua constructors release untransferred trace callback references")
+end
+
+do
   local writes = {}
   local traces = {}
   local handle = mdf.new({

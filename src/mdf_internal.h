@@ -42,6 +42,23 @@ typedef struct mdf_memory {
     size_t retained_bytes;
 } mdf_memory;
 
+typedef struct mdf_ansi_pending_state {
+    int col;
+    int writing_left_margin;
+    int left_margin;
+    int space;
+    int space_no_split;
+    int space_plain;
+    int style_reset;
+    const char *inline_style;
+    int quote_text_open;
+    int osc8_active;
+    int osc8_pending_reopen;
+    int line_has_space;
+    char prev_char;
+    int outer_paren_pending;
+} mdf_ansi_pending_state;
+
 typedef struct mdf_impl {
     mdf_format format;
     mdf_options opts;
@@ -179,6 +196,12 @@ typedef struct mdf_impl {
     int ansi_pending_emit_leading_space;
     int ansi_pending_autolink_emit_valid;
     int ansi_pending_fallback_emit_valid;
+    char *ansi_pending_link;
+    size_t ansi_pending_link_len;
+    size_t ansi_pending_link_cap;
+    int ansi_pending_link_kind;
+    int ansi_pending_link_outer_paren;
+    mdf_ansi_pending_state ansi_pending_link_state;
     char *ansi_pending_code;
     size_t ansi_pending_code_len;
     size_t ansi_pending_code_cap;
@@ -313,6 +336,7 @@ int mdf_emit_buffer_append(mdf_impl *impl, const char *src, size_t len);
 int mdf_emit_buffer_append_cstr(mdf_impl *impl, const char *src);
 int mdf_emit_buffer_commit(mdf_impl *impl, mdf_sink *sink);
 int ansi_reflow_pending_code(mdf_impl *impl);
+int ansi_reflow_pending_link(mdf_impl *impl);
 mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out);
 void mdf_parser_enable_incremental_limits(mdf_parser *self);
 const mdf_theme_style *mdf_theme_resolve(const char *name);

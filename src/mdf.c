@@ -84,6 +84,9 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_pending_emit_valid = 0;
     impl->ansi_pending_autolink_emit_valid = 0;
     impl->ansi_pending_fallback_emit_valid = 0;
+    impl->ansi_pending_link_len = 0;
+    impl->ansi_pending_link_kind = 0;
+    impl->ansi_pending_link_outer_paren = 0;
     impl->ansi_pending_code_len = 0;
     impl->ansi_pending_code_valid = 0;
     impl->ansi_owned_inline_style[0] = '\0';
@@ -2489,6 +2492,7 @@ static void mdf_impl_release_heap_state(mdf_impl *impl)
                  impl->ansi_pending_emit_offsets,
                  impl->ansi_pending_emit_offsets_cap * sizeof(impl->ansi_pending_emit_offsets[0]));
     mdf_free_mem(allocator, impl->ansi_pending_code, impl->ansi_pending_code_cap);
+    mdf_free_mem(allocator, impl->ansi_pending_link, impl->ansi_pending_link_cap);
     mdf_free_mem(allocator, impl->inline_emph, impl->inline_emph_cap);
     mdf_free_mem(allocator, impl->inline_entity, impl->inline_entity_cap);
     mdf_free_mem(allocator, impl->ansi_word, impl->ansi_word_cap);
@@ -3004,7 +3008,8 @@ mdf_status mdf_set_width(mdf *renderer, int width)
         return MDF_ERROR_INVALID;
     }
     impl->opts.width = effective_width;
-    if (impl->format == MDF_FORMAT_ANSI && ansi_reflow_pending_code(impl) != 0) {
+    if (impl->format == MDF_FORMAT_ANSI &&
+        (ansi_reflow_pending_code(impl) != 0 || ansi_reflow_pending_link(impl) != 0)) {
         return MDF_ERROR_NOMEM;
     }
     mdf_parser_set_width(impl->render_parser, effective_width);

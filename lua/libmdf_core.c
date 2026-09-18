@@ -377,19 +377,6 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_getfield(L, index, "table_wire_mode");
     opts->table_wire_mode = lua_mdf_table_wire_mode(L, -1);
     lua_pop(L, 1);
-    lua_getfield(L, index, "write_trace");
-    if (!lua_isnil(L, -1)) {
-        if (trace_ctx == NULL) {
-            luaL_error(L, "write_trace requires a trace context");
-        }
-        luaL_checktype(L, -1, LUA_TFUNCTION);
-        lua_pushvalue(L, -1);
-        trace_ctx->L = L;
-        trace_ctx->ref = luaL_ref(L, LUA_REGISTRYINDEX);
-        opts->write_trace.userdata = trace_ctx;
-        opts->write_trace.emit = lua_mdf_trace_emit;
-    }
-    lua_pop(L, 1);
     lua_getfield(L, index, "html_font");
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "family");
@@ -417,6 +404,22 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
             opts->html_font.italic.data_len = len;
         }
         lua_pop(L, 1);
+    }
+    lua_pop(L, 1);
+    /* Do not create a registry reference until every later option that can
+     * raise has been validated. Constructors can then transfer or release it
+     * through their normal ownership path. */
+    lua_getfield(L, index, "write_trace");
+    if (!lua_isnil(L, -1)) {
+        if (trace_ctx == NULL) {
+            luaL_error(L, "write_trace requires a trace context");
+        }
+        luaL_checktype(L, -1, LUA_TFUNCTION);
+        lua_pushvalue(L, -1);
+        trace_ctx->L = L;
+        trace_ctx->ref = luaL_ref(L, LUA_REGISTRYINDEX);
+        opts->write_trace.userdata = trace_ctx;
+        opts->write_trace.emit = lua_mdf_trace_emit;
     }
     lua_pop(L, 1);
 }

@@ -2993,6 +2993,302 @@ int main(void)
     }
 
     {
+        static const char prefix[] = "a `b`";
+        static const char suffix[] = " tail\n";
+        static const char complete[] = "a `b` tail\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+        size_t write_count;
+        size_t trace_count;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "committed-separator reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, prefix, strlen(prefix));
+            }
+            write_count = writes.count;
+            trace_count = traces.count;
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 10);
+            }
+            fails += expect(st == MDF_OK && writes.count == write_count && traces.count == trace_count,
+                            "changing width reflows pending code without writing or replaying committed separators");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, suffix, strlen(suffix));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 10;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, complete, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "committed code separators are not replayed after runtime width changes");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
+        static const char pending_link[] = "<https://example.com/abcdefghij>";
+        static const char complete[] = "<https://example.com/abcdefghij>\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+        size_t write_count;
+        size_t trace_count;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "pending autolink reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_link, strlen(pending_link));
+            }
+            write_count = writes.count;
+            trace_count = traces.count;
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 10);
+            }
+            fails += expect(st == MDF_OK && writes.count == write_count && traces.count == trace_count,
+                            "changing width reflows pending autolinks without emitting them");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, "\n", 1);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 10;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, complete, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "pending autolinks are re-decided using the width in effect at emission");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
+        static const char pending_link[] = "[x](https://example.com/abcdefghij)";
+        static const char expected_reflow[] =
+            "x \n(https://e\nxample.com\n/abcdefghi\nj)\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        size_t write_count;
+        size_t trace_count;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "pending fallback-link reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_link, strlen(pending_link));
+            }
+            write_count = writes.count;
+            trace_count = traces.count;
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 10);
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 10);
+            }
+            fails += expect(st == MDF_OK && writes.count == write_count && traces.count == trace_count,
+                            "repeated width changes reflow pending fallback links without emitting them");
+            if (st == MDF_OK) {
+                st = inst->feed(inst, "\n", 1);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected_reflow,
+                                                      strlen(expected_reflow)),
+                            "pending fallback links reflow their retained URL without replaying committed output");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
+        static const char pending_link[] = "<https://example.com/abcdefghij>";
+        static const char suffix[] = " tail\n";
+        static const char complete[] = "<https://example.com/abcdefghij> tail\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.width = 80;
+        opts.osc8 = 0;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "styled pending autolink reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_link, strlen(pending_link));
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 80);
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, suffix, strlen(suffix));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.width = 80;
+            opts.osc8 = 0;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, complete, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "autolink reflow restores the surrounding style before following text");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
+        static const char pending_link[] = "[x](https://example.com/abcdefghij)";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.osc8 = 0;
+        opts.width = 80;
+        opts.emission_buffer.initial_cap = 40;
+        opts.emission_buffer.max_cap = 40;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "bounded pending fallback-link reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_link, strlen(pending_link));
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 3);
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, ".\n", 2);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK && emission_logs_equal(&writes, &traces),
+                            "reflowed fallback links preserve bounded emission writes and trace parity");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
         static const char markdown[] = "HTML callback width guard\n";
         width_change_output_sink output;
         mdf_sink bound_sink;

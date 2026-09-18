@@ -2674,6 +2674,9 @@ static void ansi_pending_emit_clear_output(mdf_impl *impl)
 static void ansi_pending_emit_clear(mdf_impl *impl)
 {
     ansi_pending_emit_clear_output(impl);
+    impl->ansi_pending_link_len = 0;
+    impl->ansi_pending_link_kind = 0;
+    impl->ansi_pending_link_outer_paren = 0;
     impl->ansi_pending_code_len = 0;
     impl->ansi_pending_code_valid = 0;
 }
@@ -2700,7 +2703,42 @@ static int ansi_pending_code_store(mdf_impl *impl, const char *code, size_t code
     return 0;
 }
 
-static int ansi_flush_pending_code_emit(mdf_impl *impl, mdf_sink *sink)
+static void ansi_capture_pending_state(mdf_impl *impl, mdf_ansi_pending_state *state);
+static void ansi_restore_pending_state(mdf_impl *impl, const mdf_ansi_pending_state *state);
+
+static int ansi_pending_link_store(mdf_impl *impl,
+                                   const char *url,
+                                   size_t url_len,
+                                   int kind,
+                                   int outer_paren)
+{
+    char *next;
+
+    if (url_len > impl->ansi_pending_link_cap) {
+        next = (char *)mdf_realloc_mem(&impl->allocator,
+                                       impl->ansi_pending_link,
+                                       impl->ansi_pending_link_cap,
+                                       url_len);
+        if (next == NULL) {
+            return -1;
+        }
+        impl->ansi_pending_link = next;
+        impl->ansi_pending_link_cap = url_len;
+    }
+    if (url_len > 0 && url != impl->ansi_pending_link) {
+        memcpy(impl->ansi_pending_link, url, url_len);
+    }
+    impl->ansi_pending_link_len = url_len;
+    impl->ansi_pending_link_kind = kind;
+    impl->ansi_pending_link_outer_paren = outer_paren;
+    /* The retained bytes begin at this committed cursor.  A link label or
+     * separator may already have reached the sink. */
+    impl->ansi_pending_emit_start_col = impl->ansi_col;
+    ansi_capture_pending_state(impl, &impl->ansi_pending_link_state);
+    return 0;
+}
+
+static int ansi_flush_pending_emit(mdf_impl *impl, mdf_sink *sink)
 {
     size_t i;
     size_t start;
@@ -2736,6 +2774,11 @@ static int ansi_flush_pending_code_emit(mdf_impl *impl, mdf_sink *sink)
     }
     ansi_pending_emit_clear(impl);
     return 0;
+}
+
+static int ansi_flush_pending_code_emit(mdf_impl *impl, mdf_sink *sink)
+{
+    return ansi_flush_pending_emit(impl, sink);
 }
 
 static int ansi_pending_code_can_move_to_continuation(mdf_impl *impl, int code_cols)
@@ -2937,16 +2980,8 @@ static int ansi_flush_pending_autolink_emit(mdf_impl *impl, mdf_sink *sink)
     if (!impl->ansi_pending_autolink_emit_valid) {
         return 0;
     }
-    if (impl->ansi_pending_emit_len > 0 &&
-        ansi_ensure_left_margin(impl, sink) != 0) {
+    if (ansi_flush_pending_emit(impl, sink) != 0) {
         impl->ansi_pending_autolink_emit_valid = 0;
-        ansi_pending_emit_clear(impl);
-        return -1;
-    }
-    if (impl->ansi_pending_emit_len > 0 &&
-        mdf_emit_all(impl, sink, impl->ansi_pending_emit, impl->ansi_pending_emit_len) != 0) {
-        impl->ansi_pending_autolink_emit_valid = 0;
-        ansi_pending_emit_clear(impl);
         return -1;
     }
     impl->ansi_pending_autolink_emit_valid = 0;
@@ -2978,9 +3013,8 @@ static int ansi_emit_pending_autolink_with_punct(mdf_impl *impl, mdf_sink *sink,
     impl->ansi_col++;
     impl->ansi_prev_char = c;
     impl->ansi_line_has_space = 1;
-    if (mdf_emit_all(impl, sink, impl->ansi_pending_emit, impl->ansi_pending_emit_len) != 0) {
+    if (ansi_flush_pending_emit(impl, sink) != 0) {
         impl->ansi_pending_autolink_emit_valid = 0;
-        ansi_pending_emit_clear(impl);
         return -1;
     }
     impl->ansi_pending_autolink_emit_valid = 0;
@@ -2993,16 +3027,8 @@ static int ansi_flush_pending_fallback_emit(mdf_impl *impl, mdf_sink *sink)
     if (!impl->ansi_pending_fallback_emit_valid) {
         return 0;
     }
-    if (impl->ansi_pending_emit_len > 0 &&
-        ansi_ensure_left_margin(impl, sink) != 0) {
+    if (ansi_flush_pending_emit(impl, sink) != 0) {
         impl->ansi_pending_fallback_emit_valid = 0;
-        ansi_pending_emit_clear(impl);
-        return -1;
-    }
-    if (impl->ansi_pending_emit_len > 0 &&
-        mdf_emit_all(impl, sink, impl->ansi_pending_emit, impl->ansi_pending_emit_len) != 0) {
-        impl->ansi_pending_fallback_emit_valid = 0;
-        ansi_pending_emit_clear(impl);
         return -1;
     }
     impl->ansi_pending_fallback_emit_valid = 0;
@@ -5732,6 +5758,10 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
+            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+                mdf_impl_mark_oom(impl);
+                return -1;
+            }
             impl->ansi_pending_fallback_emit_valid = 1;
             ansi_update_visible_output_state(impl, "(", 1);
             ansi_update_visible_output_state(impl, url, url_len);
@@ -5770,6 +5800,10 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
+            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+                mdf_impl_mark_oom(impl);
+                return -1;
+            }
             impl->ansi_pending_fallback_emit_valid = 1;
             ansi_update_visible_output_state(impl, "(", 1);
             ansi_update_visible_output_state(impl, url, url_len);
@@ -5795,6 +5829,10 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             }
             if (ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
                 mdf_emit_buffer_reset(impl) != 0) {
+                mdf_impl_mark_oom(impl);
+                return -1;
+            }
+            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
@@ -5883,6 +5921,10 @@ int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url
         }
         if (ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
             mdf_emit_buffer_reset(impl) != 0) {
+            mdf_impl_mark_oom(impl);
+            return -1;
+        }
+        if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
             mdf_impl_mark_oom(impl);
             return -1;
         }
@@ -6048,6 +6090,16 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
             mdf_impl_mark_oom(impl);
             return -1;
         }
+        if (ansi_pending_link_store(impl, text, text_len, 1, 0) != 0) {
+            impl->ansi_pending_inline_style = saved_pending_inline_style;
+            impl->ansi_active_inline_style = saved_active_inline_style;
+            mdf_impl_mark_oom(impl);
+            return -1;
+        }
+        /* The active link style is part of the deferred decision, not the
+         * surrounding state that must be restored after a later reflow. */
+        impl->ansi_pending_link_state.inline_style =
+            saved_pending_inline_style != NULL ? saved_pending_inline_style : saved_active_inline_style;
         impl->ansi_pending_autolink_emit_valid = 1;
         ansi_update_visible_output_state(impl, text, text_len);
     } else if (ansi_write_visible(impl, sink, text, text_len) != 0) {
@@ -6095,25 +6147,7 @@ static int ansi_inline_emit_link(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
-typedef struct ansi_pending_inline_code_state {
-    int col;
-    int writing_left_margin;
-    int left_margin;
-    int space;
-    int space_no_split;
-    int space_plain;
-    int style_reset;
-    const char *inline_style;
-    int quote_text_open;
-    int osc8_active;
-    int osc8_pending_reopen;
-    int line_has_space;
-    char prev_char;
-    int outer_paren_pending;
-} ansi_pending_inline_code_state;
-
-static void ansi_capture_pending_inline_code_state(mdf_impl *impl,
-                                                   ansi_pending_inline_code_state *state)
+static void ansi_capture_pending_state(mdf_impl *impl, mdf_ansi_pending_state *state)
 {
     state->col = impl->ansi_col;
     state->writing_left_margin = impl->ansi_writing_left_margin;
@@ -6131,10 +6165,28 @@ static void ansi_capture_pending_inline_code_state(mdf_impl *impl,
     state->outer_paren_pending = impl->inline_outer_paren_pending;
 }
 
+static void ansi_restore_pending_state(mdf_impl *impl, const mdf_ansi_pending_state *state)
+{
+    impl->ansi_col = state->col;
+    impl->ansi_writing_left_margin = state->writing_left_margin;
+    impl->ansi_pending_left_margin = state->left_margin;
+    impl->ansi_pending_space = state->space;
+    impl->ansi_pending_space_no_split = state->space_no_split;
+    impl->ansi_pending_space_plain = state->space_plain;
+    impl->ansi_pending_style_reset = state->style_reset;
+    impl->ansi_pending_inline_style = state->inline_style;
+    impl->quote_text_open = state->quote_text_open;
+    impl->ansi_osc8_active = state->osc8_active;
+    impl->ansi_osc8_pending_reopen = state->osc8_pending_reopen;
+    impl->ansi_line_has_space = state->line_has_space;
+    impl->ansi_prev_char = state->prev_char;
+    impl->inline_outer_paren_pending = state->outer_paren_pending;
+}
+
 static int ansi_store_pending_inline_code(mdf_impl *impl,
                                           const char *code,
                                           size_t code_len,
-                                          const ansi_pending_inline_code_state *state)
+                                          const mdf_ansi_pending_state *state)
 {
     if (ansi_pending_code_store(impl, code, code_len) != 0) {
         mdf_impl_mark_oom(impl);
@@ -6272,28 +6324,109 @@ static int ansi_capture_inline_code_wrapped(mdf_impl *impl,
 
 int ansi_reflow_pending_code(mdf_impl *impl)
 {
+    mdf_ansi_pending_state state;
+
     if (!impl->ansi_pending_code_valid || !impl->ansi_pending_emit_valid) {
         return 0;
     }
-    impl->ansi_col = impl->ansi_pending_code_col;
-    impl->ansi_writing_left_margin = impl->ansi_pending_code_writing_left_margin;
-    impl->ansi_pending_left_margin = impl->ansi_pending_code_left_margin;
-    impl->ansi_pending_space = impl->ansi_pending_code_space;
-    impl->ansi_pending_space_no_split = impl->ansi_pending_code_space_no_split;
-    impl->ansi_pending_space_plain = impl->ansi_pending_code_space_plain;
-    impl->ansi_pending_style_reset = impl->ansi_pending_code_style_reset;
-    impl->ansi_pending_inline_style = impl->ansi_pending_code_inline_style;
-    impl->quote_text_open = impl->ansi_pending_code_quote_text_open;
-    impl->ansi_osc8_active = impl->ansi_pending_code_osc8_active;
-    impl->ansi_osc8_pending_reopen = impl->ansi_pending_code_osc8_pending_reopen;
-    impl->ansi_line_has_space = impl->ansi_pending_code_line_has_space;
-    impl->ansi_prev_char = impl->ansi_pending_code_prev_char;
-    impl->inline_outer_paren_pending = impl->ansi_pending_code_outer_paren_pending;
+
+    state.col = impl->ansi_pending_code_col;
+    state.writing_left_margin = impl->ansi_pending_code_writing_left_margin;
+    state.left_margin = impl->ansi_pending_code_left_margin;
+    state.space = impl->ansi_pending_code_space;
+    state.space_no_split = impl->ansi_pending_code_space_no_split;
+    state.space_plain = impl->ansi_pending_code_space_plain;
+    state.style_reset = impl->ansi_pending_code_style_reset;
+    state.inline_style = impl->ansi_pending_code_inline_style;
+    state.quote_text_open = impl->ansi_pending_code_quote_text_open;
+    state.osc8_active = impl->ansi_pending_code_osc8_active;
+    state.osc8_pending_reopen = impl->ansi_pending_code_osc8_pending_reopen;
+    state.line_has_space = impl->ansi_pending_code_line_has_space;
+    state.prev_char = impl->ansi_pending_code_prev_char;
+    state.outer_paren_pending = impl->ansi_pending_code_outer_paren_pending;
+    ansi_restore_pending_state(impl, &state);
     return ansi_capture_inline_code_wrapped(impl,
                                             impl->ansi_pending_code,
                                             impl->ansi_pending_code_len,
                                             0,
                                             1);
+}
+
+int ansi_reflow_pending_link(mdf_impl *impl)
+{
+    ansi_pending_emit_sink pending;
+    mdf_sink capture_sink;
+    mdf_write_trace saved_trace;
+    size_t link_len;
+    int outer_paren;
+    int start_col;
+    int kind;
+    int rc;
+
+    if (impl->ansi_pending_link_kind == 0 ||
+        !impl->ansi_pending_emit_valid ||
+        impl->ansi_pending_link == NULL) {
+        return 0;
+    }
+    kind = impl->ansi_pending_link_kind;
+    link_len = impl->ansi_pending_link_len;
+    outer_paren = impl->ansi_pending_link_outer_paren;
+    start_col = impl->ansi_pending_link_state.col;
+    ansi_restore_pending_state(impl, &impl->ansi_pending_link_state);
+    ansi_pending_emit_clear_output(impl);
+    impl->ansi_pending_autolink_emit_valid = 0;
+    impl->ansi_pending_fallback_emit_valid = 0;
+    pending.impl = impl;
+    pending.oom = 0;
+    capture_sink.userdata = &pending;
+    capture_sink.write = ansi_pending_emit_write;
+    saved_trace = impl->opts.write_trace;
+    impl->opts.write_trace.userdata = NULL;
+    impl->opts.write_trace.emit = NULL;
+    if (kind == 1) {
+        rc = ansi_emit_autolink_text(impl, &capture_sink,
+                                     impl->ansi_pending_link,
+                                     link_len, 0);
+    } else {
+        ansi_sim_input inputs[3];
+
+        /* Reflow the retained fallback payload itself.  Its leading
+         * separator, if any, was committed before this decision buffer and
+         * must neither be replayed nor moved by a later width change. */
+        inputs[0].text = "(";
+        inputs[0].len = 1;
+        inputs[0].style = ansi_sim_style_flat("");
+        inputs[0].kind = ANSI_SIM_STRUCT;
+        inputs[1].text = impl->ansi_pending_link;
+        inputs[1].len = link_len;
+        inputs[1].style = ansi_sim_style_flat(impl->opts.boring ? "" : mdf_theme_link_url(impl));
+        inputs[1].kind = ANSI_SIM_URL;
+        inputs[2].text = outer_paren ? "))" : ")";
+        inputs[2].len = outer_paren ? 2 : 1;
+        inputs[2].style = ansi_sim_style_flat("");
+        inputs[2].kind = ANSI_SIM_STRUCT;
+        rc = ansi_sim_emit_inputs(impl, &capture_sink, inputs, 3);
+    }
+    impl->opts.write_trace = saved_trace;
+    if (rc != 0 || pending.oom) {
+        if (pending.oom) {
+            mdf_impl_mark_oom(impl);
+        }
+        return -1;
+    }
+    /* Rebuilding may clear the retained-link fields.  Keep the original
+     * decision context so any further width change reflows from the same
+     * committed cursor. */
+    impl->ansi_pending_link_len = link_len;
+    impl->ansi_pending_link_kind = kind;
+    impl->ansi_pending_link_outer_paren = outer_paren;
+    impl->ansi_pending_emit_start_col = start_col;
+    if (kind == 1) {
+        impl->ansi_pending_autolink_emit_valid = 1;
+    } else {
+        impl->ansi_pending_fallback_emit_valid = 1;
+    }
+    return 0;
 }
 
 static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
@@ -6308,7 +6441,7 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     int use_wrapped_code;
     int capture_leading_space;
     int had_word;
-    ansi_pending_inline_code_state pending_code_state;
+    mdf_ansi_pending_state pending_code_state;
 
     code = impl->inline_code;
     code_len = impl->inline_code_len;
@@ -6380,7 +6513,7 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
         if (ansi_flush_word_reserved(impl, sink, code_len) != 0) return -1;
     }
     if (use_wrapped_code && code_len > 0) {
-        ansi_capture_pending_inline_code_state(impl, &pending_code_state);
+        ansi_capture_pending_state(impl, &pending_code_state);
     }
     if (!had_word && use_wrapped_code) {
         if (impl->ansi_pending_space &&
@@ -6423,6 +6556,11 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
         }
     } else if (!had_word && ansi_flush_pending_space_for(impl, sink, code_len) != 0) {
         return -1;
+    }
+    if (use_wrapped_code && code_len > 0 && !capture_leading_space) {
+        /* A normal separator was committed before the pending code decision.
+         * Reflow must restart after that write, not replay it. */
+        ansi_capture_pending_state(impl, &pending_code_state);
     }
     if (use_wrapped_code) {
         if (impl->inline_outer_paren_pending && ansi_ensure_left_margin(impl, sink) != 0) return -1;
