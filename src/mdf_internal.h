@@ -57,6 +57,8 @@ typedef struct mdf_ansi_pending_state {
     int line_has_space;
     char prev_char;
     int outer_paren_pending;
+    int heading_style_suspended;
+    int heading_style_pending_prefix;
 } mdf_ansi_pending_state;
 
 typedef struct mdf_impl {
@@ -220,6 +222,8 @@ typedef struct mdf_impl {
     int ansi_pending_code_line_has_space;
     char ansi_pending_code_prev_char;
     int ansi_pending_code_outer_paren_pending;
+    int ansi_pending_code_heading_style_suspended;
+    int ansi_pending_code_heading_style_pending_prefix;
     char *inline_emph;
     size_t inline_emph_len;
     size_t inline_emph_cap;

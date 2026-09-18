@@ -6164,6 +6164,8 @@ static void ansi_capture_pending_state(mdf_impl *impl, mdf_ansi_pending_state *s
     state->line_has_space = impl->ansi_line_has_space;
     state->prev_char = impl->ansi_prev_char;
     state->outer_paren_pending = impl->inline_outer_paren_pending;
+    state->heading_style_suspended = impl->heading_style_suspended;
+    state->heading_style_pending_prefix = impl->heading_style_pending_prefix;
 }
 
 static void ansi_restore_pending_state(mdf_impl *impl, const mdf_ansi_pending_state *state)
@@ -6182,6 +6184,8 @@ static void ansi_restore_pending_state(mdf_impl *impl, const mdf_ansi_pending_st
     impl->ansi_line_has_space = state->line_has_space;
     impl->ansi_prev_char = state->prev_char;
     impl->inline_outer_paren_pending = state->outer_paren_pending;
+    impl->heading_style_suspended = state->heading_style_suspended;
+    impl->heading_style_pending_prefix = state->heading_style_pending_prefix;
 }
 
 static int ansi_store_pending_inline_code(mdf_impl *impl,
@@ -6208,6 +6212,8 @@ static int ansi_store_pending_inline_code(mdf_impl *impl,
     impl->ansi_pending_code_line_has_space = state->line_has_space;
     impl->ansi_pending_code_prev_char = state->prev_char;
     impl->ansi_pending_code_outer_paren_pending = state->outer_paren_pending;
+    impl->ansi_pending_code_heading_style_suspended = state->heading_style_suspended;
+    impl->ansi_pending_code_heading_style_pending_prefix = state->heading_style_pending_prefix;
     return 0;
 }
 
@@ -6348,6 +6354,8 @@ int ansi_reflow_pending_code(mdf_impl *impl)
     state.line_has_space = impl->ansi_pending_code_line_has_space;
     state.prev_char = impl->ansi_pending_code_prev_char;
     state.outer_paren_pending = impl->ansi_pending_code_outer_paren_pending;
+    state.heading_style_suspended = impl->ansi_pending_code_heading_style_suspended;
+    state.heading_style_pending_prefix = impl->ansi_pending_code_heading_style_pending_prefix;
     code = impl->ansi_pending_code;
     code_len = impl->ansi_pending_code_len;
     ansi_restore_pending_state(impl, &state);
