@@ -304,10 +304,19 @@ renderer->begin_document(renderer);            /* now a distinct document may st
 Fragments must be nonempty. After successful finalization, further `feed`,
 `flush`, or `finish_document` calls fail until `begin_document` succeeds.
 Sink failure makes that document failed; libmdf never retries or retains the
-sink. To change width at any decision boundary, call `renderer->set_width`; it
-affects only later layout, so call `renderer->reset` and replay caller-owned
-source for a complete reflow. Reset and sink replacement close ANSI terminal
-state before discarding parser state; libmdf never retains input for replay.
+sink. Receiver methods are the persistent-sink API: bind once with `set_sink`,
+then call `render`, `write_token`, `finish`, `feed`, `flush`, or
+`finish_document` without repeating the sink. The explicit free functions such
+as `mdf_render`, `mdf_feed`, and `mdf_finish_document` instead borrow the sink
+only for that call; they never install or replace the receiver binding.
+
+To change width at any decision boundary, call `renderer->set_width`; it
+affects only later layout, including decisions made after a source callback
+changes it during `render`. It never reflows bytes already written, so call
+`renderer->reset` and replay caller-owned source for a complete reflow. Reset
+and sink replacement close ANSI terminal state before discarding parser state;
+reset is rejected while a synchronous `render` call is active. libmdf never
+retains input for replay.
 Pending table and chart constructs retain at most 65536 bytes, and tables
 retain at most 1024 rows; an oversized unfinished construct fails with
 `MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
@@ -655,9 +664,11 @@ io.write(h:render("# hello\n"))
 h:close()
 ```
 
-For streaming receiver methods, bind one callback once, then change width,
-reset, or replace the callback on the object itself. `reset` closes ANSI state
-and discards unfinished parser state; replay remains the caller's job.
+The top-level `mdf.render_stream(read, write, opts)` is the explicit-callback
+form: its callbacks are borrowed for that call. For streaming receiver methods,
+bind one callback once, then change width, reset, or replace the callback on
+the object itself. `reset` closes ANSI state and discards unfinished parser
+state; replay remains the caller's job.
 
 ```lua
 local h = mdf.new({ boring = true })
@@ -687,7 +698,9 @@ stream:close()
 
 `document_stream` also exposes `set_width(width)`, `reset()`, and
 `set_sink(callback)`. They have the same future-decision, caller-owned replay,
-and terminal-closure behavior as their C receiver counterparts.
+and terminal-closure behavior as their C receiver counterparts. Replacing the
+callback resets the current document, so resend the source you want on the new
+sink; Lua does not buffer it for you.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
@@ -764,7 +777,8 @@ The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 and `mdf.token` constants corresponding to the public C values that are useful
 from Lua. Handle objects expose `set_sink`, `set_width`, `reset`,
 `set_html_title`, `render`, `render_stream`, `write_token`, `finish`, `error`,
-and `close`.
+and `close`. `render` returns a string and needs no sink; the other three
+output receiver methods use the callback previously supplied to `set_sink`.
 
 ## Markdown And HTML Safety
 

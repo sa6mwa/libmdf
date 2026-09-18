@@ -103,7 +103,12 @@ do
   local f = assert(io.open(cmdf_lua, "rb"))
   local generated = f:read("*a")
   f:close()
-  assert(generated:match("renderer:render_stream%("), "cmdf.lua uses streaming renderer API")
+  assert(generated:find("renderer:set_sink(write_chunk)", 1, true),
+         "cmdf.lua binds one renderer sink before streaming")
+  assert(generated:find("renderer:render_stream(read_chunk)", 1, true),
+         "cmdf.lua uses the bound-sink receiver streaming API")
+  assert(not generated:find("renderer:render_stream(read_chunk, write_chunk)", 1, true),
+         "cmdf.lua does not pass a sink to every receiver render call")
   assert(not generated:match('read%("%*a"%)'), "cmdf.lua must not materialize full input")
   assert(not generated:match("pending_chunks"), "cmdf.lua must not replay prescanned input")
   assert(not generated:match("detect_html_title"), "cmdf.lua must not own HTML title detection")

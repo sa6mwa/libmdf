@@ -8,22 +8,30 @@ mdf.version_major = core.version_major
 mdf.version_minor = core.version_minor
 mdf.version_patch = core.version_patch
 
+---Create a renderer handle. Bind one persistent output callback with
+---`handle:set_sink(write)` before calling its streaming receiver methods.
 function mdf.new(opts)
   return core.new(opts or {})
 end
 
+---Alias for `mdf.new`.
 function mdf.create(opts)
   return core.create(opts or {})
 end
 
+---Render a complete string and return a materialized string.
 function mdf.render(markdown, opts)
   return core.render(markdown or "", opts or {})
 end
 
+---Stream through explicit per-call reader and writer callbacks without binding
+---the writer to a persistent handle.
 function mdf.render_stream(read, write, opts)
   return core.render_stream(read, write, opts or {})
 end
 
+---Create an incremental document stream with one persistent writer callback.
+---Use `set_width`, `reset`, or `set_sink` on the returned stream as needed.
 function mdf.document_stream(opts, write)
   return core.document_stream(opts or {}, write)
 end

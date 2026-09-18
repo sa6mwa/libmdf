@@ -389,12 +389,12 @@ struct mdf {
     /**
      * Render one already-decided token to the bound sink. This is an advanced
      * streaming surface; use render for ordinary Markdown input. Deck
-     * renderers reject it.
+     * renderers reject it. set_sink must succeed first.
      */
     mdf_status (*write_token)(mdf *self, const mdf_token *token);
-    /** Finish manual token streaming, flush pending state, and reset the session. */
+    /** Finish manual token streaming through the bound sink and release its session state. */
     mdf_status (*finish)(mdf *self);
-    /** Stream Markdown from source to the bound sink without materializing input. */
+    /** Stream Markdown from source to the bound sink without materializing input; set_sink must succeed first. */
     mdf_status (*render)(mdf *self, mdf_source *source);
     /**
      * Render NUL-terminated Markdown into an allocated NUL-terminated string.
@@ -409,8 +409,8 @@ struct mdf {
     void (*string_free)(mdf *self, char *s);
     /**
      * Feed a nonempty Markdown fragment into the active incremental document.
-     * Each final decision is emitted once to the bound sink. See mdf_feed for
-     * lifecycle, format, and limit rules.
+     * Each final decision is emitted once to the bound sink. set_sink must
+     * succeed first. See mdf_feed for lifecycle, format, and limit rules.
      */
     mdf_status (*feed)(mdf *self, const char *data, size_t len);
     /**
@@ -436,7 +436,8 @@ struct mdf {
     mdf_status (*set_width)(mdf *self, int width);
     /**
      * Close terminal styling through the bound sink, then discard the active
-     * renderer and incremental-parser session. See mdf_reset.
+     * renderer and incremental-parser session. See mdf_reset. This may not
+     * interrupt a synchronous render call.
      */
     mdf_status (*reset)(mdf *self);
     /** Replace the renderer's one bound output sink. See mdf_set_sink. */
@@ -469,7 +470,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * valid until replaced or renderer destruction. Replacing an existing binding
  * makes a best effort to close terminal state on the old sink, discards current
  * rendering state even when that close fails, and then binds the new sink;
- * callers replay their own source to render on the new sink.
+ * callers replay their own source to render on the new sink. The explicit-sink
+ * free functions below borrow their sink only for their call and never replace
+ * this receiver binding.
  */
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
 /**
@@ -486,20 +489,22 @@ mdf_status mdf_set_width(mdf *renderer, int width);
  * Close ANSI terminal state through the bound sink, then discard an unfinished
  * manual-token or incremental document without emitting EOF closure. ANSI
  * reset emits one exact sink write that closes OSC8 links and resets SGR
- * attributes. It retains renderer configuration such as width and an explicit
- * HTML title. No Markdown input is retained for replay; callers own and resend
- * source if they need reflow. It cannot interrupt a synchronous render call.
+ * attributes. Without a bound sink it only discards state. It retains renderer
+ * configuration such as width and an explicit HTML title. No Markdown input is
+ * retained for replay; callers own and resend source if they need reflow. It
+ * cannot interrupt a synchronous render call.
  */
 mdf_status mdf_reset(mdf *renderer);
-/** Render a token through an explicit sink borrowed for this call only. */
+/** Render a token through an explicit sink borrowed for this call only; it does not bind that sink. */
 mdf_status mdf_write_token(mdf *renderer, const mdf_token *token, mdf_sink *sink);
-/** Finish manual token rendering through an explicit sink borrowed for this call only. */
+/** Finish manual token rendering through an explicit sink borrowed for this call only; it does not bind that sink. */
 mdf_status mdf_finish(mdf *renderer, mdf_sink *sink);
-/** Render source through an explicit sink borrowed for this call only. */
+/** Render source through an explicit sink borrowed for this call only; it does not bind that sink. */
 mdf_status mdf_render(mdf *renderer, mdf_source *source, mdf_sink *sink);
 /**
  * Feed a nonempty Markdown fragment into one incremental document.
- * Rendering is synchronous: sink is borrowed only for this call and each
+ * Rendering is synchronous: sink is borrowed only for this call, does not
+ * replace any receiver binding, and each
  * decided emission must be accepted completely. This is not EOF; call
  * mdf_finish_document to resolve an unterminated construct and close output.
  * A pending table or chart construct is limited to 65536 retained bytes;
@@ -513,21 +518,23 @@ mdf_status mdf_render(mdf *renderer, mdf_source *source, mdf_sink *sink);
 mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
 /**
  * Validate a non-EOF boundary on an incremental document through an explicit
- * sink borrowed for this call. This never emits,
+ * sink borrowed for this call and does not replace any receiver binding. This
+ * never emits,
  * resolves, or otherwise changes retained input: feed emits every decision as
  * it becomes final, and mdf_finish_document alone applies EOF semantics.
  */
 mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
 /**
  * End an incremental document exactly once through an explicit sink borrowed
- * for this call. It resolves retained Markdown
+ * for this call that does not replace any receiver binding. It resolves
+ * retained Markdown
  * under ordinary EOF rules and emits the renderer's final closure. Later feed,
  * flush, or finish_document calls fail until mdf_begin_document succeeds.
  */
 mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink);
 /**
- * Reset a renderer after a successful mdf_finish_document so it can render a
- * distinct next document without destruction and reconstruction.
+ * Start a distinct next incremental document after a successful
+ * mdf_finish_document. It leaves the bound sink and configured width intact.
  */
 mdf_status mdf_begin_document(mdf *renderer);
 /**
