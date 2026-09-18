@@ -2436,9 +2436,13 @@ int main(void)
         grow_sink bound_capture;
         grow_sink borrowed_capture;
         grow_sink replacement_capture;
+        grow_sink recovery_capture;
+        armed_failing_sink failed_old_sink;
         mdf_sink bound_sink;
         mdf_sink borrowed_sink;
         mdf_sink replacement_sink;
+        mdf_sink failed_old_output;
+        mdf_sink recovery_sink;
         width_change_source width_source;
         render_control_source control_source;
         cstr_source receiver_source;
@@ -2447,12 +2451,18 @@ int main(void)
         memset(&bound_capture, 0, sizeof(bound_capture));
         memset(&borrowed_capture, 0, sizeof(borrowed_capture));
         memset(&replacement_capture, 0, sizeof(replacement_capture));
+        memset(&recovery_capture, 0, sizeof(recovery_capture));
+        memset(&failed_old_sink, 0, sizeof(failed_old_sink));
         bound_sink.userdata = &bound_capture;
         bound_sink.write = grow_write;
         borrowed_sink.userdata = &borrowed_capture;
         borrowed_sink.write = grow_write;
         replacement_sink.userdata = &replacement_capture;
         replacement_sink.write = grow_write;
+        failed_old_output.userdata = &failed_old_sink;
+        failed_old_output.write = armed_fail_write;
+        recovery_sink.userdata = &recovery_capture;
+        recovery_sink.write = grow_write;
         mdf_options_init(&opts);
         opts.boring = 1;
         opts.width = 80;
@@ -2465,6 +2475,9 @@ int main(void)
                             inst->feed != NULL && inst->flush != NULL &&
                             inst->finish_document != NULL,
                             "bound-sink receiver methods are populated");
+            st = inst->reset(inst);
+            fails += expect(st == MDF_OK,
+                            "receiver reset succeeds before any sink is bound");
             memset(&receiver_source, 0, sizeof(receiver_source));
             receiver_source.src = "missing sink\n";
             receiver_source.len = strlen(receiver_source.src);
@@ -2581,12 +2594,29 @@ int main(void)
                             strstr(replacement_capture.buf, "replacement sink") != NULL &&
                             strstr(replacement_capture.buf, "old sink") == NULL,
                             "receiver sink replacement discards state and requires replay on the new sink");
+
+            st = inst->set_sink(inst, &failed_old_output);
+            fails += expect(st == MDF_OK,
+                            "receiver binds a sink that will fail terminal cleanup");
+            st = inst->feed(inst, "discarded", strlen("discarded"));
+            failed_old_sink.armed = 1;
+            if (st == MDF_OK) st = inst->set_sink(inst, &recovery_sink);
+            fails += expect(st == MDF_OK && strcmp(inst->error(inst), "") == 0,
+                            "receiver replacement survives old-sink cleanup failure and clears its error");
+            if (st == MDF_OK) st = inst->feed(inst, "fresh\n", strlen("fresh\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && recovery_capture.buf != NULL &&
+                            strstr(recovery_capture.buf, "fresh") != NULL &&
+                            strstr(recovery_capture.buf, "discarded") == NULL,
+                            "receiver replacement leaves replay ownership with the caller after cleanup failure");
             inst->destroy(inst);
             inst = NULL;
         }
         grow_free(&bound_capture);
         grow_free(&borrowed_capture);
         grow_free(&replacement_capture);
+        grow_free(&recovery_capture);
+        grow_free(&failed_old_sink.capture);
     }
 
     mdf_options_init(&opts);

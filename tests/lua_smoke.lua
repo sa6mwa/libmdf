@@ -262,6 +262,25 @@ do
 end
 
 do
+  local replacement = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+    return false
+  end)
+  assert(stream:write("discarded"),
+         "lua document stream retains undecided input until a replacement reset")
+  assert(stream:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua document stream adopts a replacement sink after old cleanup fails")
+  assert(stream:write("fresh\n"),
+         "lua document stream accepts caller replay after failed old-sink cleanup")
+  assert(stream:finish_document(),
+         "lua document stream finishes after failed old-sink cleanup")
+  assert(table.concat(replacement):match("fresh") and not table.concat(replacement):match("discarded"),
+         "lua document stream replacement discards state despite old cleanup failure")
+  stream:close()
+end
+
+do
   local weak = setmetatable({}, { __mode = "v" })
   do
     local opts = { format = "html", font_uri = {} }
@@ -360,6 +379,25 @@ do
   end), "lua handle renders through its bound sink")
   assert(table.concat(handle_chunks):match("alpha\nbeta"),
          "lua handle applies source-time width changes to later decisions")
+end
+
+do
+  local replacement = {}
+  assert(handle:set_sink(function()
+    return false
+  end), "lua handle binds a sink that will reject terminal cleanup")
+  assert(handle:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua handle adopts a replacement sink after old cleanup fails")
+  assert_equal(handle:error(), "", "lua handle replacement clears the old sink error")
+  local emitted = false
+  assert(handle:render_stream(function()
+    if emitted then return nil end
+    emitted = true
+    return "fresh\n"
+  end), "lua handle renders through a replacement sink after failed cleanup")
+  assert(table.concat(replacement):match("fresh"),
+         "lua handle sends subsequent output only to its replacement sink")
 end
 
 handle:close()

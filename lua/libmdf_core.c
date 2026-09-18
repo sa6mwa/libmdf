@@ -27,14 +27,18 @@ typedef struct lua_mdf_trace_ctx {
 typedef struct lua_mdf_handle {
     mdf *mdf;
     int opts_ref;
-    int sink_ref;
+    /* Alternate contexts so core replacement closes the old Lua callback first. */
+    lua_mdf_sink_ctx sink_ctx[2];
+    int sink_slot;
     lua_mdf_trace_ctx trace_ctx;
 } lua_mdf_handle;
 
 typedef struct lua_mdf_document_stream {
     mdf *mdf;
     int opts_ref;
-    int sink_ref;
+    /* Alternate contexts so core replacement closes the old Lua callback first. */
+    lua_mdf_sink_ctx sink_ctx[2];
+    int sink_slot;
     lua_mdf_trace_ctx trace_ctx;
 } lua_mdf_document_stream;
 
@@ -42,8 +46,6 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_DOCUMENT_STREAM "libmdf.document_stream"
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
-static int lua_mdf_handle_sink_write(void *userdata, const char *src, size_t len);
-static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, size_t len);
 
 static const char *lua_mdf_format_name(mdf_format format)
 {
@@ -838,7 +840,11 @@ static int lua_mdf_new(lua_State *L)
     handle = (lua_mdf_handle *)lua_newuserdatauv(L, sizeof(*handle), 0);
     handle->mdf = NULL;
     handle->opts_ref = LUA_NOREF;
-    handle->sink_ref = LUA_NOREF;
+    handle->sink_ctx[0].L = L;
+    handle->sink_ctx[0].ref = LUA_NOREF;
+    handle->sink_ctx[1].L = L;
+    handle->sink_ctx[1].ref = LUA_NOREF;
+    handle->sink_slot = -1;
     handle->trace_ctx.L = L;
     handle->trace_ctx.ref = LUA_NOREF;
     luaL_getmetatable(L, LUA_MDF_HANDLE);
@@ -866,9 +872,13 @@ static int lua_mdf_new(lua_State *L)
             luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
             handle->opts_ref = LUA_NOREF;
         }
-        if (handle->sink_ref != LUA_NOREF) {
-            luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ref);
-            handle->sink_ref = LUA_NOREF;
+        if (handle->sink_ctx[0].ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ctx[0].ref);
+            handle->sink_ctx[0].ref = LUA_NOREF;
+        }
+        if (handle->sink_ctx[1].ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ctx[1].ref);
+            handle->sink_ctx[1].ref = LUA_NOREF;
         }
         if (handle->trace_ctx.ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->trace_ctx.ref);
@@ -895,7 +905,11 @@ static int lua_mdf_document_stream_new(lua_State *L)
     stream = (lua_mdf_document_stream *)lua_newuserdatauv(L, sizeof(*stream), 0);
     stream->mdf = NULL;
     stream->opts_ref = LUA_NOREF;
-    stream->sink_ref = LUA_NOREF;
+    stream->sink_ctx[0].L = L;
+    stream->sink_ctx[0].ref = LUA_NOREF;
+    stream->sink_ctx[1].L = L;
+    stream->sink_ctx[1].ref = LUA_NOREF;
+    stream->sink_slot = -1;
     stream->trace_ctx.L = L;
     stream->trace_ctx.ref = LUA_NOREF;
     luaL_getmetatable(L, LUA_MDF_DOCUMENT_STREAM);
@@ -904,7 +918,8 @@ static int lua_mdf_document_stream_new(lua_State *L)
     lua_pushvalue(L, 1);
     stream->opts_ref = luaL_ref(L, LUA_REGISTRYINDEX);
     lua_pushvalue(L, 2);
-    stream->sink_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    stream->sink_ctx[0].ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    stream->sink_slot = 0;
     st = lua_mdf_apply_html_font_options(L, 1, format, &opts);
     if (st == MDF_OK) {
         st = mdf_create(format, &opts, &stream->mdf);
@@ -912,8 +927,8 @@ static int lua_mdf_document_stream_new(lua_State *L)
     if (st == MDF_OK) {
         mdf_sink sink;
 
-        sink.userdata = stream;
-        sink.write = lua_mdf_document_stream_sink_write;
+        sink.userdata = &stream->sink_ctx[stream->sink_slot];
+        sink.write = lua_mdf_sink_write;
         st = mdf_set_sink(stream->mdf, &sink);
     }
     if (st == MDF_OK && (format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
@@ -928,9 +943,13 @@ static int lua_mdf_document_stream_new(lua_State *L)
             luaL_unref(L, LUA_REGISTRYINDEX, stream->opts_ref);
             stream->opts_ref = LUA_NOREF;
         }
-        if (stream->sink_ref != LUA_NOREF) {
-            luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ref);
-            stream->sink_ref = LUA_NOREF;
+        if (stream->sink_ctx[0].ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ctx[0].ref);
+            stream->sink_ctx[0].ref = LUA_NOREF;
+        }
+        if (stream->sink_ctx[1].ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ctx[1].ref);
+            stream->sink_ctx[1].ref = LUA_NOREF;
         }
         if (stream->trace_ctx.ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, stream->trace_ctx.ref);
@@ -939,17 +958,6 @@ static int lua_mdf_document_stream_new(lua_State *L)
         return luaL_error(L, "mdf_document_stream: %s", mdf_status_string(st));
     }
     return 1;
-}
-
-static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, size_t len)
-{
-    lua_mdf_document_stream *stream;
-    lua_mdf_sink_ctx ctx;
-
-    stream = (lua_mdf_document_stream *)userdata;
-    ctx.L = stream->trace_ctx.L;
-    ctx.ref = stream->sink_ref;
-    return lua_mdf_sink_write(&ctx, src, len);
 }
 
 static int lua_mdf_document_stream_set_width(lua_State *L)
@@ -986,6 +994,8 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
 {
     lua_mdf_document_stream *stream;
     mdf_sink sink;
+    int old_slot;
+    int new_slot;
     int old_ref;
     int new_ref;
     mdf_status st;
@@ -994,28 +1004,25 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
     luaL_checktype(L, 2, LUA_TFUNCTION);
     lua_pushvalue(L, 2);
     new_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    old_ref = stream->sink_ref;
-    if (old_ref != LUA_NOREF) {
-        st = stream->mdf->reset(stream->mdf);
-        if (st != MDF_OK) {
-            luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
-            return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
-                              mdf_status_string(st), stream->mdf->error(stream->mdf));
-        }
-    }
-    stream->sink_ref = new_ref;
-    sink.userdata = stream;
-    sink.write = lua_mdf_document_stream_sink_write;
+    old_slot = stream->sink_slot;
+    new_slot = old_slot == 0 ? 1 : 0;
+    old_ref = old_slot >= 0 ? stream->sink_ctx[old_slot].ref : LUA_NOREF;
+    stream->sink_ctx[new_slot].L = L;
+    stream->sink_ctx[new_slot].ref = new_ref;
+    sink.userdata = &stream->sink_ctx[new_slot];
+    sink.write = lua_mdf_sink_write;
     st = stream->mdf->set_sink(stream->mdf, &sink);
     if (st != MDF_OK) {
-        stream->sink_ref = old_ref;
         luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        stream->sink_ctx[new_slot].ref = LUA_NOREF;
         return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
     }
     if (old_ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        stream->sink_ctx[old_slot].ref = LUA_NOREF;
     }
+    stream->sink_slot = new_slot;
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1096,9 +1103,13 @@ static int lua_mdf_document_stream_close(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, stream->opts_ref);
         stream->opts_ref = LUA_NOREF;
     }
-    if (stream->sink_ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ref);
-        stream->sink_ref = LUA_NOREF;
+    if (stream->sink_ctx[0].ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ctx[0].ref);
+        stream->sink_ctx[0].ref = LUA_NOREF;
+    }
+    if (stream->sink_ctx[1].ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, stream->sink_ctx[1].ref);
+        stream->sink_ctx[1].ref = LUA_NOREF;
     }
     if (stream->trace_ctx.ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, stream->trace_ctx.ref);
@@ -1153,21 +1164,12 @@ static int lua_mdf_handle_render_stream(lua_State *L)
     return 1;
 }
 
-static int lua_mdf_handle_sink_write(void *userdata, const char *src, size_t len)
-{
-    lua_mdf_handle *handle;
-    lua_mdf_sink_ctx ctx;
-
-    handle = (lua_mdf_handle *)userdata;
-    ctx.L = handle->trace_ctx.L;
-    ctx.ref = handle->sink_ref;
-    return lua_mdf_sink_write(&ctx, src, len);
-}
-
 static int lua_mdf_handle_set_sink(lua_State *L)
 {
     lua_mdf_handle *handle;
     mdf_sink sink;
+    int old_slot;
+    int new_slot;
     int old_ref;
     int new_ref;
     mdf_status st;
@@ -1176,28 +1178,25 @@ static int lua_mdf_handle_set_sink(lua_State *L)
     luaL_checktype(L, 2, LUA_TFUNCTION);
     lua_pushvalue(L, 2);
     new_ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    old_ref = handle->sink_ref;
-    if (old_ref != LUA_NOREF) {
-        st = handle->mdf->reset(handle->mdf);
-        if (st != MDF_OK) {
-            luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
-            return luaL_error(L, "mdf_handle.set_sink: %s: %s",
-                              mdf_status_string(st), handle->mdf->error(handle->mdf));
-        }
-    }
-    handle->sink_ref = new_ref;
-    sink.userdata = handle;
-    sink.write = lua_mdf_handle_sink_write;
+    old_slot = handle->sink_slot;
+    new_slot = old_slot == 0 ? 1 : 0;
+    old_ref = old_slot >= 0 ? handle->sink_ctx[old_slot].ref : LUA_NOREF;
+    handle->sink_ctx[new_slot].L = L;
+    handle->sink_ctx[new_slot].ref = new_ref;
+    sink.userdata = &handle->sink_ctx[new_slot];
+    sink.write = lua_mdf_sink_write;
     st = handle->mdf->set_sink(handle->mdf, &sink);
     if (st != MDF_OK) {
-        handle->sink_ref = old_ref;
         luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        handle->sink_ctx[new_slot].ref = LUA_NOREF;
         return luaL_error(L, "mdf_handle.set_sink: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
     }
     if (old_ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+        handle->sink_ctx[old_slot].ref = LUA_NOREF;
     }
+    handle->sink_slot = new_slot;
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1306,9 +1305,13 @@ static int lua_mdf_handle_close(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
         handle->opts_ref = LUA_NOREF;
     }
-    if (handle->sink_ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ref);
-        handle->sink_ref = LUA_NOREF;
+    if (handle->sink_ctx[0].ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ctx[0].ref);
+        handle->sink_ctx[0].ref = LUA_NOREF;
+    }
+    if (handle->sink_ctx[1].ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ctx[1].ref);
+        handle->sink_ctx[1].ref = LUA_NOREF;
     }
     if (handle->trace_ctx.ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, handle->trace_ctx.ref);

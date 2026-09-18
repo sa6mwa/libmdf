@@ -34,6 +34,8 @@ end
 
 ---Create an incremental document stream with one persistent writer callback.
 ---Use `set_width`, `reset`, or `set_sink` on the returned stream as needed.
+---Replacing a callback discards state and still binds the new callback if old
+---terminal cleanup reports a write failure; callers replay their own source.
 function mdf.document_stream(opts, write)
   return core.document_stream(opts or {}, write)
 end

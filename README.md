@@ -318,7 +318,9 @@ and sink replacement close ANSI terminal state before discarding parser state;
 reset and sink replacement are rejected while a synchronous `render` call is
 active. A source callback may change width for subsequent decisions, but it
 cannot reset or move a live render to a different sink. libmdf never retains
-input for replay.
+input for replay. If terminal cleanup on the old sink fails during replacement,
+the renderer still discards state and binds the new sink; replay remains the
+caller's responsibility.
 Pending table and chart constructs retain at most 65536 bytes, and tables
 retain at most 1024 rows; an oversized unfinished construct fails with
 `MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
@@ -704,7 +706,9 @@ stream:close()
 `set_sink(callback)`. They have the same future-decision, caller-owned replay,
 and terminal-closure behavior as their C receiver counterparts. Replacing the
 callback resets the current document, so resend the source you want on the new
-sink; Lua does not buffer it for you.
+sink; Lua does not buffer it for you. A failed terminal cleanup callback does
+not prevent replacement: the old state is discarded and the new callback is
+bound for caller-owned replay.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
