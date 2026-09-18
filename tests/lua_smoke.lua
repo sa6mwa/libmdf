@@ -481,10 +481,15 @@ do
          "lua document stream sets an HTML title before its first write")
   assert(stream:write("# Ignored Stream Heading\n\nbody\n"),
          "lua document stream accepts HTML after setting its title")
+  local late_title_ok = pcall(function() stream:set_html_title("Late Stream Title") end)
+  assert(not late_title_ok and stream:error():match("HTML title must be set before rendering starts"),
+         "lua document stream rejects an HTML title change after its first write")
   assert(stream:finish_document(), "lua document stream finishes HTML after setting its title")
   stream:close()
   assert(table.concat(chunks):match("<title>Stream HTML Setter</title>"),
          "lua document stream applies its explicit HTML title")
+  assert(not table.concat(chunks):match("Late Stream Title"),
+         "lua document stream preserves the title emitted in its shell")
 end
 
 local external_font_html = mdf.render("# External Font\n", {

@@ -3252,6 +3252,27 @@ int main(void)
                     "library html auto-title stops after invalid front matter");
     renderer->string_free(renderer, out);
     out = NULL;
+    {
+        grow_sink title_stream_output;
+        mdf_sink title_stream_sink;
+
+        memset(&title_stream_output, 0, sizeof(title_stream_output));
+        title_stream_sink.userdata = &title_stream_output;
+        title_stream_sink.write = grow_write;
+        st = mdf_set_html_title(renderer, "Stream Title");
+        if (st == MDF_OK) st = renderer->set_sink(renderer, &title_stream_sink);
+        if (st == MDF_OK) st = renderer->feed(renderer, "body\n", strlen("body\n"));
+        if (st == MDF_OK) st = mdf_set_html_title(renderer, "Late Title");
+        fails += expect(st == MDF_ERROR_INVALID &&
+                        strcmp(renderer->error(renderer), "HTML title must be set before rendering starts") == 0,
+                        "html title setter rejects changes after an incremental document starts");
+        st = renderer->finish_document(renderer);
+        fails += expect(st == MDF_OK && title_stream_output.buf != NULL &&
+                        strstr(title_stream_output.buf, "<title>Stream Title</title>") != NULL &&
+                        strstr(title_stream_output.buf, "Late Title") == NULL,
+                        "active HTML stream retains its original explicit title");
+        grow_sink_free(&title_stream_output);
+    }
     renderer->destroy(renderer);
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &renderer);

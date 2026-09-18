@@ -3035,6 +3035,10 @@ mdf_status mdf_set_html_title(mdf *self, const char *title)
     if (impl->format != MDF_FORMAT_HTML && impl->format != MDF_FORMAT_HTML_DECK) {
         return MDF_ERROR_INVALID;
     }
+    if (impl->render_parser != NULL || impl->incremental_state == MDF_INCREMENTAL_ACTIVE || impl->html_open) {
+        mdf_set_error(self, "HTML title must be set before rendering starts");
+        return MDF_ERROR_INVALID;
+    }
     if (title == NULL) {
         mdf_free_mem(&impl->allocator, impl->html_title, impl->html_title_cap);
         impl->html_title = NULL;
