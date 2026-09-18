@@ -2099,6 +2099,8 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     mdf_parser *parser;
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
     const char *parser_err;
     auto_title_source title_source_data;
@@ -2123,6 +2125,9 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
     }
     mdf_renderer_reset_session_state(self);
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
+    previous_sink = impl->active_sink;
+    impl->active_sink = &guarded_sink;
     memset(&title_source_data, 0, sizeof(title_source_data));
     title_source_data.source = source;
     title_source_data.prefix.allocator = &impl->allocator;
@@ -2130,6 +2135,7 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         impl->html_title == NULL) {
         if (auto_title_detect_from_source(impl, &title_source_data) != 0) {
             deck_string_dispose(&title_source_data.prefix);
+            impl->active_sink = previous_sink;
             mdf_set_error(self, title_source_data.err == -1 ? "out of memory" : "source read failed");
             impl->render_active = 0;
             return title_source_data.err == -1 ? MDF_ERROR_NOMEM : MDF_ERROR_IO;
@@ -2139,8 +2145,9 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         source = &title_source;
     }
     if (impl->format == MDF_FORMAT_HTML_DECK) {
-        st = deck_render(self, source, sink);
+        st = deck_render(self, source, &guarded_sink);
         deck_string_dispose(&title_source_data.prefix);
+        impl->active_sink = previous_sink;
         impl->render_active = 0;
         return st;
     }
@@ -2153,20 +2160,20 @@ static mdf_status instance_render(mdf_renderer *self, mdf_source *source, mdf_si
         } else {
             mdf_set_error(self, "parser creation failed");
         }
+        impl->active_sink = previous_sink;
         impl->render_active = 0;
         return st;
     }
-    st = self->write_token == NULL || self->finish == NULL ? MDF_ERROR_INVALID : mdf_renderer_begin_internal(self, sink);
+    st = self->write_token == NULL || self->finish == NULL ? MDF_ERROR_INVALID : mdf_renderer_begin_internal(self, &guarded_sink);
     if (st != MDF_OK) {
         parser->destroy(parser);
         deck_string_dispose(&title_source_data.prefix);
+        impl->active_sink = previous_sink;
         impl->render_active = 0;
         return st;
     }
-    previous_sink = impl->active_sink;
-    impl->active_sink = sink;
     impl->render_parser = parser;
-    st = parser->parse(parser, source, self, sink);
+    st = parser->parse(parser, source, self, &guarded_sink);
     impl->render_parser = NULL;
     impl->active_sink = previous_sink;
     if (st != MDF_OK) {
@@ -2815,6 +2822,8 @@ mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink)
 {
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
 
     if (renderer == NULL || renderer->impl == NULL || data == NULL || len == 0 || sink == NULL || sink->write == NULL) {
@@ -2827,13 +2836,14 @@ mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
     previous_sink = impl->active_sink;
-    impl->active_sink = sink;
-    st = mdf_incremental_start(renderer, sink);
+    impl->active_sink = &guarded_sink;
+    st = mdf_incremental_start(renderer, &guarded_sink);
     if (st != MDF_OK) {
         goto done;
     }
-    st = mdf_parser_feed(impl->incremental_parser, renderer, sink, data, len);
+    st = mdf_parser_feed(impl->incremental_parser, renderer, &guarded_sink, data, len);
     if (st != MDF_OK) {
         st = mdf_incremental_fail(renderer, st);
     }
@@ -2848,6 +2858,8 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
 {
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
 
     if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
@@ -2860,8 +2872,9 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
     previous_sink = impl->active_sink;
-    impl->active_sink = sink;
+    impl->active_sink = &guarded_sink;
     if (impl->format == MDF_FORMAT_HTML_DECK) {
         mdf_set_error(renderer, "deck renderers do not support incremental documents");
         st = MDF_ERROR_INVALID;
@@ -2883,7 +2896,7 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink)
         st = MDF_ERROR_INVALID;
         goto done;
     }
-    st = mdf_parser_flush(impl->incremental_parser, renderer, sink);
+    st = mdf_parser_flush(impl->incremental_parser, renderer, &guarded_sink);
     if (st != MDF_OK) {
         st = mdf_incremental_fail(renderer, st);
     }
@@ -2898,6 +2911,8 @@ mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink)
 {
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
 
     if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
@@ -2909,13 +2924,14 @@ mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
     previous_sink = impl->active_sink;
-    impl->active_sink = sink;
-    st = mdf_incremental_start(renderer, sink);
+    impl->active_sink = &guarded_sink;
+    st = mdf_incremental_start(renderer, &guarded_sink);
     if (st != MDF_OK) {
         goto done;
     }
-    st = mdf_parser_finish_document(impl->incremental_parser, renderer, sink);
+    st = mdf_parser_finish_document(impl->incremental_parser, renderer, &guarded_sink);
     if (st != MDF_OK) {
         st = mdf_incremental_fail(renderer, st);
         goto done;
@@ -3129,6 +3145,8 @@ mdf_status mdf_write_token(mdf *renderer, const mdf_token *token, mdf_sink *sink
 {
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
 
     if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
@@ -3140,9 +3158,10 @@ mdf_status mdf_write_token(mdf *renderer, const mdf_token *token, mdf_sink *sink
         return MDF_ERROR_INVALID;
     }
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
     previous_sink = impl->active_sink;
-    impl->active_sink = sink;
-    st = mdf_renderer_write_token_internal(renderer, token, sink);
+    impl->active_sink = &guarded_sink;
+    st = mdf_renderer_write_token_internal(renderer, token, &guarded_sink);
     impl->active_sink = previous_sink;
     impl->render_active = 0;
     return st;
@@ -3152,6 +3171,8 @@ mdf_status mdf_finish(mdf *renderer, mdf_sink *sink)
 {
     mdf_impl *impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
     mdf_status st;
 
     if (renderer == NULL || renderer->impl == NULL || sink == NULL || sink->write == NULL) {
@@ -3163,9 +3184,10 @@ mdf_status mdf_finish(mdf *renderer, mdf_sink *sink)
         return MDF_ERROR_INVALID;
     }
     impl->render_active = 1;
+    mdf_sink_callback_guard_init(&sink_guard, impl, sink, &guarded_sink);
     previous_sink = impl->active_sink;
-    impl->active_sink = sink;
-    st = mdf_renderer_finish_internal(renderer, sink);
+    impl->active_sink = &guarded_sink;
+    st = mdf_renderer_finish_internal(renderer, &guarded_sink);
     impl->active_sink = previous_sink;
     impl->render_active = 0;
     return st;
@@ -3498,6 +3520,32 @@ int mdf_write_cstr(mdf_sink *sink, const char *src)
         return 0;
     }
     return mdf_write_all(sink, src, strlen(src));
+}
+
+static int mdf_sink_callback_guard_write(void *userdata, const char *src, size_t len)
+{
+    mdf_sink_callback_guard *guard;
+    int rc;
+
+    guard = (mdf_sink_callback_guard *)userdata;
+    if (guard == NULL || guard->impl == NULL || guard->target == NULL) {
+        return -1;
+    }
+    guard->impl->emission_active++;
+    rc = mdf_write_all(guard->target, src, len);
+    guard->impl->emission_active--;
+    return rc;
+}
+
+void mdf_sink_callback_guard_init(mdf_sink_callback_guard *guard,
+                                  mdf_impl *impl,
+                                  mdf_sink *target,
+                                  mdf_sink *wrapped)
+{
+    guard->impl = impl;
+    guard->target = target;
+    wrapped->userdata = guard;
+    wrapped->write = mdf_sink_callback_guard_write;
 }
 
 int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)

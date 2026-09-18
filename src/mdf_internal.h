@@ -183,7 +183,6 @@ typedef struct mdf_impl {
     size_t ansi_pending_code_len;
     size_t ansi_pending_code_cap;
     int ansi_pending_code_valid;
-    int ansi_pending_code_leading_space;
     int ansi_pending_code_col;
     int ansi_pending_code_writing_left_margin;
     int ansi_pending_code_left_margin;
@@ -223,6 +222,14 @@ typedef struct mdf_impl {
     mdf_parser *incremental_parser;
     int incremental_state;
 } mdf_impl;
+
+/* Wrap a caller-owned sink while a renderer operation is active.  The wrapper
+ * marks only the actual user callback as active, so source callbacks remain
+ * free to adjust runtime layout before their next decision is emitted. */
+typedef struct mdf_sink_callback_guard {
+    mdf_impl *impl;
+    mdf_sink *target;
+} mdf_sink_callback_guard;
 
 typedef struct mdf_parser_impl {
     mdf_options opts;
@@ -295,6 +302,10 @@ void mdf_set_error(mdf_renderer *self, const char *msg);
 void mdf_parser_set_error(mdf_parser *self, const char *msg);
 int mdf_write_all(mdf_sink *sink, const char *src, size_t len);
 int mdf_write_cstr(mdf_sink *sink, const char *src);
+void mdf_sink_callback_guard_init(mdf_sink_callback_guard *guard,
+                                  mdf_impl *impl,
+                                  mdf_sink *target,
+                                  mdf_sink *wrapped);
 int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len);
 int mdf_emit_cstr(mdf_impl *impl, mdf_sink *sink, const char *src);
 int mdf_emit_buffer_reset(mdf_impl *impl);

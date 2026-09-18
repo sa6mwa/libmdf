@@ -2859,6 +2859,80 @@ int main(void)
     }
 
     {
+        static const char prefix[] = "a ";
+        static const char pending_code[] = "`a.b.c.d.e.f`";
+        static const char suffix[] = " text\n";
+        static const char complete[] = "a `a.b.c.d.e.f` text\n";
+        static const char expected_narrow[] = "a\na.b.\xE2\x80\xA6\ntext\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "separator reflow width-change receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, prefix, strlen(prefix));
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_code, strlen(pending_code));
+            }
+            fails += expect(st == MDF_OK && emission_log_equals_bytes(&writes, "a", 1) &&
+                            emission_logs_equal(&writes, &traces),
+                            "only the pre-code word is emitted before narrow separator reflow");
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 5);
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, suffix, strlen(suffix));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK && emission_logs_equal(&writes, &traces),
+                            "separator reflow keeps every sink write and trace event identical");
+            fails += expect(emission_log_equals_bytes(&writes, expected_narrow, strlen(expected_narrow)),
+                            "separator reflow recomputes narrow code placement rather than retaining the wide separator");
+
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 5;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, complete, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "separator reflow matches a fresh narrow renderer");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
         static const char markdown[] = "`abcdefghij` text\n";
         width_change_output_sink output;
         emission_log traces;
@@ -2916,6 +2990,63 @@ int main(void)
         }
         emission_log_free(&output.capture);
         emission_log_free(&traces);
+    }
+
+    {
+        static const char markdown[] = "HTML callback width guard\n";
+        width_change_output_sink output;
+        mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
+
+        memset(&output, 0, sizeof(output));
+        bound_sink.userdata = &output;
+        bound_sink.write = width_change_output_write;
+        mdf_options_init(&opts);
+        opts.width = 80;
+        st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "HTML output-callback width-change receiver creates");
+        if (inst != NULL) {
+            output.renderer = inst;
+            st = mdf_set_html_title(inst, "Callback guard");
+            if (st == MDF_OK) {
+                st = inst->set_sink(inst, &bound_sink);
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, markdown, strlen(markdown));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK && output.calls > 0 &&
+                            output.width_status == MDF_ERROR_INVALID,
+                            "HTML output callbacks cannot change width during a write");
+
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.width = 80;
+            st = mdf_create(MDF_FORMAT_HTML, &opts, &reference);
+            if (st == MDF_OK) {
+                st = mdf_set_html_title(reference, "Callback guard");
+            }
+            if (st == MDF_OK) {
+                st = reference->render_cstr(reference, markdown, &expected);
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_log_equals_bytes(&output.capture, expected, strlen(expected)),
+                            "rejected HTML output-callback width changes preserve HTML bytes");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&output.capture);
     }
 
     {

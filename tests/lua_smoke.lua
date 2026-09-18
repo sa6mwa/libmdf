@@ -509,6 +509,70 @@ do
 end
 
 do
+  local writes = {}
+  local traces = {}
+  local handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    width = 80,
+    write_trace = function(_, chunk)
+      traces[#traces + 1] = chunk
+    end,
+  })
+
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+  end), "lua handle binds a separator-reflow regression sink")
+  assert(handle:feed("a "), "lua handle accepts the prefix before pending code")
+  assert(handle:feed("`a.b.c.d.e.f`"), "lua handle retains complete code before its boundary")
+  assert_equal(table.concat(writes), "a",
+               "lua pending code has not decided its separator before resize")
+  assert(handle:set_width(5), "lua handle accepts a narrow width before pending code emission")
+  assert(handle:feed(" text\n"), "lua handle continues after pending-code resize")
+  assert(handle:finish_document(), "lua handle finishes separator-reflow regression input")
+  assert_equal(table.concat(writes), "a\na.b.…\ntext\n",
+               "lua separator reflow recomputes placement at the new width")
+  assert_equal(#writes, #traces,
+               "lua separator reflow keeps sink and trace event counts aligned")
+  for index, chunk in ipairs(writes) do
+    assert_equal(traces[index], chunk,
+                 "lua separator reflow keeps sink and trace event bytes aligned")
+  end
+  handle:close()
+end
+
+do
+  local writes = {}
+  local width_change_ok
+  local handle = mdf.new({
+    format = "html",
+    width = 80,
+    html_title = "HTML callback guard",
+  })
+
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+    if width_change_ok == nil then
+      width_change_ok = pcall(function() handle:set_width(3) end)
+    end
+  end), "lua HTML handle binds an output-callback width-change sink")
+  assert(handle:feed("HTML callback width guard\n"),
+         "lua HTML handle renders while its sink attempts a width change")
+  assert(handle:finish_document(),
+         "lua HTML handle finishes after rejecting an output-callback width change")
+  assert(not width_change_ok,
+         "lua HTML handle rejects a width change from an output callback")
+  assert_equal(table.concat(writes),
+               mdf.render("HTML callback width guard\n", {
+                 format = "html",
+                 width = 80,
+                 html_title = "HTML callback guard",
+               }),
+               "lua HTML output-callback width rejection preserves output")
+  handle:close()
+end
+
+do
   local replacement = {}
   assert(handle:set_sink(function()
     return false

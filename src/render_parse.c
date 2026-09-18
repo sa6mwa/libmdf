@@ -6391,6 +6391,9 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
 {
     mdf_impl *renderer_impl;
     mdf_sink *previous_sink;
+    mdf_sink_callback_guard sink_guard;
+    mdf_sink guarded_sink;
+    mdf_sink *output_sink;
     char buf[4096];
     size_t n;
     int err;
@@ -6406,6 +6409,7 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
      * stack-owned sink record after parser->parse returns. */
     renderer_impl = (mdf_impl *)renderer->impl;
     previous_sink = NULL;
+    output_sink = sink;
     owns_render_active = 0;
     if (renderer_impl != NULL) {
         if (renderer_impl->render_active && renderer_impl->render_parser != self) {
@@ -6418,8 +6422,12 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
             renderer_impl->render_parser = self;
             owns_render_active = 1;
         }
+        if (renderer_impl->active_sink != sink) {
+            mdf_sink_callback_guard_init(&sink_guard, renderer_impl, sink, &guarded_sink);
+            output_sink = &guarded_sink;
+        }
         previous_sink = renderer_impl->active_sink;
-        renderer_impl->active_sink = sink;
+        renderer_impl->active_sink = output_sink;
     }
     err = 0;
     for (;;) {
@@ -6432,12 +6440,12 @@ mdf_status mdf_parse_stream(mdf_parser *self, mdf_source *source, mdf_renderer *
         if (n == 0) {
             break;
         }
-        st = mdf_parser_feed(self, renderer, sink, buf, n);
+        st = mdf_parser_feed(self, renderer, output_sink, buf, n);
         if (st != MDF_OK) {
             goto done;
         }
     }
-    st = mdf_parser_finish_document(self, renderer, sink);
+    st = mdf_parser_finish_document(self, renderer, output_sink);
 
 done:
     if (renderer_impl != NULL) {
