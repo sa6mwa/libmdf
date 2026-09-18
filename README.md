@@ -672,9 +672,10 @@ The top-level `mdf.render_stream(read, write, opts)` is the explicit-callback
 form: its callbacks are borrowed for that call. For streaming receiver methods,
 bind one callback once, then change width, reset, or replace the callback on
 the object itself. `reset` closes ANSI state and discards unfinished parser
-state; replay remains the caller's job. A `render_stream` reader may change
-width for later decisions, but `reset` and `set_sink` are rejected until that
-synchronous render returns.
+state even when the terminal callback fails; replay remains the caller's job.
+A `render_stream` reader may change width for later decisions, but `reset` and
+sink replacement are rejected until
+that synchronous render returns. Rebinding the identical callback is a no-op.
 
 ```lua
 local h = mdf.new({ boring = true })
@@ -702,13 +703,16 @@ assert(stream:begin_document())
 stream:close()
 ```
 
-`document_stream` also exposes `set_width(width)`, `reset()`, and
-`set_sink(callback)`. They have the same future-decision, caller-owned replay,
+`document_stream` also exposes `set_width(width)`, `reset()`,
+`set_sink(callback)`, `set_html_title(title)`, and `error()`. Set an HTML title
+before its first `write`; `error()` returns the latest core diagnostic. Width,
+reset, and sink replacement have the same future-decision, caller-owned replay,
 and terminal-closure behavior as their C receiver counterparts. Replacing the
 callback resets the current document, so resend the source you want on the new
 sink; Lua does not buffer it for you. A failed terminal cleanup callback does
 not prevent replacement: the old state is discarded and the new callback is
-bound for caller-owned replay.
+bound for caller-owned replay. Rebinding the identical callback is a no-op and
+preserves the current document.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
@@ -785,8 +789,10 @@ The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 and `mdf.token` constants corresponding to the public C values that are useful
 from Lua. Handle objects expose `set_sink`, `set_width`, `reset`,
 `set_html_title`, `render`, `render_stream`, `write_token`, `finish`, `error`,
-and `close`. `render` returns a string and needs no sink; the other three
-output receiver methods use the callback previously supplied to `set_sink`.
+`feed`, `flush`, `finish_document`, `begin_document`, and `close`. `render`
+returns a string and needs no sink; the other output receiver methods use the
+callback previously supplied to `set_sink`. After `finish_document`, call
+`begin_document` before feeding another incremental document.
 
 ## Markdown And HTML Safety
 

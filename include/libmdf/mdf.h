@@ -470,7 +470,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * valid until replaced or renderer destruction. Replacing an existing binding
  * makes a best effort to close terminal state on the old sink, discards current
  * rendering state even when that close fails, and then binds the new sink;
- * callers replay their own source to render on the new sink. The explicit-sink
+ * callers replay their own source to render on the new sink. Rebinding the
+ * identical callback and userdata leaves the current rendering state intact.
+ * The explicit-sink
  * free functions below borrow their sink only for their call and never replace
  * this receiver binding. A binding cannot be changed while a synchronous
  * render call is active.
@@ -492,8 +494,9 @@ mdf_status mdf_set_width(mdf *renderer, int width);
  * reset emits one exact sink write that closes OSC8 links and resets SGR
  * attributes. Without a bound sink it only discards state. It retains renderer
  * configuration such as width and an explicit HTML title. No Markdown input is
- * retained for replay; callers own and resend source if they need reflow. It
- * cannot interrupt a synchronous render call.
+ * retained for replay; callers own and resend source if they need reflow. A
+ * sink failure returns MDF_ERROR_IO after state has been discarded. It cannot
+ * interrupt a synchronous render call.
  */
 mdf_status mdf_reset(mdf *renderer);
 /** Render a token through an explicit sink borrowed for this call only; it does not bind that sink. */

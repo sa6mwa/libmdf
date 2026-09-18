@@ -2609,6 +2609,30 @@ int main(void)
                             strstr(recovery_capture.buf, "fresh") != NULL &&
                             strstr(recovery_capture.buf, "discarded") == NULL,
                             "receiver replacement leaves replay ownership with the caller after cleanup failure");
+
+            st = inst->begin_document(inst);
+            if (st == MDF_OK) st = inst->feed(inst, "retained", strlen("retained"));
+            if (st == MDF_OK) st = inst->set_sink(inst, &recovery_sink);
+            if (st == MDF_OK) st = inst->feed(inst, " input\n", strlen(" input\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && recovery_capture.buf != NULL &&
+                            strstr(recovery_capture.buf, "retained input") != NULL,
+                            "identical receiver sink binding preserves active incremental state");
+
+            failed_old_sink.armed = 0;
+            st = inst->set_sink(inst, &failed_old_output);
+            if (st == MDF_OK) st = inst->feed(inst, "discarded", strlen("discarded"));
+            failed_old_sink.armed = 1;
+            if (st == MDF_OK) st = inst->reset(inst);
+            fails += expect(st == MDF_ERROR_IO,
+                            "receiver reset reports a failed terminal cleanup write");
+            st = inst->set_sink(inst, &recovery_sink);
+            if (st == MDF_OK) st = inst->feed(inst, "fresh after reset\n", strlen("fresh after reset\n"));
+            if (st == MDF_OK) st = inst->finish_document(inst);
+            fails += expect(st == MDF_OK && recovery_capture.buf != NULL &&
+                            strstr(recovery_capture.buf, "fresh after reset") != NULL &&
+                            strstr(recovery_capture.buf, "discarded") == NULL,
+                            "failed receiver reset discards state and permits caller replay");
             inst->destroy(inst);
             inst = NULL;
         }

@@ -12,6 +12,8 @@ mdf.version_patch = core.version_patch
 ---`handle:set_sink(write)` before calling its streaming receiver methods.
 ---A `render_stream` reader may change width, but cannot reset or replace the
 ---sink until that synchronous render returns.
+---Use `feed`, `flush`, `finish_document`, and `begin_document` for incremental
+---documents; use `write_token` and `finish` for the manual-token surface.
 function mdf.new(opts)
   return core.new(opts or {})
 end
@@ -33,7 +35,11 @@ function mdf.render_stream(read, write, opts)
 end
 
 ---Create an incremental document stream with one persistent writer callback.
----Use `set_width`, `reset`, or `set_sink` on the returned stream as needed.
+---Use `set_width`, `reset`, `set_sink`, or `set_html_title` on the returned
+---stream as needed; `error` exposes the latest core diagnostic and `close` or
+---`destroy` releases the renderer.
+---A failed terminal reset reports an error after discarding current state.
+---Rebinding the identical callback leaves the current document intact.
 ---Replacing a callback discards state and still binds the new callback if old
 ---terminal cleanup reports a write failure; callers replay their own source.
 function mdf.document_stream(opts, write)
