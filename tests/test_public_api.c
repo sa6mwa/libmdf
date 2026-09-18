@@ -3132,6 +3132,97 @@ int main(void)
     }
 
     {
+        static const char pending_code[] = "`abcdefghij`";
+        emission_log writes;
+        mdf_sink bound_sink;
+
+        memset(&writes, 0, sizeof(writes));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 3;
+        opts.emission_buffer.initial_cap = 4;
+        opts.emission_buffer.max_cap = 4;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "failed pending-code reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_code, strlen(pending_code));
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 80);
+            }
+            fails += expect(st == MDF_ERROR_NOMEM,
+                            "oversized pending-code reflow reports allocation failure");
+            if (st == MDF_ERROR_NOMEM) {
+                st = inst->set_width(inst, 3);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "failed pending-code reflow rejects later width changes until reset");
+            if (st == MDF_ERROR_INVALID) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "failed pending-code reflow rejects finishing a document with lost input");
+            if (st == MDF_ERROR_INVALID) {
+                st = inst->reset(inst);
+            }
+            fails += expect(st == MDF_OK,
+                            "reset recovers a renderer after failed pending-code reflow");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+    }
+
+    {
+        static const char pending_link[] = "[x](#abc)";
+        static const char expected[] = "x\n(#abc).\n";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 3;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "fragment pending-link reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, pending_link, strlen(pending_link));
+            }
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 3);
+            }
+            if (st == MDF_OK) {
+                st = inst->feed(inst, ".\n", 2);
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "fragment-link reflow preserves the unwrapped fallback decision");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
         static const char pending_link[] = "<https://example.com/abcdefghij>";
         static const char complete[] = "<https://example.com/abcdefghij>\n";
         emission_log writes;

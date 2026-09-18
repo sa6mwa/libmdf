@@ -2993,6 +2993,10 @@ mdf_status mdf_set_width(mdf *renderer, int width)
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
+    if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
+        mdf_set_error(renderer, "set_width requires reset after a failed render operation");
+        return MDF_ERROR_INVALID;
+    }
     if (width <= 0 ||
         (impl->format == MDF_FORMAT_ANSI &&
          width - impl->opts.margin_left - impl->opts.margin_right < MDF_MIN_ANSI_CONTENT_WIDTH)) {
@@ -3010,6 +3014,11 @@ mdf_status mdf_set_width(mdf *renderer, int width)
     impl->opts.width = effective_width;
     if (impl->format == MDF_FORMAT_ANSI &&
         (ansi_reflow_pending_code(impl) != 0 || ansi_reflow_pending_link(impl) != 0)) {
+        /* Reflow may have consumed the old decision buffer before an
+         * allocation failure.  Do not allow later calls to continue with
+         * silently lost input; reset lets the caller replay its source. */
+        mdf_impl_mark_oom(impl);
+        impl->incremental_state = MDF_INCREMENTAL_FAILED;
         return MDF_ERROR_NOMEM;
     }
     mdf_parser_set_width(impl->render_parser, effective_width);

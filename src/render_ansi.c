@@ -6374,6 +6374,12 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         impl->ansi_pending_link == NULL) {
         return 0;
     }
+    /* Fragment destinations are an indivisible, unwrapped fallback decision.
+     * Their retained bytes have no width-dependent layout to recompute. */
+    if (impl->ansi_pending_link_kind == 2 &&
+        impl->ansi_pending_link_len > 0 && impl->ansi_pending_link[0] == '#') {
+        return 0;
+    }
     kind = impl->ansi_pending_link_kind;
     link_len = impl->ansi_pending_link_len;
     close_len = impl->ansi_pending_link_close_len;
