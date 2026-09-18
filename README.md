@@ -655,6 +655,18 @@ io.write(h:render("# hello\n"))
 h:close()
 ```
 
+For streaming receiver methods, bind one callback once, then change width,
+reset, or replace the callback on the object itself. `reset` closes ANSI state
+and discards unfinished parser state; replay remains the caller's job.
+
+```lua
+local h = mdf.new({ boring = true })
+h:set_sink(function(chunk) io.write(chunk) end)
+h:set_width(80)
+h:render_stream(reader)
+h:reset()
+```
+
 Lua hosts can use the same incremental document boundaries with a synchronous
 callback. The callback runs only from `write` or `finish_document`; `flush`
 does not invoke it.
@@ -672,6 +684,10 @@ assert(stream:finish_document())   -- EOF exactly once
 assert(stream:begin_document())
 stream:close()
 ```
+
+`document_stream` also exposes `set_width(width)`, `reset()`, and
+`set_sink(callback)`. They have the same future-decision, caller-owned replay,
+and terminal-closure behavior as their C receiver counterparts.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
@@ -746,8 +762,9 @@ the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.
 The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 `mdf.version_minor`, `mdf.version_patch`, `mdf.status`, `mdf.status_string`,
 and `mdf.token` constants corresponding to the public C values that are useful
-from Lua. Handle objects expose `set_html_title`, `render`, `render_stream`,
-`write_token`, `finish`, `error`, and `close`.
+from Lua. Handle objects expose `set_sink`, `set_width`, `reset`,
+`set_html_title`, `render`, `render_stream`, `write_token`, `finish`, `error`,
+and `close`.
 
 ## Markdown And HTML Safety
 

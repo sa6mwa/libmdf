@@ -27,6 +27,7 @@ typedef struct lua_mdf_trace_ctx {
 typedef struct lua_mdf_handle {
     mdf *mdf;
     int opts_ref;
+    int sink_ref;
     lua_mdf_trace_ctx trace_ctx;
 } lua_mdf_handle;
 
@@ -41,6 +42,7 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_DOCUMENT_STREAM "libmdf.document_stream"
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
+static int lua_mdf_handle_sink_write(void *userdata, const char *src, size_t len);
 static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, size_t len);
 
 static const char *lua_mdf_format_name(mdf_format format)
@@ -836,6 +838,7 @@ static int lua_mdf_new(lua_State *L)
     handle = (lua_mdf_handle *)lua_newuserdatauv(L, sizeof(*handle), 0);
     handle->mdf = NULL;
     handle->opts_ref = LUA_NOREF;
+    handle->sink_ref = LUA_NOREF;
     handle->trace_ctx.L = L;
     handle->trace_ctx.ref = LUA_NOREF;
     luaL_getmetatable(L, LUA_MDF_HANDLE);
@@ -862,6 +865,10 @@ static int lua_mdf_new(lua_State *L)
         if (handle->opts_ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
             handle->opts_ref = LUA_NOREF;
+        }
+        if (handle->sink_ref != LUA_NOREF) {
+            luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ref);
+            handle->sink_ref = LUA_NOREF;
         }
         if (handle->trace_ctx.ref != LUA_NOREF) {
             luaL_unref(L, LUA_REGISTRYINDEX, handle->trace_ctx.ref);
@@ -943,6 +950,74 @@ static int lua_mdf_document_stream_sink_write(void *userdata, const char *src, s
     ctx.L = stream->trace_ctx.L;
     ctx.ref = stream->sink_ref;
     return lua_mdf_sink_write(&ctx, src, len);
+}
+
+static int lua_mdf_document_stream_set_width(lua_State *L)
+{
+    lua_mdf_document_stream *stream;
+    mdf_status st;
+
+    stream = lua_mdf_check_document_stream(L, 1);
+    st = stream->mdf->set_width(stream->mdf, (int)luaL_checkinteger(L, 2));
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_document_stream.set_width: %s: %s",
+                          mdf_status_string(st), stream->mdf->error(stream->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_document_stream_reset(lua_State *L)
+{
+    lua_mdf_document_stream *stream;
+    mdf_status st;
+
+    stream = lua_mdf_check_document_stream(L, 1);
+    st = stream->mdf->reset(stream->mdf);
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_document_stream.reset: %s: %s",
+                          mdf_status_string(st), stream->mdf->error(stream->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_document_stream_set_sink(lua_State *L)
+{
+    lua_mdf_document_stream *stream;
+    mdf_sink sink;
+    int old_ref;
+    int new_ref;
+    mdf_status st;
+
+    stream = lua_mdf_check_document_stream(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_pushvalue(L, 2);
+    new_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    old_ref = stream->sink_ref;
+    if (old_ref != LUA_NOREF) {
+        st = stream->mdf->reset(stream->mdf);
+        if (st != MDF_OK) {
+            luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+            return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
+                              mdf_status_string(st), stream->mdf->error(stream->mdf));
+        }
+    }
+    stream->sink_ref = new_ref;
+    sink.userdata = stream;
+    sink.write = lua_mdf_document_stream_sink_write;
+    st = stream->mdf->set_sink(stream->mdf, &sink);
+    if (st != MDF_OK) {
+        stream->sink_ref = old_ref;
+        luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
+                          mdf_status_string(st), stream->mdf->error(stream->mdf));
+    }
+    if (old_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
 }
 
 static int lua_mdf_document_stream_write(lua_State *L)
@@ -1057,31 +1132,101 @@ static int lua_mdf_handle_render_stream(lua_State *L)
 {
     lua_mdf_handle *handle;
     mdf_source source;
-    mdf_sink sink;
     lua_mdf_source_ctx source_ctx;
-    lua_mdf_sink_ctx sink_ctx;
     mdf_status st;
 
     handle = lua_mdf_check_handle(L, 1);
     luaL_checktype(L, 2, LUA_TFUNCTION);
-    luaL_checktype(L, 3, LUA_TFUNCTION);
     lua_pushvalue(L, 2);
     source_ctx.L = L;
     source_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_pushvalue(L, 3);
-    sink_ctx.L = L;
-    sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
     source.userdata = &source_ctx;
     source.read = lua_mdf_source_read;
-    sink.userdata = &sink_ctx;
-    sink.write = lua_mdf_sink_write;
-    st = mdf_render(handle->mdf, &source, &sink);
+    st = handle->mdf->render(handle->mdf, &source);
     luaL_unref(L, LUA_REGISTRYINDEX, source_ctx.ref);
-    luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_render_stream: %s: %s",
                           mdf_status_string(st),
                           handle->mdf->error(handle->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_handle_sink_write(void *userdata, const char *src, size_t len)
+{
+    lua_mdf_handle *handle;
+    lua_mdf_sink_ctx ctx;
+
+    handle = (lua_mdf_handle *)userdata;
+    ctx.L = handle->trace_ctx.L;
+    ctx.ref = handle->sink_ref;
+    return lua_mdf_sink_write(&ctx, src, len);
+}
+
+static int lua_mdf_handle_set_sink(lua_State *L)
+{
+    lua_mdf_handle *handle;
+    mdf_sink sink;
+    int old_ref;
+    int new_ref;
+    mdf_status st;
+
+    handle = lua_mdf_check_handle(L, 1);
+    luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_pushvalue(L, 2);
+    new_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    old_ref = handle->sink_ref;
+    if (old_ref != LUA_NOREF) {
+        st = handle->mdf->reset(handle->mdf);
+        if (st != MDF_OK) {
+            luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+            return luaL_error(L, "mdf_handle.set_sink: %s: %s",
+                              mdf_status_string(st), handle->mdf->error(handle->mdf));
+        }
+    }
+    handle->sink_ref = new_ref;
+    sink.userdata = handle;
+    sink.write = lua_mdf_handle_sink_write;
+    st = handle->mdf->set_sink(handle->mdf, &sink);
+    if (st != MDF_OK) {
+        handle->sink_ref = old_ref;
+        luaL_unref(L, LUA_REGISTRYINDEX, new_ref);
+        return luaL_error(L, "mdf_handle.set_sink: %s: %s",
+                          mdf_status_string(st), handle->mdf->error(handle->mdf));
+    }
+    if (old_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, old_ref);
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_handle_set_width(lua_State *L)
+{
+    lua_mdf_handle *handle;
+    mdf_status st;
+
+    handle = lua_mdf_check_handle(L, 1);
+    st = handle->mdf->set_width(handle->mdf, (int)luaL_checkinteger(L, 2));
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_handle.set_width: %s: %s",
+                          mdf_status_string(st), handle->mdf->error(handle->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_handle_reset(lua_State *L)
+{
+    lua_mdf_handle *handle;
+    mdf_status st;
+
+    handle = lua_mdf_check_handle(L, 1);
+    st = handle->mdf->reset(handle->mdf);
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_handle.reset: %s: %s",
+                          mdf_status_string(st), handle->mdf->error(handle->mdf));
     }
     lua_pushboolean(L, 1);
     return 1;
@@ -1108,21 +1253,12 @@ static int lua_mdf_handle_set_html_title(lua_State *L)
 static int lua_mdf_handle_write_token(lua_State *L)
 {
     lua_mdf_handle *handle;
-    lua_mdf_sink_ctx sink_ctx;
-    mdf_sink sink;
     mdf_token tok;
     mdf_status st;
 
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_read_token(L, 2, &tok);
-    luaL_checktype(L, 3, LUA_TFUNCTION);
-    lua_pushvalue(L, 3);
-    sink_ctx.L = L;
-    sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    sink.userdata = &sink_ctx;
-    sink.write = lua_mdf_sink_write;
-    st = mdf_write_token(handle->mdf, &tok, &sink);
-    luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
+    st = handle->mdf->write_token(handle->mdf, &tok);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_write_token: %s: %s",
                           mdf_status_string(st),
@@ -1135,19 +1271,10 @@ static int lua_mdf_handle_write_token(lua_State *L)
 static int lua_mdf_handle_finish(lua_State *L)
 {
     lua_mdf_handle *handle;
-    lua_mdf_sink_ctx sink_ctx;
-    mdf_sink sink;
     mdf_status st;
 
     handle = lua_mdf_check_handle(L, 1);
-    luaL_checktype(L, 2, LUA_TFUNCTION);
-    lua_pushvalue(L, 2);
-    sink_ctx.L = L;
-    sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    sink.userdata = &sink_ctx;
-    sink.write = lua_mdf_sink_write;
-    st = mdf_finish(handle->mdf, &sink);
-    luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
+    st = handle->mdf->finish(handle->mdf);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_finish: %s: %s",
                           mdf_status_string(st),
@@ -1178,6 +1305,10 @@ static int lua_mdf_handle_close(lua_State *L)
     if (handle->opts_ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, handle->opts_ref);
         handle->opts_ref = LUA_NOREF;
+    }
+    if (handle->sink_ref != LUA_NOREF) {
+        luaL_unref(L, LUA_REGISTRYINDEX, handle->sink_ref);
+        handle->sink_ref = LUA_NOREF;
     }
     if (handle->trace_ctx.ref != LUA_NOREF) {
         luaL_unref(L, LUA_REGISTRYINDEX, handle->trace_ctx.ref);
@@ -1319,6 +1450,9 @@ static const luaL_Reg lua_mdf_funcs[] = {
 static const luaL_Reg lua_mdf_methods[] = {
     {"render", lua_mdf_handle_render},
     {"render_stream", lua_mdf_handle_render_stream},
+    {"set_sink", lua_mdf_handle_set_sink},
+    {"set_width", lua_mdf_handle_set_width},
+    {"reset", lua_mdf_handle_reset},
     {"set_html_title", lua_mdf_handle_set_html_title},
     {"write_token", lua_mdf_handle_write_token},
     {"finish", lua_mdf_handle_finish},
@@ -1334,6 +1468,9 @@ static const luaL_Reg lua_mdf_document_stream_methods[] = {
     {"flush", lua_mdf_document_stream_flush},
     {"finish_document", lua_mdf_document_stream_finish_document},
     {"begin_document", lua_mdf_document_stream_begin_document},
+    {"set_sink", lua_mdf_document_stream_set_sink},
+    {"set_width", lua_mdf_document_stream_set_width},
+    {"reset", lua_mdf_document_stream_reset},
     {"close", lua_mdf_document_stream_close},
     {"__gc", lua_mdf_document_stream_close},
     {NULL, NULL}

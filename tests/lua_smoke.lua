@@ -224,6 +224,39 @@ assert(incremental:finish_document(), "lua document stream finishes next documen
 incremental:close()
 
 do
+  local chunks = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true, width = 80 }, function(chunk)
+    chunks[#chunks + 1] = chunk
+  end)
+  assert(stream:write("alpha "), "lua document stream accepts input before runtime width change")
+  assert(stream:set_width(5), "lua document stream changes width during an active document")
+  assert(stream:write("beta\n"), "lua document stream continues after runtime width change")
+  assert(stream:finish_document(), "lua document stream finishes after runtime width change")
+  assert(table.concat(chunks):match("alpha\nbeta"),
+         "lua document stream applies runtime width to later layout decisions")
+  stream:close()
+end
+
+do
+  local first = {}
+  local second = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true, osc8 = true }, function(chunk)
+    first[#first + 1] = chunk
+  end)
+  assert(stream:write("discarded "), "lua document stream starts before sink replacement")
+  assert(stream:set_sink(function(chunk)
+    second[#second + 1] = chunk
+  end), "lua document stream replaces its persistent sink")
+  assert(table.concat(first):find("\27%[0m"),
+         "lua document stream closes ANSI state on the replaced sink")
+  assert(stream:write("fresh\n"), "lua document stream accepts caller replay after sink replacement")
+  assert(stream:finish_document(), "lua document stream finishes replay on replacement sink")
+  assert(table.concat(second):match("fresh") and not table.concat(second):match("discarded"),
+         "lua document stream does not buffer discarded input for replay")
+  stream:close()
+end
+
+do
   local weak = setmetatable({}, { __mode = "v" })
   do
     local opts = { format = "html", font_uri = {} }
@@ -288,13 +321,35 @@ assert(tostring(err):match("mdf_render_stream: io error"), tostring(err))
 local handle = mdf.new(parity_opts)
 assert_equal(handle:render(sample), cmdf_ansi, "lua handle render parity")
 
+local handle_chunks = {}
+assert(handle:set_sink(function(chunk)
+  handle_chunks[#handle_chunks + 1] = chunk
+end), "lua handle binds one persistent sink")
+
 ok, err = pcall(function()
   handle:render_stream(function()
     return false
-  end, function() end)
+  end)
 end)
 assert(not ok, "lua handle render_stream rejects non-string reader chunks")
 assert(tostring(err):match("mdf_render_stream: io error"), tostring(err))
+
+do
+  local phase = 0
+  assert(handle:reset(), "lua handle reset discards failed streaming state")
+  assert(handle:set_width(80), "lua handle restores wide runtime width")
+  assert(handle:render_stream(function()
+    phase = phase + 1
+    if phase == 1 then return "alpha " end
+    if phase == 2 then
+      assert(handle:set_width(5), "lua handle changes width from its source callback")
+      return "beta\n"
+    end
+    return nil
+  end), "lua handle renders through its bound sink")
+  assert(table.concat(handle_chunks):match("alpha\nbeta"),
+         "lua handle applies source-time width changes to later decisions")
+end
 
 handle:close()
 
@@ -364,11 +419,12 @@ assert(io.open(lua_regular_font_path, "rb") == nil and io.open(lua_italic_font_p
 
 local token_out = {}
 local token_handle = mdf.new({ boring = true })
-token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "space", text = " " }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "text", text = "Lua" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "document_end" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:finish(function(chunk) token_out[#token_out + 1] = chunk end)
+token_handle:set_sink(function(chunk) token_out[#token_out + 1] = chunk end)
+token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" })
+token_handle:write_token({ type = "space", text = " " })
+token_handle:write_token({ type = "text", text = "Lua" })
+token_handle:write_token({ type = "document_end" })
+token_handle:finish()
 token_handle:close()
 assert(table.concat(token_out):match("Hello Lua"), "lua manual token API renders text")
 
