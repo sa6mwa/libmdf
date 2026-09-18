@@ -86,7 +86,7 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_pending_fallback_emit_valid = 0;
     impl->ansi_pending_link_len = 0;
     impl->ansi_pending_link_kind = 0;
-    impl->ansi_pending_link_outer_paren = 0;
+    impl->ansi_pending_link_close_len = 0;
     impl->ansi_pending_code_len = 0;
     impl->ansi_pending_code_valid = 0;
     impl->ansi_owned_inline_style[0] = '\0';

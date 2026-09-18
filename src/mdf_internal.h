@@ -200,7 +200,7 @@ typedef struct mdf_impl {
     size_t ansi_pending_link_len;
     size_t ansi_pending_link_cap;
     int ansi_pending_link_kind;
-    int ansi_pending_link_outer_paren;
+    int ansi_pending_link_close_len;
     mdf_ansi_pending_state ansi_pending_link_state;
     char *ansi_pending_code;
     size_t ansi_pending_code_len;

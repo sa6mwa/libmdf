@@ -2676,7 +2676,7 @@ static void ansi_pending_emit_clear(mdf_impl *impl)
     ansi_pending_emit_clear_output(impl);
     impl->ansi_pending_link_len = 0;
     impl->ansi_pending_link_kind = 0;
-    impl->ansi_pending_link_outer_paren = 0;
+    impl->ansi_pending_link_close_len = 0;
     impl->ansi_pending_code_len = 0;
     impl->ansi_pending_code_valid = 0;
 }
@@ -2710,7 +2710,7 @@ static int ansi_pending_link_store(mdf_impl *impl,
                                    const char *url,
                                    size_t url_len,
                                    int kind,
-                                   int outer_paren)
+                                   int close_len)
 {
     char *next;
 
@@ -2730,7 +2730,7 @@ static int ansi_pending_link_store(mdf_impl *impl,
     }
     impl->ansi_pending_link_len = url_len;
     impl->ansi_pending_link_kind = kind;
-    impl->ansi_pending_link_outer_paren = outer_paren;
+    impl->ansi_pending_link_close_len = close_len;
     /* The retained bytes begin at this committed cursor.  A link label or
      * separator may already have reached the sink. */
     impl->ansi_pending_emit_start_col = impl->ansi_col;
@@ -5758,7 +5758,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
-            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+            if (ansi_pending_link_store(impl, url, url_len, 2, 1) != 0) {
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
@@ -5800,7 +5800,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
-            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+            if (ansi_pending_link_store(impl, url, url_len, 2, 1) != 0) {
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
@@ -5832,7 +5832,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
-            if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+            if (ansi_pending_link_store(impl, url, url_len, 2, 1) != 0) {
                 mdf_impl_mark_oom(impl);
                 return -1;
             }
@@ -5924,7 +5924,8 @@ int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url
             mdf_impl_mark_oom(impl);
             return -1;
         }
-        if (ansi_pending_link_store(impl, url, url_len, 2, outer_paren_context) != 0) {
+        if (ansi_pending_link_store(impl, url, url_len, 2,
+                                    outer_paren_context ? 2 : 1) != 0) {
             mdf_impl_mark_oom(impl);
             return -1;
         }
@@ -6363,7 +6364,7 @@ int ansi_reflow_pending_link(mdf_impl *impl)
     mdf_sink capture_sink;
     mdf_write_trace saved_trace;
     size_t link_len;
-    int outer_paren;
+    int close_len;
     int start_col;
     int kind;
     int rc;
@@ -6375,7 +6376,7 @@ int ansi_reflow_pending_link(mdf_impl *impl)
     }
     kind = impl->ansi_pending_link_kind;
     link_len = impl->ansi_pending_link_len;
-    outer_paren = impl->ansi_pending_link_outer_paren;
+    close_len = impl->ansi_pending_link_close_len;
     start_col = impl->ansi_pending_link_state.col;
     ansi_restore_pending_state(impl, &impl->ansi_pending_link_state);
     ansi_pending_emit_clear_output(impl);
@@ -6406,8 +6407,8 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         inputs[1].len = link_len;
         inputs[1].style = ansi_sim_style_flat(impl->opts.boring ? "" : mdf_theme_link_url(impl));
         inputs[1].kind = ANSI_SIM_URL;
-        inputs[2].text = outer_paren ? "))" : ")";
-        inputs[2].len = outer_paren ? 2 : 1;
+        inputs[2].text = close_len == 2 ? "))" : ")";
+        inputs[2].len = close_len;
         inputs[2].style = ansi_sim_style_flat("");
         inputs[2].kind = ANSI_SIM_STRUCT;
         rc = ansi_sim_emit_inputs(impl, &capture_sink, inputs, 3);
@@ -6424,7 +6425,7 @@ int ansi_reflow_pending_link(mdf_impl *impl)
      * committed cursor. */
     impl->ansi_pending_link_len = link_len;
     impl->ansi_pending_link_kind = kind;
-    impl->ansi_pending_link_outer_paren = outer_paren;
+    impl->ansi_pending_link_close_len = close_len;
     impl->ansi_pending_emit_start_col = start_col;
     if (kind == 1) {
         impl->ansi_pending_autolink_emit_valid = 1;
