@@ -6406,6 +6406,11 @@ int ansi_reflow_pending_link(mdf_impl *impl)
     link_state = impl->ansi_pending_link_state;
     start_col = link_state.col;
     ansi_restore_pending_state(impl, &link_state);
+    /* A narrow speculative capture can leave an uncommitted URL fragment in
+     * the word buffer.  The retained link payload is the sole source of the
+     * next decision, so discard that fragment before rebuilding it. */
+    impl->ansi_word_len = 0;
+    impl->ansi_word_cols = 0;
     ansi_pending_emit_clear_output(impl);
     impl->ansi_pending_autolink_emit_valid = 0;
     impl->ansi_pending_fallback_emit_valid = 0;

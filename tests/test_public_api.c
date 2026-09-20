@@ -3369,7 +3369,7 @@ int main(void)
 
     {
         static const char prefix[] = "hello <https://example.com>";
-        static const char expected[] = "hello \nhttps://example.com";
+        static const char expected[] = "hello \nhttps://example.com\n";
         emission_log writes;
         emission_log traces;
         mdf_sink bound_sink;
