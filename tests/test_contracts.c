@@ -1310,7 +1310,7 @@ static int test_chart_trace_contract(void)
 static int test_runtime_width_autolink_contract(void)
 {
     static const char prefix[] = "hello <https://example.com>";
-    static const char expected[] = "hello \nhttps://example.com";
+    static const char expected[] = "hello \nhttps://example.com\n";
     mdf_options opts;
     mdf_sink sink;
     mdf *inst;

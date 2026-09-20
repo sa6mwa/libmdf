@@ -5995,7 +5995,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
             fitted_len = (size_t)limit;
         }
     }
-    if (impl->opts.osc8) {
+    if (!retain_pending_output && impl->opts.osc8) {
         if (ansi_flush_word(impl, sink) != 0) return -1;
         if (ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
         if (impl->opts.width > 0 && impl->ansi_col > 0 &&
@@ -6440,7 +6440,7 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         } else {
             rc = ansi_emit_autolink_text(impl, &capture_sink,
                                          impl->ansi_pending_link,
-                                         link_len, 0, wrapped);
+                                         link_len, 0, 1);
         }
     } else {
         ansi_sim_input inputs[3];
