@@ -25,6 +25,9 @@ typedef struct emission_log {
     size_t *lengths;
     size_t count;
     size_t cap;
+    size_t bytes;
+    size_t max_events;
+    size_t max_bytes;
 } emission_log;
 
 typedef struct width_change_output_sink {
@@ -392,6 +395,11 @@ static int emission_log_append(emission_log *log, const char *src, size_t len)
     char *copy;
     size_t cap;
 
+    if ((log->max_events > 0 && log->count == log->max_events) ||
+        (log->max_bytes > 0 &&
+         (len > log->max_bytes || log->bytes > log->max_bytes - len))) {
+        return -1;
+    }
     if (log->count == log->cap) {
         cap = log->cap == 0 ? 8 : log->cap * 2;
         chunks = (char **)realloc(log->chunks, cap * sizeof(*chunks));
@@ -417,6 +425,7 @@ static int emission_log_append(emission_log *log, const char *src, size_t len)
     log->chunks[log->count] = copy;
     log->lengths[log->count] = len;
     log->count++;
+    log->bytes += len;
     return 0;
 }
 
@@ -3351,6 +3360,57 @@ int main(void)
             if (reference != NULL) {
                 reference->destroy(reference);
             }
+            inst->destroy(inst);
+            inst = NULL;
+        }
+        emission_log_free(&writes);
+        emission_log_free(&traces);
+    }
+
+    {
+        static const char prefix[] = "hello <https://example.com>";
+        static const char expected[] = "hello \nhttps://example.com";
+        emission_log writes;
+        emission_log traces;
+        mdf_sink bound_sink;
+        size_t write_count;
+        size_t trace_count;
+
+        memset(&writes, 0, sizeof(writes));
+        memset(&traces, 0, sizeof(traces));
+        writes.max_events = 64;
+        writes.max_bytes = 1024;
+        traces.max_events = 64;
+        traces.max_bytes = 1024;
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 80;
+        opts.write_trace.userdata = &traces;
+        opts.write_trace.emit = emission_log_trace;
+        bound_sink.userdata = &writes;
+        bound_sink.write = emission_log_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "committed-prefix autolink reflow receiver creates");
+        if (inst != NULL) {
+            st = inst->set_sink(inst, &bound_sink);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, prefix, strlen(prefix));
+            }
+            write_count = writes.count;
+            trace_count = traces.count;
+            if (st == MDF_OK) {
+                st = inst->set_width(inst, 22);
+            }
+            fails += expect(st == MDF_OK && writes.count == write_count && traces.count == trace_count,
+                            "changing width reflows a committed-prefix autolink without emitting it");
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            fails += expect(st == MDF_OK &&
+                            emission_logs_equal(&writes, &traces) &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "pending autolinks wrap at the new width without replaying committed separators");
             inst->destroy(inst);
             inst = NULL;
         }
