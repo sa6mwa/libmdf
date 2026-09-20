@@ -1359,6 +1359,123 @@ static int test_runtime_width_autolink_contract(void)
     return fails;
 }
 
+static int test_runtime_width_link_tail_contract(void)
+{
+    static const char prefix[] = "**hello <https://example.com/abcdef>xyz";
+    static const char suffix[] = " next**\n";
+    static const char complete[] = "**hello <https://example.com/abcdef>xyz next**\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 60);
+    }
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width link reflow preserves buffered suffix input");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width link suffix writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 60;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width link suffix baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width link reflow matches the final-width document output");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
+static int test_runtime_width_code_margin_contract(void)
+{
+    static const char prefix[] = "hello (`foo`";
+    static const char suffix[] = "). next\n";
+    static const char complete[] = "hello (`foo`). next\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    size_t i;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 8;
+    opts.margin_left = 2;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    for (i = 0; st == MDF_OK && i < strlen(prefix); i++) {
+        st = mdf_feed(inst, prefix + i, 1, &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 8);
+    }
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width code reflow preserves committed margins");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width code margin writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 8;
+    opts.margin_left = 2;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, 1, &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width code margin baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width code reflow does not replay committed margins");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
 static int test_html_link_safety_contract(void)
 {
     static const char markdown[] =
@@ -2510,6 +2627,8 @@ int main(void)
     fails += test_table_contract();
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
+    fails += test_runtime_width_link_tail_contract();
+    fails += test_runtime_width_code_margin_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();

@@ -74,6 +74,7 @@ static int ansi_write_inline_code_segment_with_prefix(mdf_impl *impl, mdf_sink *
 static int ansi_current_prefix_width(mdf_impl *impl);
 static int ansi_write_plain_code_wrapped(mdf_impl *impl, mdf_sink *sink, const char *text, size_t len);
 static int ansi_word_has_url_scheme(const char *s, size_t len);
+static int ansi_pending_emit_append(mdf_impl *impl, const char *src, size_t len);
 static void ansi_pre_code_reset_line_state(mdf_impl *impl);
 static int ansi_pre_code_wrap_prefix_len(mdf_impl *impl);
 static int ansi_pre_code_space_starts_wrap_prefix(mdf_impl *impl);
@@ -4793,6 +4794,76 @@ static int ansi_write_url_fit(mdf_impl *impl, mdf_sink *sink, const char *s, siz
     return ansi_write_visible_cstr(impl, sink, "\342\200\246");
 }
 
+static int ansi_emit_buffer_append_url_fit(mdf_impl *impl, const char *s, size_t len, int limit)
+{
+    size_t start;
+    size_t off;
+    int cols;
+
+    if (limit <= 0 || (int)visible_cols(s, len) <= limit) {
+        return mdf_emit_buffer_append(impl, s, len);
+    }
+    start = url_visible_fit_start(s, len, limit);
+    if (start > 0) {
+        return mdf_emit_buffer_append(impl, s + start, len - start);
+    }
+    if (limit == 1) {
+        return mdf_emit_buffer_append_cstr(impl, "\342\200\246");
+    }
+    off = 0;
+    cols = 0;
+    while (off < len && cols < limit - 1) {
+        unsigned long cp;
+        size_t adv;
+        int width;
+
+        adv = utf8_decode_codepoint(s + off, len - off, &cp);
+        if (adv == 0) {
+            break;
+        }
+        width = (int)utf8_display_width(cp);
+        if (cols + width > limit - 1) {
+            break;
+        }
+        if (mdf_emit_buffer_append(impl, s + off, adv) != 0) {
+            return -1;
+        }
+        cols += width;
+        off += adv;
+    }
+    return mdf_emit_buffer_append_cstr(impl, "\342\200\246");
+}
+
+static int ansi_capture_autolink_reflow(mdf_impl *impl, const char *text, size_t text_len)
+{
+    const char *saved_pending_inline_style;
+    const char *saved_active_inline_style;
+    int limit;
+
+    saved_pending_inline_style = impl->ansi_pending_inline_style;
+    saved_active_inline_style = impl->ansi_active_inline_style;
+    limit = ansi_content_limit(impl);
+    if (mdf_emit_buffer_reset(impl) != 0 ||
+        (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
+        ansi_emit_buffer_append_url_fit(impl, text, text_len, limit) != 0 ||
+        ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
+        mdf_emit_buffer_reset(impl) != 0) {
+        impl->ansi_pending_inline_style = saved_pending_inline_style;
+        impl->ansi_active_inline_style = saved_active_inline_style;
+        mdf_impl_mark_oom(impl);
+        return -1;
+    }
+    ansi_update_visible_output_state(impl, impl->ansi_pending_emit,
+                                     impl->ansi_pending_emit_len);
+    impl->ansi_pending_inline_style = saved_pending_inline_style != NULL ?
+                                      saved_pending_inline_style : saved_active_inline_style;
+    impl->ansi_active_inline_style = NULL;
+    if (!impl->opts.boring) {
+        impl->ansi_pending_style_reset = 1;
+    }
+    return 0;
+}
+
 int ansi_write_styled_words_inner(mdf_impl *impl, mdf_sink *sink, const char *s, size_t len, const char *style, int open_style, size_t trailing_reserve)
 {
     size_t i;
@@ -5970,7 +6041,7 @@ static int ansi_autolink_can_attach_trailing_punct(const char *text, size_t text
 }
 
 static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *text, size_t text_len,
-                                   int reset_before_link_style, int retain_pending_output)
+                                   int reset_before_link_style)
 {
     int limit;
     size_t fitted_len;
@@ -5995,7 +6066,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
             fitted_len = (size_t)limit;
         }
     }
-    if (!retain_pending_output && impl->opts.osc8) {
+    if (impl->opts.osc8) {
         if (ansi_flush_word(impl, sink) != 0) return -1;
         if (ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
         if (impl->opts.width > 0 && impl->ansi_col > 0 &&
@@ -6004,11 +6075,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
         if (text_len > 0 && ansi_ensure_left_margin(impl, sink) != 0) return -1;
         if (ansi_begin_osc8_link(impl, sink, is_email ? "mailto:" : "", text, text_len) != 0) return -1;
     } else {
-        /* Reflow has already captured a newline and reset word/space state.
-         * Calling the normal helper would flush that decision buffer into its
-         * own capture sink. */
-        if (!retain_pending_output &&
-            ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
+        if (ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
     }
     if (reset_before_link_style &&
         !impl->opts.boring &&
@@ -6078,18 +6145,13 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
             return -1;
         }
     } else if (!impl->opts.osc8 && ansi_autolink_can_attach_trailing_punct(text, text_len, is_email)) {
-        /* Runtime reflow may have captured a newline in this exact decision
-         * buffer.  It must stay before the link, not be flushed through the
-         * capture sink that owns the same buffer. */
-        if (!retain_pending_output && ansi_flush_pending_code_emit(impl, sink) != 0) {
+        if (ansi_flush_pending_code_emit(impl, sink) != 0) {
             impl->ansi_pending_inline_style = saved_pending_inline_style;
             impl->ansi_active_inline_style = saved_active_inline_style;
             return -1;
         }
-        if (!retain_pending_output) {
-            ansi_pending_emit_clear(impl);
-            impl->ansi_pending_emit_start_col = impl->ansi_col;
-        }
+        ansi_pending_emit_clear(impl);
+        impl->ansi_pending_emit_start_col = impl->ansi_col;
         impl->ansi_pending_autolink_emit_valid = 0;
         if (mdf_emit_buffer_reset(impl) != 0 ||
             (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
@@ -6406,11 +6468,6 @@ int ansi_reflow_pending_link(mdf_impl *impl)
     link_state = impl->ansi_pending_link_state;
     start_col = link_state.col;
     ansi_restore_pending_state(impl, &link_state);
-    /* A narrow speculative capture can leave an uncommitted URL fragment in
-     * the word buffer.  The retained link payload is the sole source of the
-     * next decision, so discard that fragment before rebuilding it. */
-    impl->ansi_word_len = 0;
-    impl->ansi_word_cols = 0;
     ansi_pending_emit_clear_output(impl);
     impl->ansi_pending_autolink_emit_valid = 0;
     impl->ansi_pending_fallback_emit_valid = 0;
@@ -6443,9 +6500,8 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         if (wrapped && ansi_emit_newline(impl, &capture_sink) != 0) {
             rc = -1;
         } else {
-            rc = ansi_emit_autolink_text(impl, &capture_sink,
-                                         impl->ansi_pending_link,
-                                         link_len, 0, 1);
+            rc = ansi_capture_autolink_reflow(impl, impl->ansi_pending_link,
+                                               link_len);
         }
     } else {
         ansi_sim_input inputs[3];
@@ -6618,13 +6674,13 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     } else if (!had_word && ansi_flush_pending_space_for(impl, sink, code_len) != 0) {
         return -1;
     }
-    if (use_wrapped_code && code_len > 0 && !capture_leading_space) {
-        /* A normal separator was committed before the pending code decision.
-         * Reflow must restart after that write, not replay it. */
-        ansi_capture_pending_state(impl, &pending_code_state);
-    }
     if (use_wrapped_code) {
         if (impl->inline_outer_paren_pending && ansi_ensure_left_margin(impl, sink) != 0) return -1;
+        if (code_len > 0) {
+            /* The snapshot begins after every prefix that has reached the
+             * sink, including a left margin required by an outer parenthesis. */
+            ansi_capture_pending_state(impl, &pending_code_state);
+        }
         if (code_len > 0 &&
             ansi_capture_inline_code_wrapped(impl, code, code_len,
                                              capture_leading_space, 0) != 0) return -1;
@@ -6958,7 +7014,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
                 url_end++;
             }
             if (url_end < text_len && autolink_likely(text + url_start, url_end - url_start)) {
-                if (ansi_emit_autolink_text(impl, sink, text + url_start, url_end - url_start, 1, 0) != 0) return -1;
+                if (ansi_emit_autolink_text(impl, sink, text + url_start, url_end - url_start, 1) != 0) return -1;
                 pos = url_end + 1;
                 continue;
             }
@@ -7815,7 +7871,7 @@ static int autolink_is_email(const char *s, size_t len)
 static int ansi_inline_emit_autolink(mdf_impl *impl, mdf_sink *sink)
 {
     if (autolink_likely(impl->inline_url, impl->inline_url_len)) {
-        if (ansi_emit_autolink_text(impl, sink, impl->inline_url, impl->inline_url_len, 0, 0) != 0) return -1;
+        if (ansi_emit_autolink_text(impl, sink, impl->inline_url, impl->inline_url_len, 0) != 0) return -1;
     } else {
         if (ansi_write_visible_cstr(impl, sink, "<") != 0) return -1;
         if (impl->inline_url_len > 0 && ansi_write_visible(impl, sink, impl->inline_url, impl->inline_url_len) != 0) return -1;
@@ -8563,7 +8619,7 @@ ansi_case5_reprocess:
         case 13:
             if (c == '>') {
                 if (autolink_likely(impl->inline_url, impl->inline_url_len)) {
-                    if (ansi_emit_autolink_text(impl, sink, impl->inline_url, impl->inline_url_len, 1, 0) != 0) return -1;
+                    if (ansi_emit_autolink_text(impl, sink, impl->inline_url, impl->inline_url_len, 1) != 0) return -1;
                 } else {
                     if (ansi_write_visible_cstr(impl, sink, "<") != 0) return -1;
                     if (impl->inline_url_len > 0 && ansi_write_visible(impl, sink, impl->inline_url, impl->inline_url_len) != 0) return -1;
