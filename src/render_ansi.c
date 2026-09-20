@@ -4834,6 +4834,47 @@ static int ansi_emit_buffer_append_url_fit(mdf_impl *impl, const char *s, size_t
     return mdf_emit_buffer_append_cstr(impl, "\342\200\246");
 }
 
+static void ansi_update_visible_url_fit(mdf_impl *impl, const char *s, size_t len, int limit)
+{
+    size_t start;
+    size_t off;
+    int cols;
+
+    if (limit <= 0 || (int)visible_cols(s, len) <= limit) {
+        ansi_update_visible_output_state(impl, s, len);
+        return;
+    }
+    start = url_visible_fit_start(s, len, limit);
+    if (start > 0) {
+        ansi_update_visible_output_state(impl, s + start, len - start);
+        return;
+    }
+    if (limit == 1) {
+        ansi_update_visible_output_state(impl, "\342\200\246", 3);
+        return;
+    }
+    off = 0;
+    cols = 0;
+    while (off < len && cols < limit - 1) {
+        unsigned long cp;
+        size_t adv;
+        int width;
+
+        adv = utf8_decode_codepoint(s + off, len - off, &cp);
+        if (adv == 0) {
+            break;
+        }
+        width = (int)utf8_display_width(cp);
+        if (cols + width > limit - 1) {
+            break;
+        }
+        ansi_update_visible_output_state(impl, s + off, adv);
+        cols += width;
+        off += adv;
+    }
+    ansi_update_visible_output_state(impl, "\342\200\246", 3);
+}
+
 static int ansi_capture_autolink_reflow(mdf_impl *impl, const char *text, size_t text_len)
 {
     const char *saved_pending_inline_style;
@@ -4853,8 +4894,7 @@ static int ansi_capture_autolink_reflow(mdf_impl *impl, const char *text, size_t
         mdf_impl_mark_oom(impl);
         return -1;
     }
-    ansi_update_visible_output_state(impl, impl->ansi_pending_emit,
-                                     impl->ansi_pending_emit_len);
+    ansi_update_visible_url_fit(impl, text, text_len, limit);
     impl->ansi_pending_inline_style = saved_pending_inline_style != NULL ?
                                       saved_pending_inline_style : saved_active_inline_style;
     impl->ansi_active_inline_style = NULL;
@@ -6677,9 +6717,23 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     if (use_wrapped_code) {
         if (impl->inline_outer_paren_pending && ansi_ensure_left_margin(impl, sink) != 0) return -1;
         if (code_len > 0) {
+            int saved_space;
+            int saved_space_no_split;
+            int saved_space_plain;
+
             /* The snapshot begins after every prefix that has reached the
              * sink, including a left margin required by an outer parenthesis. */
+            saved_space = pending_code_state.space;
+            saved_space_no_split = pending_code_state.space_no_split;
+            saved_space_plain = pending_code_state.space_plain;
             ansi_capture_pending_state(impl, &pending_code_state);
+            if (capture_leading_space) {
+                /* This separator belongs to the pending decision rather than
+                 * the sink-visible prefix captured above. */
+                pending_code_state.space = saved_space;
+                pending_code_state.space_no_split = saved_space_no_split;
+                pending_code_state.space_plain = saved_space_plain;
+            }
         }
         if (code_len > 0 &&
             ansi_capture_inline_code_wrapped(impl, code, code_len,
