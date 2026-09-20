@@ -4889,7 +4889,8 @@ static void ansi_update_visible_url_fit(mdf_impl *impl, const char *s, size_t le
     ansi_update_visible_output_state(impl, "\342\200\246", 3);
 }
 
-static int ansi_capture_autolink_reflow(mdf_impl *impl, const char *text, size_t text_len)
+static int ansi_capture_autolink_reflow(mdf_impl *impl, mdf_sink *sink,
+                                        const char *text, size_t text_len)
 {
     const char *saved_pending_inline_style;
     const char *saved_active_inline_style;
@@ -4898,7 +4899,8 @@ static int ansi_capture_autolink_reflow(mdf_impl *impl, const char *text, size_t
     saved_pending_inline_style = impl->ansi_pending_inline_style;
     saved_active_inline_style = impl->ansi_active_inline_style;
     limit = ansi_content_limit(impl);
-    if (mdf_emit_buffer_reset(impl) != 0 ||
+    if (ansi_ensure_left_margin(impl, sink) != 0 ||
+        mdf_emit_buffer_reset(impl) != 0 ||
         (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
         ansi_emit_buffer_append_url_fit(impl, text, text_len, limit) != 0 ||
         ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
@@ -6555,7 +6557,8 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         if (wrapped && ansi_emit_newline(impl, &capture_sink) != 0) {
             rc = -1;
         } else {
-            rc = ansi_capture_autolink_reflow(impl, impl->ansi_pending_link,
+            rc = ansi_capture_autolink_reflow(impl, &capture_sink,
+                                               impl->ansi_pending_link,
                                                link_len);
         }
     } else {
@@ -10364,6 +10367,10 @@ mdf_status mdf_renderer_write_token_internal(mdf_renderer *self, const mdf_token
         mdf_set_error(self, "write_token requires renderer, token, and sink");
         return MDF_ERROR_INVALID;
     }
+    if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
+        mdf_set_error(self, "rendering requires reset after a failed reflow");
+        return MDF_ERROR_INVALID;
+    }
     if (mdf_token_has_missing_text(token)) {
         mdf_set_error(self, "text token missing text");
         return MDF_ERROR_INVALID;
@@ -10385,6 +10392,10 @@ mdf_status mdf_renderer_begin_internal(mdf_renderer *self, mdf_sink *sink)
 
     impl = mdf_renderer_require_sink(self, sink, "begin requires renderer and sink");
     if (impl == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
+        mdf_set_error(self, "rendering requires reset after a failed reflow");
         return MDF_ERROR_INVALID;
     }
     if (impl->format == MDF_FORMAT_HTML_DECK) {

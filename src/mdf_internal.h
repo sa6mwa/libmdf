@@ -5,6 +5,11 @@
 
 typedef mdf mdf_renderer;
 
+#define MDF_INCREMENTAL_IDLE 0
+#define MDF_INCREMENTAL_ACTIVE 1
+#define MDF_INCREMENTAL_FINISHED 2
+#define MDF_INCREMENTAL_FAILED 3
+
 typedef struct mdf_theme_style {
     const char *name;
     const char *heading[6];

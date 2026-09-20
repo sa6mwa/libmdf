@@ -14,11 +14,6 @@
 #define MDF_MEMORY_DEFAULT_MAX_RETAINED_BYTES (256u * 1024u)
 #define MDF_MEMORY_DEFAULT_MAX_REUSABLE_BLOCK_BYTES 8192u
 
-#define MDF_INCREMENTAL_IDLE 0
-#define MDF_INCREMENTAL_ACTIVE 1
-#define MDF_INCREMENTAL_FINISHED 2
-#define MDF_INCREMENTAL_FAILED 3
-
 static void *default_alloc(void *userdata, size_t size)
 {
     (void)userdata;

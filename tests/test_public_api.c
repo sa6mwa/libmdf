@@ -56,6 +56,12 @@ typedef struct width_change_source {
     mdf_status width_status;
 } width_change_source;
 
+typedef struct reflow_failure_source {
+    mdf *renderer;
+    int reads;
+    mdf_status width_status;
+} reflow_failure_source;
+
 typedef struct render_control_source {
     mdf *renderer;
     const mdf_sink *replacement;
@@ -578,6 +584,33 @@ static size_t width_change_source_read(void *userdata, char *dst, size_t cap, in
         chunk = first;
     } else if (src->reads == 1) {
         src->width_status = src->renderer->set_width(src->renderer, 5);
+        chunk = second;
+    } else {
+        return 0;
+    }
+    len = strlen(chunk);
+    if (cap < len) {
+        return 0;
+    }
+    memcpy(dst, chunk, len);
+    src->reads++;
+    return len;
+}
+
+static size_t reflow_failure_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    reflow_failure_source *src;
+    static const char first[] = "`abcdefghij`";
+    static const char second[] = " hi\n";
+    const char *chunk;
+    size_t len;
+
+    (void)err;
+    src = (reflow_failure_source *)userdata;
+    if (src->reads == 0) {
+        chunk = first;
+    } else if (src->reads == 1) {
+        src->width_status = src->renderer->set_width(src->renderer, 80);
         chunk = second;
     } else {
         return 0;
@@ -3185,6 +3218,92 @@ int main(void)
             inst = NULL;
         }
         emission_log_free(&writes);
+    }
+
+    {
+        static const char pending_code[] = "`abcdefghij`";
+        mdf_sink bound_sink;
+        mdf_token token;
+
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 3;
+        opts.emission_buffer.initial_cap = 4;
+        opts.emission_buffer.max_cap = 4;
+        bound_sink.userdata = NULL;
+        bound_sink.write = discard_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "manual failed-reflow renderer creates");
+        if (inst != NULL) {
+            memset(&token, 0, sizeof(token));
+            token.type = MDF_TOKEN_TEXT;
+            token.text = pending_code;
+            token.len = strlen(token.text);
+            st = mdf_write_token(inst, &token, &bound_sink);
+            if (st == MDF_OK) {
+                st = mdf_set_width(inst, 80);
+            }
+            fails += expect(st == MDF_ERROR_NOMEM,
+                            "manual pending-code reflow reports allocation failure");
+            token.text = " tail";
+            token.len = strlen(token.text);
+            if (st == MDF_ERROR_NOMEM) {
+                st = mdf_write_token(inst, &token, &bound_sink);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "manual tokens reject a renderer with lost reflow input");
+            token.type = MDF_TOKEN_DOCUMENT_END;
+            token.text = NULL;
+            token.len = 0;
+            if (st == MDF_ERROR_INVALID) {
+                st = mdf_write_token(inst, &token, &bound_sink);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "manual document end rejects a renderer with lost reflow input");
+            if (st == MDF_ERROR_INVALID) {
+                st = mdf_finish(inst, &bound_sink);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "manual finish rejects a renderer with lost reflow input");
+            if (st == MDF_ERROR_INVALID) {
+                st = mdf_reset(inst);
+            }
+            fails += expect(st == MDF_OK,
+                            "manual reset recovers a renderer after failed reflow");
+            inst->destroy(inst);
+            inst = NULL;
+        }
+    }
+
+    {
+        reflow_failure_source failure_source;
+        mdf_sink bound_sink;
+
+        memset(&failure_source, 0, sizeof(failure_source));
+        mdf_options_init(&opts);
+        opts.boring = 1;
+        opts.width = 3;
+        opts.emission_buffer.initial_cap = 4;
+        opts.emission_buffer.max_cap = 4;
+        bound_sink.userdata = NULL;
+        bound_sink.write = discard_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        fails += expect(st == MDF_OK && inst != NULL,
+                        "source failed-reflow renderer creates");
+        if (inst != NULL) {
+            failure_source.renderer = inst;
+            src.userdata = &failure_source;
+            src.read = reflow_failure_source_read;
+            st = mdf_render(inst, &src, &bound_sink);
+            fails += expect(st == MDF_ERROR_INVALID && failure_source.width_status == MDF_ERROR_NOMEM,
+                            "source render stops after a callback loses pending reflow input");
+            st = mdf_reset(inst);
+            fails += expect(st == MDF_OK,
+                            "source reset recovers a renderer after failed reflow");
+            inst->destroy(inst);
+            inst = NULL;
+        }
     }
 
     {

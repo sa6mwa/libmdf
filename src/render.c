@@ -202,6 +202,10 @@ mdf_status mdf_renderer_finish_internal(mdf_renderer *self, mdf_sink *sink)
     if (impl == NULL) {
         return MDF_ERROR_INVALID;
     }
+    if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
+        mdf_set_error(self, "rendering requires reset after a failed reflow");
+        return MDF_ERROR_INVALID;
+    }
     if (impl->format == MDF_FORMAT_HTML_DECK) {
         mdf_set_error(self, "deck renderers do not support token streaming");
         return MDF_ERROR_INVALID;

@@ -1359,6 +1359,62 @@ static int test_runtime_width_autolink_contract(void)
     return fails;
 }
 
+static int test_runtime_width_autolink_margin_contract(void)
+{
+    static const char prefix[] = "alpha <https://example.com>";
+    static const char suffix[] = " tail\n";
+    static const char expected[] = "  alpha \n  https://example.com\n  tail\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.margin_left = 2;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 22);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width autolink margin reflow does not emit before its boundary");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width autolink margin reflow completes without capture feedback");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width autolink margin writes match traces");
+    fails += expect(cap.out != NULL && strcmp(cap.out, expected) == 0,
+                    "runtime-width autolink margin follows its reflowed newline");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+    capture_free(&cap);
+    return fails;
+}
+
 static int test_runtime_width_link_tail_contract(void)
 {
     static const char prefix[] = "**hello <https://example.com/abcdef>xyz";
@@ -2712,6 +2768,7 @@ int main(void)
     fails += test_table_contract();
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
+    fails += test_runtime_width_autolink_margin_contract();
     fails += test_runtime_width_link_tail_contract();
     fails += test_runtime_width_code_margin_contract();
     fails += test_runtime_width_list_prefix_progress_contract();
