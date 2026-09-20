@@ -1307,6 +1307,58 @@ static int test_chart_trace_contract(void)
     return fails;
 }
 
+static int test_runtime_width_autolink_contract(void)
+{
+    static const char prefix[] = "hello <https://example.com>";
+    static const char expected[] = "hello \nhttps://example.com";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t write_count;
+    size_t trace_count;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL,
+                    "runtime-width autolink contract creates a renderer");
+    if (inst != NULL) {
+        if (st == MDF_OK) {
+            st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+        }
+        write_count = cap.write_count;
+        trace_count = cap.trace_count;
+        if (st == MDF_OK) {
+            st = mdf_set_width(inst, 22);
+        }
+        fails += expect(st == MDF_OK && cap.write_count == write_count && cap.trace_count == trace_count,
+                        "runtime-width autolink reflow does not emit before its boundary");
+        if (st == MDF_OK) {
+            st = mdf_finish_document(inst, &sink);
+        }
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "runtime-width autolink reflow completes without capture feedback");
+        fails += expect_trace_matches_writes(&cap,
+                                             "runtime-width autolink reflow writes match traces");
+        fails += expect(cap.out != NULL && strcmp(cap.out, expected) == 0,
+                        "runtime-width autolink reflow wraps without replaying its committed separator");
+        inst->destroy(inst);
+    }
+    capture_free(&cap);
+    return fails;
+}
+
 static int test_html_link_safety_contract(void)
 {
     static const char markdown[] =
@@ -2457,6 +2509,7 @@ int main(void)
     fails += test_margin_contract();
     fails += test_table_contract();
     fails += test_chart_trace_contract();
+    fails += test_runtime_width_autolink_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();

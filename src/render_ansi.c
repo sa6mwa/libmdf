@@ -6004,7 +6004,11 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
         if (text_len > 0 && ansi_ensure_left_margin(impl, sink) != 0) return -1;
         if (ansi_begin_osc8_link(impl, sink, is_email ? "mailto:" : "", text, text_len) != 0) return -1;
     } else {
-        if (ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
+        /* Reflow has already captured a newline and reset word/space state.
+         * Calling the normal helper would flush that decision buffer into its
+         * own capture sink. */
+        if (!retain_pending_output &&
+            ansi_flush_pending_space_for(impl, sink, fitted_len) != 0) return -1;
     }
     if (reset_before_link_style &&
         !impl->opts.boring &&
