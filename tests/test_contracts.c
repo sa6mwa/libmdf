@@ -1415,6 +1415,73 @@ static int test_runtime_width_autolink_margin_contract(void)
     return fails;
 }
 
+static int test_runtime_width_autolink_noop_contract(void)
+{
+    static const char prefix[] = "<https://example.com/path>";
+    static const char suffix[] = " world\n";
+    static const char complete[] = "<https://example.com/path> world\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    memset(&baseline, 0, sizeof(baseline));
+    mdf_options_init(&opts);
+    opts.width = 26;
+    opts.margin_left = 1;
+    opts.osc8 = 0;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 26);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width autolink noop does not emit before its boundary");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width autolink noop completes without capture feedback");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width autolink noop writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.width = 26;
+    opts.margin_left = 1;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width autolink noop baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width autolink noop preserves bytes and left margins");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
 static int test_runtime_width_link_tail_contract(void)
 {
     static const char prefix[] = "**hello <https://example.com/abcdef>xyz";
@@ -2769,6 +2836,7 @@ int main(void)
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
     fails += test_runtime_width_autolink_margin_contract();
+    fails += test_runtime_width_autolink_noop_contract();
     fails += test_runtime_width_link_tail_contract();
     fails += test_runtime_width_code_margin_contract();
     fails += test_runtime_width_list_prefix_progress_contract();
