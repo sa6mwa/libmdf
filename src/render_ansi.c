@@ -960,6 +960,7 @@ static int ansi_sim_style_switch(mdf_impl *impl, mdf_sink *sink, ansi_sim_style 
 static int ansi_sim_emit_styled_direct(mdf_impl *impl, mdf_sink *sink, const char *text, size_t len, const ansi_sim_style *style, ansi_sim_style *active_style)
 {
     size_t off;
+    unsigned long cp;
     int url_style;
 
     url_style = style != NULL && ansi_sim_style_has_underline(style);
@@ -1008,6 +1009,19 @@ static int ansi_sim_emit_styled_direct(mdf_impl *impl, mdf_sink *sink, const cha
         if (avail <= 0) {
             if (ansi_sim_style_switch(impl, sink, active_style, &ansi_sim_empty_style) != 0) return -1;
             if (ansi_emit_newline(impl, sink) != 0) return -1;
+            /* A continuation prefix can consume the entire configured width
+             * (for example, "1. " at width three).  A further newline would
+             * recreate that prefix without consuming input, so force one
+             * codepoint through the overfull structural line. */
+            if (impl->ansi_col >= impl->opts.width) {
+                adv = utf8_decode_codepoint(text + off, len - off, &cp);
+                if (adv == 0) {
+                    break;
+                }
+                if (ansi_sim_style_switch(impl, sink, active_style, style) != 0) return -1;
+                if (ansi_write_direct_visible(impl, sink, text + off, adv) != 0) return -1;
+                off += adv;
+            }
             continue;
         }
         rem_len = len - off;

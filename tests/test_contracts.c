@@ -1476,6 +1476,91 @@ static int test_runtime_width_code_margin_contract(void)
     return fails;
 }
 
+static int test_runtime_width_list_prefix_progress_contract(void)
+{
+    static const char prefix[] = "1. `12345678` [next](https://test.com/x)";
+    static const char suffix[] = "\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    mdf_status baseline_status;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    memset(&baseline, 0, sizeof(baseline));
+    mdf_options_init(&opts);
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 3);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 80);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width list-prefix reflow makes bounded progress without early output");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width list-prefix reflow completes without exhausting its decision buffer");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width list-prefix reflow writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    inst = NULL;
+    mdf_options_init(&opts);
+    opts.width = 80;
+    opts.write_trace.userdata = &baseline;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &baseline;
+    sink.write = capture_write;
+    baseline_status = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(baseline_status == MDF_OK && baseline.failed == 0,
+                    "runtime-width list-prefix feed baseline succeeds");
+    fails += expect_trace_matches_writes(&baseline,
+                                         "runtime-width list-prefix baseline writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width list-prefix resize round-trip preserves final-width output");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
 static int test_html_link_safety_contract(void)
 {
     static const char markdown[] =
@@ -2629,6 +2714,7 @@ int main(void)
     fails += test_runtime_width_autolink_contract();
     fails += test_runtime_width_link_tail_contract();
     fails += test_runtime_width_code_margin_contract();
+    fails += test_runtime_width_list_prefix_progress_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();
