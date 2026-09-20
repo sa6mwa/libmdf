@@ -97,22 +97,31 @@ set(LIBMDF_SOURCES
   src/unicode_classify.c
   src/unicode_casefold.c)
 
+function(libmdf_configure_c89_target target)
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(${target} PRIVATE
+      -std=c89
+      -Wall
+      -Wextra
+      -Wpedantic
+      -pedantic-errors
+      -Werror)
+  endif()
+endfunction()
+
 function(libmdf_target_defaults target)
   target_include_directories(${target}
     PUBLIC
       "$<BUILD_INTERFACE:${LIBMDF_GENERATED_INCLUDE_DIR}>"
       "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
       "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
-  target_compile_features(${target} PUBLIC c_std_90)
+  libmdf_configure_c89_target(${target})
   target_compile_definitions(${target} PRIVATE _POSIX_C_SOURCE=200809L)
   # macOS keeps O_NOFOLLOW behind its extension feature macro even when the
   # POSIX interface level is selected. The forced font-dump path relies on it
   # to reject a final-component symlink before opening the target for writing.
   if(APPLE)
     target_compile_definitions(${target} PRIVATE _DARWIN_C_SOURCE)
-  endif()
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
   endif()
 endfunction()
 
@@ -149,11 +158,8 @@ if(LIBMDF_BUILD_BINARY)
   add_executable(cmdf src/cmdf.c)
   target_include_directories(cmdf PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(cmdf PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
-  target_compile_features(cmdf PRIVATE c_std_90)
+  libmdf_configure_c89_target(cmdf)
   target_compile_definitions(cmdf PRIVATE _POSIX_C_SOURCE=200809L)
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(cmdf PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
   if(LIBMDF_CMDF_STATIC_RUNTIME AND NOT APPLE)
     target_link_options(cmdf PRIVATE -static)
   else()
@@ -165,6 +171,7 @@ if(LIBMDF_BUILD_EXAMPLES)
   add_executable(example_basic examples/basic.c)
   target_include_directories(example_basic PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(example_basic PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_c89_target(example_basic)
   libmdf_configure_development_runtime(example_basic)
 endif()
 
@@ -173,6 +180,7 @@ if(LIBMDF_BUILD_TESTS)
   add_executable(test_internal_api tests/test_api.c)
   target_include_directories(test_internal_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_internal_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_c89_target(test_internal_api)
   libmdf_configure_development_runtime(test_internal_api)
   add_test(NAME test_internal_api COMMAND test_internal_api)
   set_tests_properties(test_internal_api PROPERTIES
@@ -181,11 +189,8 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_executable(test_public_api tests/test_public_api.c)
-  target_compile_features(test_public_api PRIVATE c_std_90)
+  libmdf_configure_c89_target(test_public_api)
   target_compile_definitions(test_public_api PRIVATE _POSIX_C_SOURCE=200809L)
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(test_public_api PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
   target_include_directories(test_public_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_public_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   libmdf_configure_development_runtime(test_public_api)
@@ -195,18 +200,16 @@ if(LIBMDF_BUILD_TESTS)
   add_executable(test_contracts tests/test_contracts.c)
   target_include_directories(test_contracts PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(test_contracts PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_c89_target(test_contracts)
   libmdf_configure_development_runtime(test_contracts)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
   add_executable(incremental_decision_parity tests/incremental_decision_parity.c)
-  target_compile_features(incremental_decision_parity PRIVATE c_std_90)
+  libmdf_configure_c89_target(incremental_decision_parity)
   target_include_directories(incremental_decision_parity PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(incremental_decision_parity PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   libmdf_configure_development_runtime(incremental_decision_parity)
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(incremental_decision_parity PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
   add_test(NAME incremental_decision_goldens
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_incremental_decision_goldens.sh
             $<TARGET_FILE:incremental_decision_parity>)
@@ -216,13 +219,10 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_executable(golden_render tests/golden_render.c)
-  target_compile_features(golden_render PRIVATE c_std_90)
+  libmdf_configure_c89_target(golden_render)
   target_include_directories(golden_render PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(golden_render PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
   libmdf_configure_development_runtime(golden_render)
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(golden_render PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
   add_test(NAME libmdf_goldens
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_libmdf_goldens.sh
             $<TARGET_FILE:golden_render>)
@@ -253,12 +253,9 @@ if(LIBMDF_BUILD_TESTS)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     add_executable(test_cmdf tests/test_cmdf.c)
-    target_compile_features(test_cmdf PRIVATE c_std_90)
+    libmdf_configure_c89_target(test_cmdf)
     target_compile_definitions(test_cmdf PRIVATE _POSIX_C_SOURCE=200809L)
     libmdf_configure_development_runtime(test_cmdf)
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(test_cmdf PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    endif()
     add_test(NAME test_cmdf COMMAND test_cmdf $<TARGET_FILE:cmdf>)
     set_tests_properties(test_cmdf PROPERTIES LABELS "integration;cli" TIMEOUT 30)
 
@@ -270,7 +267,7 @@ if(LIBMDF_BUILD_TESTS)
 
     add_executable(test_pager tests/test_pager.c)
     libmdf_configure_development_runtime(test_pager)
-    target_compile_features(test_pager PRIVATE c_std_90)
+    libmdf_configure_c89_target(test_pager)
     target_compile_definitions(test_pager PRIVATE _POSIX_C_SOURCE=200809L LIBMDF_PAGER_TESTING)
     # Darwin places terminal resize signals and anonymous-mapping aliases
     # behind its extension feature selector. The PTY integration test uses
@@ -283,9 +280,6 @@ if(LIBMDF_BUILD_TESTS)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
       target_link_libraries(test_pager PRIVATE util)
     endif()
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(test_pager PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    endif()
     add_test(NAME test_pager COMMAND test_pager $<TARGET_FILE:cmdf>)
     # The terminal pager runs after forkpty. Keep this integration test separate
     # from the normal unit suite so it can retain a focused timeout and label.
@@ -293,10 +287,7 @@ if(LIBMDF_BUILD_TESTS)
 
     add_executable(test_pager_ratio tests/test_pager_ratio.c)
     libmdf_configure_development_runtime(test_pager_ratio)
-    target_compile_features(test_pager_ratio PRIVATE c_std_90)
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-      target_compile_options(test_pager_ratio PRIVATE -Wall -Wextra -Wpedantic -Werror)
-    endif()
+    libmdf_configure_c89_target(test_pager_ratio)
     add_test(NAME test_pager_ratio COMMAND test_pager_ratio)
     set_tests_properties(test_pager_ratio PROPERTIES LABELS "unit;pager" TIMEOUT 10)
 
@@ -444,10 +435,8 @@ if(LIBMDF_BUILD_FUZZERS)
   add_executable(fuzz_smoke fuzz/fuzz_smoke.c)
   target_include_directories(fuzz_smoke PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
   target_link_libraries(fuzz_smoke PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  libmdf_configure_c89_target(fuzz_smoke)
   libmdf_configure_development_runtime(fuzz_smoke)
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(fuzz_smoke PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  endif()
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

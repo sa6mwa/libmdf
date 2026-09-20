@@ -1955,6 +1955,7 @@ int main(void)
     char *out;
     mdf_status st;
     counting_allocator allocs;
+    char nested_markdown[1024];
     int fails;
     size_t reserved_index;
     static const unsigned char test_font[] = {1, 2, 3};
@@ -3941,20 +3942,17 @@ int main(void)
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
     fails += expect(st == MDF_OK && renderer != NULL, "margin list blockquote wrap renderer create");
-    st = renderer->render_cstr(renderer,
-        "  * **Purpose (IOT)** - The strategic or operational rationale behind\n"
-        "    the intent; typically phrased as *\"in order to...\"*\n"
-        "\n"
-        "\t> **Example:**  \n"
-        "\t> *Intent: \"Prevent the fire from reaching the gas station\n"
-        "\t> (end-state), without risking firefighter safety (constraint), in\n"
-        "\t> order to maintain critical infrastructure and avoid civilian\n"
-        "\t> casualties (purpose).\"*\n"
-        "\n"
-        "\t> *Tip: Use the full intent statement as the title of the Outcome\n"
-        "\t> Card. This helps keep constraints visible and prevents them from\n"
-        "\t> silently transforming into assumptions or rigid requirements.*\n",
-        &out);
+    strcpy(nested_markdown, "  * **Purpose (IOT)** - The strategic or operational rationale behind\n");
+    strcat(nested_markdown, "    the intent; typically phrased as *\"in order to...\"*\n");
+    strcat(nested_markdown, "\n\t> **Example:**  \n");
+    strcat(nested_markdown, "\t> *Intent: \"Prevent the fire from reaching the gas station\n");
+    strcat(nested_markdown, "\t> (end-state), without risking firefighter safety (constraint), in\n");
+    strcat(nested_markdown, "\t> order to maintain critical infrastructure and avoid civilian\n");
+    strcat(nested_markdown, "\t> casualties (purpose).\"*\n\n");
+    strcat(nested_markdown, "\t> *Tip: Use the full intent statement as the title of the Outcome\n");
+    strcat(nested_markdown, "\t> Card. This helps keep constraints visible and prevents them from\n");
+    strcat(nested_markdown, "\t> silently transforming into assumptions or rigid requirements.*\n");
+    st = renderer->render_cstr(renderer, nested_markdown, &out);
     fails += expect(st == MDF_OK && out != NULL, "margin nested list blockquote render");
     fails += expect(strstr(out, "\n      > Example:\n      > Intent:") != NULL &&
                     strstr(out, "\n        > Intent:") == NULL,

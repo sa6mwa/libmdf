@@ -206,6 +206,15 @@ expect_configured library-tests-without-cmdf \
   -DLIBMDF_BUILD_FUZZERS=OFF \
   -DLIBMDF_INSTALL=OFF
 
+if grep -q -- '-std=c90' "$BASE/library-tests-without-cmdf/build.ninja"; then
+  printf '%s\n' 'project targets must not compile through CMake C90 mode' >&2
+  exit 1
+fi
+if ! grep -q -- '-std=c89' "$BASE/library-tests-without-cmdf/build.ninja"; then
+  printf '%s\n' 'project targets must compile with explicit C89 mode' >&2
+  exit 1
+fi
+
 verify_install_tree static-only lib/pkgconfig lib/cmake/libmdf include \
   -DLIBMDF_BUILD_STATIC=ON \
   -DLIBMDF_BUILD_SHARED=OFF
