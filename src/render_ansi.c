@@ -6074,7 +6074,10 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
             return -1;
         }
     } else if (!impl->opts.osc8 && ansi_autolink_can_attach_trailing_punct(text, text_len, is_email)) {
-        if (ansi_flush_pending_code_emit(impl, sink) != 0) {
+        /* Runtime reflow may have captured a newline in this exact decision
+         * buffer.  It must stay before the link, not be flushed through the
+         * capture sink that owns the same buffer. */
+        if (!retain_pending_output && ansi_flush_pending_code_emit(impl, sink) != 0) {
             impl->ansi_pending_inline_style = saved_pending_inline_style;
             impl->ansi_active_inline_style = saved_active_inline_style;
             return -1;
