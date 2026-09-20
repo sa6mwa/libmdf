@@ -6535,7 +6535,8 @@ int ansi_reflow_pending_link(mdf_impl *impl)
                            visible_cols(impl->ansi_pending_link + fit_start, link_len - fit_start) :
                            (size_t)limit;
         }
-        wrapped = impl->opts.width > 0 && impl->ansi_col > 0 &&
+        wrapped = impl->opts.width > 0 &&
+                  impl->ansi_col > ansi_current_rendered_prefix_width(impl) &&
                   impl->ansi_col + (int)display_cols > impl->opts.width;
         if (wrapped && ansi_emit_newline(impl, &capture_sink) != 0) {
             rc = -1;
