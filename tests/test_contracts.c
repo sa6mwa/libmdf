@@ -1359,6 +1359,68 @@ static int test_runtime_width_autolink_contract(void)
     return fails;
 }
 
+static int test_fallback_link_punctuation_contract(void)
+{
+    static const char markdown[] = "[Centaurx](https://github.com/sa6mwa/centaurx).\n";
+    static const char *const expected_writes[] = {
+        "Centaurx",
+        " ",
+        "(https://github.com/sa6mwa/centaurx).",
+        "\n"
+    };
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "one-byte fallback-link punctuation render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "fallback-link punctuation writes match traces");
+    fails += expect_write_sequence(&cap, expected_writes,
+                                   sizeof(expected_writes) / sizeof(expected_writes[0]),
+                                   "fallback-link punctuation remains one emission");
+    fails += expect_output_equals(&cap, "Centaurx (https://github.com/sa6mwa/centaurx).\n",
+                                  "fallback-link punctuation remains attached when rendered");
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_autolink_punctuation_contract(void)
+{
+    static const char markdown[] = "<https://example.com/path>.\n";
+    static const char *const expected_writes[] = {
+        "https://example.com/path.",
+        "\n"
+    };
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "one-byte autolink punctuation render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "autolink punctuation writes match traces");
+    fails += expect_write_sequence(&cap, expected_writes,
+                                   sizeof(expected_writes) / sizeof(expected_writes[0]),
+                                   "autolink punctuation remains one emission");
+    fails += expect_output_equals(&cap, "https://example.com/path.\n",
+                                  "autolink punctuation remains attached when rendered");
+    capture_free(&cap);
+    return fails;
+}
+
 static int test_runtime_width_autolink_margin_contract(void)
 {
     static const char prefix[] = "alpha <https://example.com>";
@@ -2835,6 +2897,8 @@ int main(void)
     fails += test_table_contract();
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
+    fails += test_fallback_link_punctuation_contract();
+    fails += test_autolink_punctuation_contract();
     fails += test_runtime_width_autolink_margin_contract();
     fails += test_runtime_width_autolink_noop_contract();
     fails += test_runtime_width_link_tail_contract();

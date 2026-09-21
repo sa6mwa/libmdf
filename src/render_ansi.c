@@ -1538,20 +1538,23 @@ static int ansi_set_pending_exact_fallback(mdf_impl *impl, const char *url, size
 static int ansi_emit_pending_exact_fallback_with_period(mdf_impl *impl, mdf_sink *sink, int *consumed)
 {
     size_t fallback_cols;
+    const char *url_style;
 
     *consumed = 0;
-    if (!impl->pending_fallback_exact || impl->opts.boring) {
+    if (!impl->pending_fallback_exact) {
         return 0;
     }
     fallback_cols = visible_cols(impl->pending_fallback_url, impl->pending_fallback_url_len) + 2;
     if (impl->opts.width <= 0 || fallback_cols + 1 > (size_t)impl->opts.width) {
         return 0;
     }
+    url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-        mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0 ||
+        (url_style[0] != '\0' && mdf_emit_buffer_append_cstr(impl, url_style) != 0) ||
         mdf_emit_buffer_append(impl, impl->pending_fallback_url, impl->pending_fallback_url_len) != 0 ||
-        mdf_emit_buffer_append(impl, "\033[0m).", 6) != 0) {
+        (url_style[0] != '\0' && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+        mdf_emit_buffer_append(impl, ").", 2) != 0) {
         mdf_impl_mark_oom(impl);
         return -1;
     }
@@ -1568,20 +1571,23 @@ static int ansi_emit_pending_exact_fallback_with_period(mdf_impl *impl, mdf_sink
 static int ansi_emit_pending_exact_fallback_with_close(mdf_impl *impl, mdf_sink *sink, int *consumed)
 {
     size_t fallback_cols;
+    const char *url_style;
 
     *consumed = 0;
-    if (!impl->pending_fallback_exact || impl->opts.boring) {
+    if (!impl->pending_fallback_exact) {
         return 0;
     }
     fallback_cols = visible_cols(impl->pending_fallback_url, impl->pending_fallback_url_len) + 2;
     if (impl->opts.width <= 0 || fallback_cols + 1 > (size_t)impl->opts.width) {
         return 0;
     }
+    url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-        mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0 ||
+        (url_style[0] != '\0' && mdf_emit_buffer_append_cstr(impl, url_style) != 0) ||
         mdf_emit_buffer_append(impl, impl->pending_fallback_url, impl->pending_fallback_url_len) != 0 ||
-        mdf_emit_buffer_append(impl, "\033[0m))", 6) != 0) {
+        (url_style[0] != '\0' && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+        mdf_emit_buffer_append(impl, "))", 2) != 0) {
         mdf_impl_mark_oom(impl);
         return -1;
     }
@@ -2619,6 +2625,23 @@ static int ansi_pending_emit_append(mdf_impl *impl, const char *src, size_t len)
     return 0;
 }
 
+/* Extend the current pending decision without creating another sink write.
+ * Attached punctuation is part of the preceding code, link, or URL decision. */
+static int ansi_pending_emit_append_attached(mdf_impl *impl, const char *src, size_t len)
+{
+    size_t offset_count;
+
+    offset_count = impl->ansi_pending_emit_offsets_len;
+    if (ansi_pending_emit_append(impl, src, len) != 0) {
+        return -1;
+    }
+    if (offset_count > 0) {
+        impl->ansi_pending_emit_offsets_len = offset_count;
+        impl->ansi_pending_emit_offsets[offset_count - 1] = impl->ansi_pending_emit_len;
+    }
+    return 0;
+}
+
 static int ansi_pending_emit_write(void *userdata, const char *src, size_t len)
 {
     ansi_pending_emit_sink *pending;
@@ -3010,13 +3033,13 @@ static int ansi_emit_pending_autolink_with_punct(mdf_impl *impl, mdf_sink *sink,
         return 0;
     }
     if (impl->ansi_pending_style_reset && !impl->opts.boring) {
-        if (ansi_pending_emit_append(impl, "\033[0m", 4) != 0) {
+        if (ansi_pending_emit_append_attached(impl, "\033[0m", 4) != 0) {
             mdf_impl_mark_oom(impl);
             return -1;
         }
         impl->ansi_pending_style_reset = 0;
     }
-    if (ansi_pending_emit_append(impl, &c, 1) != 0) {
+    if (ansi_pending_emit_append_attached(impl, &c, 1) != 0) {
         mdf_impl_mark_oom(impl);
         return -1;
     }
@@ -3056,7 +3079,7 @@ static int ansi_emit_pending_fallback_with_char(mdf_impl *impl, mdf_sink *sink, 
     if (!impl->ansi_pending_fallback_emit_valid) {
         return 0;
     }
-    if (ansi_pending_emit_append(impl, &c, 1) != 0) {
+    if (ansi_pending_emit_append_attached(impl, &c, 1) != 0) {
         mdf_impl_mark_oom(impl);
         return -1;
     }
@@ -7125,8 +7148,14 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
                 (impl->heading_open && impl->ansi_col == (impl->quote_wrap_active ? 0 : impl->heading_level + 1)) ? continuation_prefix : effective_prefix) != 0) return -1;
         emitted_link = 1;
         pos = url_end + 1;
-        if (impl->ansi_pending_fallback_emit_valid &&
-            ansi_flush_pending_fallback_emit(impl, sink) != 0) return -1;
+        if (impl->ansi_pending_fallback_emit_valid && pos < text_len) {
+            if (text[pos] == ')' || text[pos] == '.') {
+                if (ansi_emit_pending_fallback_with_char(impl, sink, text[pos]) != 0) return -1;
+                pos++;
+            } else if (ansi_flush_pending_fallback_emit(impl, sink) != 0) {
+                return -1;
+            }
+        }
         if (impl->pending_fallback_exact &&
             ansi_flush_pending_exact_fallback(impl, sink, pos < text_len ? text[pos] : '\0') != 0) return -1;
     }
