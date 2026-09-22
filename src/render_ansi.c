@@ -1548,6 +1548,7 @@ static int ansi_emit_pending_exact_fallback_with_period(mdf_impl *impl, mdf_sink
     if (impl->opts.width <= 0 || fallback_cols + 1 > (size_t)impl->opts.width) {
         return 0;
     }
+    if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
     url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
@@ -1581,6 +1582,7 @@ static int ansi_emit_pending_exact_fallback_with_close(mdf_impl *impl, mdf_sink 
     if (impl->opts.width <= 0 || fallback_cols + 1 > (size_t)impl->opts.width) {
         return 0;
     }
+    if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
     url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
