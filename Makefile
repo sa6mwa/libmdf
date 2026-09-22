@@ -189,7 +189,6 @@ finalize-slice: format test
 release-pipeline:
 	+@$(MAKE) format
 	+@$(MAKE) test-hardening
-	+@$(MAKE) package-source-smoke
 	+@$(MAKE) release-matrix
 
 prerelease: release-pipeline
@@ -203,6 +202,9 @@ release:
 	+@$(MAKE) lifecycle-version-contract
 	+@$(MAKE) clean
 	+@$(MAKE) release-pipeline
+	+@$(MAKE) package-source-smoke
+	+@$(MAKE) package-checksums
+	+@$(MAKE) package-verify
 
 print-release-version:
 	@scripts/release_version.sh

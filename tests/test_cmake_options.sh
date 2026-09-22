@@ -50,7 +50,7 @@ int main(void)
 EOF
 
   cat >"$dir/CMakeLists.txt" <<'EOF'
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.24)
 project(libmdf_consumer C)
 find_package(libmdf CONFIG REQUIRED)
 add_executable(consumer main.c)

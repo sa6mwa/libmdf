@@ -22,7 +22,7 @@ cache_value() {
 }
 
 case "$preset" in
-  debug|debug-lua)
+  debug|debug-lua|valgrind)
     expected_toolchain="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake"
     ;;
   fuzz)

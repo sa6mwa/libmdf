@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.24)
 
 execute_process(
   COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/version.sh"
@@ -144,6 +144,13 @@ if(LIBMDF_BUILD_SHARED)
     VERSION ${PROJECT_VERSION}
     BUILD_RPATH ""
     INSTALL_RPATH "")
+  if(UNIX AND NOT APPLE)
+    target_link_options(mdf_shared PRIVATE
+      "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.map")
+  elseif(APPLE)
+    target_link_options(mdf_shared PRIVATE
+      "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.darwin")
+  endif()
   if(APPLE)
     set_target_properties(mdf_shared PROPERTIES
       BUILD_WITH_INSTALL_NAME_DIR TRUE
@@ -328,6 +335,16 @@ if(LIBMDF_BUILD_TESTS)
       LABELS "unit;api"
       TIMEOUT 10)
   endforeach()
+
+  if(TARGET mdf_shared AND UNIX AND NOT APPLE)
+    add_test(NAME mdf_shared_exports
+      COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shared_exports.sh
+              ${CMAKE_NM}
+              $<TARGET_FILE:mdf_shared>)
+    set_tests_properties(mdf_shared_exports PROPERTIES
+      LABELS "unit;api;abi"
+      TIMEOUT 10)
+  endif()
 
   add_test(NAME header_self_sufficient
     COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${LIBMDF_GENERATED_INCLUDE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/header_self_sufficient.o)

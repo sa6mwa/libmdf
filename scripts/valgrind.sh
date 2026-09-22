@@ -8,11 +8,11 @@ if ! command -v valgrind >/dev/null 2>&1; then
   exit 1
 fi
 
-"$ROOT/scripts/configure_preset.sh" debug dev
-cmake --build --preset debug --target test_public_api
+"$ROOT/scripts/configure_preset.sh" valgrind dev
+cmake --build --preset valgrind --target test_public_api
 valgrind \
   --leak-check=full \
   --show-leak-kinds=all \
   --track-origins=yes \
   --error-exitcode=1 \
-  "$ROOT/build/debug/test_public_api"
+  "$ROOT/build/valgrind/test_public_api"

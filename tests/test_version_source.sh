@@ -51,9 +51,8 @@ git -C "$REPO" tag v2.10.0
 test "$(PATH="$NOSORT:$PATH" sh "$REPO/scripts/version.sh")" = "2.10.0" ||
   fail "multiple tags on HEAD must resolve highest semver without GNU sort"
 git -C "$REPO" tag v99.99.99
-if sh "$REPO/scripts/version.sh" >/dev/null 2>&1; then
-  fail "reserved lifecycle test tag must reject release version resolution"
-fi
+test "$(sh "$REPO/scripts/version.sh")" = "99.99.99" ||
+  fail "reserved lifecycle test tag must remain an exact lightweight version"
 
 cp "$ROOT/scripts/version.sh" "$UNTAGGED/scripts/version.sh"
 git -C "$UNTAGGED" init -q

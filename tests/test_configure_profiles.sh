@@ -10,7 +10,7 @@ unset CC CFLAGS CPPFLAGS LDFLAGS
 
 preset_schema=$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$ROOT/CMakePresets.json" | sed -n '1p')
 if [ "$preset_schema" != "2" ]; then
-  printf '%s\n' "CMakePresets.json must use schema version 2 for CMake 3.20 compatibility, got ${preset_schema:-unset}" >&2
+  printf '%s\n' "CMakePresets.json must use schema version 2 for CMake 3.24 compatibility, got ${preset_schema:-unset}" >&2
   exit 1
 fi
 
@@ -83,6 +83,7 @@ verify_profile() {
 
 verify_profile debug dev ON ON ON ON ON OFF ON ON OFF
 verify_profile debug lua ON ON ON ON ON OFF ON OFF OFF
+verify_profile valgrind dev ON ON ON ON ON OFF ON ON OFF
 verify_profile x86_64-linux-gnu-release release ON ON ON ON ON OFF ON ON OFF
 verify_profile x86_64-linux-gnu-release package ON ON ON OFF OFF OFF ON OFF ON
 verify_profile x86_64-linux-gnu-release cmdf-static ON OFF ON OFF OFF OFF OFF OFF ON

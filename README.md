@@ -894,13 +894,13 @@ https://github.com/sa6mwa/c.pkt.systems/
 ```
 
 The local lifecycle skill is the release authority for this repository.
-`make prerelease` runs the complete release proof graph without first removing
-generated state. `make release` first verifies the lightweight-tag version
+`make prerelease` runs the deterministic binary release proof graph without
+first removing generated state. `make release` first verifies the lightweight-tag version
 contract, then starts from a clean tree and runs that same proof graph:
 prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks, full Go parity
 matrix, release matrix builds, package generation, Lua release artifact
-generation, checksum generation, package verification, and artifact
-privacy/relocatability checks. `make lifecycle-version-contract` is the
+generation, source-archive reconstruction, checksum generation, package
+verification, and artifact privacy/relocatability checks. `make lifecycle-version-contract` is the
 focused pre-clean check for tag/version behavior; `make release` is the only
 standard release target that invokes it.
 
