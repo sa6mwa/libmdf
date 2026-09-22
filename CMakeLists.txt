@@ -186,7 +186,16 @@ if(LIBMDF_BUILD_TESTS)
   enable_testing()
   add_executable(test_internal_api tests/test_api.c)
   target_include_directories(test_internal_api PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
-  target_link_libraries(test_internal_api PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  if(LIBMDF_BUILD_STATIC)
+    target_link_libraries(test_internal_api PRIVATE mdf_static)
+  else()
+    # Internal API tests intentionally exercise parser entry points that are
+    # not part of the shared-library ABI. Keep their implementation private
+    # rather than weakening the shared export policy for test-only linkage.
+    add_library(mdf_internal_test STATIC EXCLUDE_FROM_ALL ${LIBMDF_SOURCES})
+    libmdf_target_defaults(mdf_internal_test)
+    target_link_libraries(test_internal_api PRIVATE mdf_internal_test)
+  endif()
   libmdf_configure_c89_target(test_internal_api)
   libmdf_configure_development_runtime(test_internal_api)
   add_test(NAME test_internal_api COMMAND test_internal_api)
@@ -419,7 +428,7 @@ if(LIBMDF_BUILD_TESTS)
   set_tests_properties(cmdf_install_boundary PROPERTIES LABELS "unit;packaging" TIMEOUT 90)
   set_tests_properties(cmake_option_matrix PROPERTIES
     LABELS "unit;packaging"
-    TIMEOUT 30
+    TIMEOUT 60
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME parityjudge_suite_stdin

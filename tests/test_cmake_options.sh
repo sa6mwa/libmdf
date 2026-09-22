@@ -206,6 +206,17 @@ expect_configured library-tests-without-cmdf \
   -DLIBMDF_BUILD_FUZZERS=OFF \
   -DLIBMDF_INSTALL=OFF
 
+expect_configured shared-only-internal-tests \
+  -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
+  -DLIBMDF_BUILD_STATIC=OFF \
+  -DLIBMDF_BUILD_SHARED=ON \
+  -DLIBMDF_BUILD_BINARY=OFF \
+  -DLIBMDF_BUILD_TESTS=ON \
+  -DLIBMDF_BUILD_EXAMPLES=OFF \
+  -DLIBMDF_BUILD_FUZZERS=OFF \
+  -DLIBMDF_INSTALL=OFF
+cmake --build "$BASE/shared-only-internal-tests" --target test_internal_api
+
 if grep -q -- '-std=c90' "$BASE/library-tests-without-cmdf/build.ninja"; then
   printf '%s\n' 'project targets must not compile through CMake C90 mode' >&2
   exit 1
