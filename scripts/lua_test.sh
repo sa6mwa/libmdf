@@ -3,6 +3,10 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 "$ROOT/scripts/build_lua_rock.sh"
+if [ -e "$ROOT/libmdf" ]; then
+  printf '%s\n' "Lua rock build leaked a source-tree module directory: $ROOT/libmdf" >&2
+  exit 1
+fi
 env -u LD_LIBRARY_PATH bash "$ROOT/tests/test_lua_runtime.sh"
 "$ROOT/scripts/generate_cmdf_lua.sh" "$ROOT/build/luarocks/cmdf.lua"
 "$ROOT/scripts/generate_cmdf_dev_sh.sh" "$ROOT/build/cmdf.sh"

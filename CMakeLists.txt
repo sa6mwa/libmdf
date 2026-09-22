@@ -399,6 +399,12 @@ if(LIBMDF_BUILD_TESTS)
     TIMEOUT 120
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
+  add_test(NAME lua_build_layout COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_build_layout.sh)
+  set_tests_properties(lua_build_layout PROPERTIES
+    LABELS "unit;lifecycle;lua"
+    TIMEOUT 60
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
   add_test(NAME discover_target_tools COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_discover_target_tools.sh)
   set_tests_properties(discover_target_tools PROPERTIES
     LABELS "unit;packaging"
