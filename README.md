@@ -274,10 +274,10 @@ emits each final renderer decision as it is made. For example, a real input
 space normally closes and emits the preceding word while the renderer retains
 the separator until wrapping decides it. `flush` is an output-neutral
 soft-boundary check: it never emits, resolves input, or acts as EOF. Only
-`finish_document` resolves an unfinished construct and closes output. The
-supplied sink is synchronous and
-borrowed for each call, so its write callback must accept every complete
-decision emission or fail the document. libmdf deliberately supplies no
+`finish_document` resolves an unfinished construct and closes output. The one
+bound sink is synchronous and borrowed until it is replaced or the renderer is
+destroyed, so its write callback must accept every complete decision emission
+or fail the document. libmdf deliberately supplies no
 partial-write, nonblocking-FD, or output-queue abstraction; an event-loop host
 owns that bounded transport layer above this API.
 
@@ -293,24 +293,44 @@ mdf_sink sink;
 sink.userdata = stdout;
 sink.write = stdout_write;
 
-renderer->feed(renderer, "Hello ", 6, &sink);
-renderer->flush(renderer, &sink);              /* still not EOF */
-renderer->feed(renderer, "**world**", 9, &sink);
-renderer->finish_document(renderer, &sink);    /* the sole EOF operation */
+renderer->set_sink(renderer, &sink);
+renderer->feed(renderer, "Hello ", 6);
+renderer->flush(renderer);                     /* still not EOF */
+renderer->feed(renderer, "**world**", 9);
+renderer->finish_document(renderer);           /* the sole EOF operation */
 renderer->begin_document(renderer);            /* now a distinct document may start */
 ```
 
 Fragments must be nonempty. After successful finalization, further `feed`,
 `flush`, or `finish_document` calls fail until `begin_document` succeeds.
 Sink failure makes that document failed; libmdf never retries or retains the
-sink. Pending table and chart constructs retain at most 65536 bytes, and tables
+sink. Receiver methods are the persistent-sink API: bind once with `set_sink`,
+then call `render`, `write_token`, `finish`, `feed`, `flush`, or
+`finish_document` without repeating the sink. The explicit free functions such
+as `mdf_render`, `mdf_feed`, and `mdf_finish_document` instead borrow the sink
+only for that call; they never install or replace the receiver binding.
+
+To change width at any decision boundary, call `renderer->set_width`. It
+changes subsequent parsing decisions and recomputes retained inline code/link
+layout that has not reached the sink yet, including when a `render` source
+callback changes width. Setting the current width preserves pending decisions.
+It never reflows a completed sink write, so call
+`renderer->reset` and replay caller-owned source for a complete reflow. Reset
+and sink replacement close ANSI terminal state before discarding parser state;
+reset and sink replacement are rejected while a synchronous `render` call is
+active. A source callback may change width for later output. Sink and trace
+callbacks cannot change width, reset, or move a live render to a different
+sink. libmdf never retains input for replay. If terminal cleanup on the old
+sink fails during replacement, the renderer still discards state and binds the
+new sink; replay remains the caller's responsibility.
+Pending table and chart constructs retain at most 65536 bytes, and tables
 retain at most 1024 rows; an oversized unfinished construct fails with
 `MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
 supports ANSI and HTML documents; HTML callers must set an explicit title before
 the first feed because automatic title detection is a one-shot source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `3`. Lua facade and `cmdf.lua`
+The shared library uses SONAME ABI version `4`. Lua facade and `cmdf.lua`
 changes do not require a C ABI bump; changes to installed C headers,
 `mdf_options`, exported symbols, or shared-library layout determine whether the
 ABI version changes.
@@ -640,6 +660,12 @@ end, function(chunk)
 end, { boring = true })
 ```
 
+The reader receives a maximum byte count and must return a string no longer
+than that count, or `nil` at EOF. The writer and optional `write_trace`
+callbacks receive one complete decided emission; returning `false` fails the
+operation, while `nil` and truthy values accept it. These are synchronous
+callbacks, not a partial-write or queued-output interface.
+
 Handle API:
 
 ```lua
@@ -648,6 +674,27 @@ local mdf = require("libmdf")
 local h = mdf.new({ boring = true })
 io.write(h:render("# hello\n"))
 h:close()
+```
+
+The top-level `mdf.render_stream(read, write, opts)` is the explicit-callback
+form: its callbacks are borrowed for that call. For streaming receiver methods,
+bind one callback once, then change width, reset, or replace the callback on
+the object itself. `reset` closes ANSI state and discards unfinished parser
+state even when the terminal callback fails; replay remains the caller's job.
+A `render_stream` reader may change width for later decisions, but `reset` and
+sink replacement are rejected until
+that synchronous render returns. This rejection also applies while terminal
+reset and manual-token output invoke a sink or trace callback. `close` is
+likewise rejected from an active reader, sink, or trace callback, preserving
+the receiver for the outer call.
+Rebinding the identical callback is a no-op.
+
+```lua
+local h = mdf.new({ boring = true })
+h:set_sink(function(chunk) io.write(chunk) end)
+h:set_width(80)
+h:render_stream(reader)
+h:reset()
 ```
 
 Lua hosts can use the same incremental document boundaries with a synchronous
@@ -667,6 +714,27 @@ assert(stream:finish_document())   -- EOF exactly once
 assert(stream:begin_document())
 stream:close()
 ```
+
+`document_stream` also exposes `set_width(width)`, `reset()`,
+`set_sink(callback)`, `set_html_title(title)`, and `error()`. Set an HTML title
+before its first `write`; `error()` returns the latest core diagnostic. Width,
+reset, and sink replacement have the same future-decision, caller-owned replay,
+and terminal-closure behavior as their C receiver counterparts. Replacing the
+callback resets the current document, so resend the source you want on the new
+sink; Lua does not buffer it for you. A failed terminal cleanup callback does
+not prevent replacement: the old state is discarded and the new callback is
+bound for caller-owned replay. Rebinding the identical callback is a no-op and
+preserves the current document. `close` is rejected while its sink or trace
+callback is active. Sink and optional `write_trace` callbacks run
+on the Lua state making each method call, so streams returned from collected
+coroutines remain usable.
+
+`set_width` also recomputes retained inline code/link layout that has not yet
+been passed to the callback; it never rewrites a callback emission that already
+completed. Use `reset()` and resend caller-owned source when the whole document
+must reflow. For the manual-token surface, `handle:write_token` accepts a table
+such as `{ type = "text", text = "hello" }` or a numeric `mdf.token.*` type,
+with optional `level`; finish that stream with `handle:finish()`.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
 same terminal controls and navigation as `cmdf --pager`. The default is
@@ -741,8 +809,17 @@ the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.
 The Lua facade also exposes `mdf.version`, `mdf.version_major`,
 `mdf.version_minor`, `mdf.version_patch`, `mdf.status`, `mdf.status_string`,
 and `mdf.token` constants corresponding to the public C values that are useful
-from Lua. Handle objects expose `set_html_title`, `render`, `render_stream`,
-`write_token`, `finish`, `error`, and `close`.
+from Lua. `mdf.theme_names()`, `mdf.theme_exists(name)`,
+`mdf.detect_osc8_support()`, `mdf.terminal_width(fd, fallback)`, and
+`mdf.status_string(status)` expose their corresponding read-only library
+queries. Handle objects expose `set_sink`, `set_width`, `reset`,
+`set_html_title`, `render`, `render_stream`, `write_token`, `finish`, `error`,
+`feed`, `flush`, `finish_document`, `begin_document`, and `close`. `render`
+returns a string and needs no sink; the other output receiver methods use the
+callback previously supplied to `set_sink`. After `finish_document`, call
+`begin_document` before feeding another incremental document. Bound sink and
+optional `write_trace` callbacks are refreshed to the Lua state making each
+call, so handles returned from collected coroutines remain valid.
 
 ## Markdown And HTML Safety
 
@@ -819,8 +896,13 @@ against `testdata/code-review-is-a-dead-end.md`. Pass extra options with
 `BENCH_ARGS`, for example `make benchmark BENCH_ARGS="--rounds 30"`.
 `make bench-check` compares those medians with
 `testdata/benchmarks/libmdf-baseline.json` and fails if any path is more than
-5% slower than baseline. Pass options with `BENCH_CHECK_ARGS`; keep enough
-rounds to avoid noise when using the 5% allowance. `make benchmark-cmdf`
+5% slower than baseline. The checked-in reference is the released `v0.10.0`
+tree measured with the pinned x86_64 Bootlin toolchain: each value is the
+median of two 50-round runs with 10 warmups and 32 renders per sample. Pass
+options with `BENCH_CHECK_ARGS`; keep enough rounds to avoid noise when using
+the 5% allowance. Absolute timings depend on the host; remeasure the released
+reference on the same host and toolchain before attributing a gate failure to
+the candidate. `make benchmark-cmdf`
 measures the secondary C/Lua CLI UX comparison across ANSI, HTML, and deck
 output against `testdata/deck-corpus/comprehensive.md`.
 
@@ -834,13 +916,13 @@ https://github.com/sa6mwa/c.pkt.systems/
 ```
 
 The local lifecycle skill is the release authority for this repository.
-`make prerelease` runs the complete release proof graph without first removing
-generated state. `make release` first verifies the lightweight-tag version
+`make prerelease` runs the deterministic binary release proof graph without
+first removing generated state. `make release` first verifies the lightweight-tag version
 contract, then starts from a clean tree and runs that same proof graph:
 prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks, full Go parity
 matrix, release matrix builds, package generation, Lua release artifact
-generation, checksum generation, package verification, and artifact
-privacy/relocatability checks. `make lifecycle-version-contract` is the
+generation, source-archive reconstruction, checksum generation, package
+verification, and artifact privacy/relocatability checks. `make lifecycle-version-contract` is the
 focused pre-clean check for tag/version behavior; `make release` is the only
 standard release target that invokes it.
 

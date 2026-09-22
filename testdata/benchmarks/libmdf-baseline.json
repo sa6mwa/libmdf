@@ -1,6 +1,8 @@
 {
   "schema": 1,
-  "description": "libmdf direct API benchmark baseline for a normal long-form Markdown document. bench-check fails when a path exceeds its baseline median by more than the configured allowance.",
+  "description": "libmdf direct API benchmark baseline measured from the v0.10.0 release with the pinned x86_64 Bootlin toolchain. bench-check fails when a path exceeds its baseline median by more than the configured allowance.",
+  "reference_tag": "v0.10.0",
+  "reference_commit": "9d654364e2acba5a72f4ed4231ea61d5e06dfa67",
   "input": "testdata/code-review-is-a-dead-end.md",
   "rounds": 50,
   "warmups": 10,
@@ -10,22 +12,22 @@
     {
       "impl": "C API",
       "mode": "ansi",
-      "median_s": 0.003854
+      "median_s": 0.004097
     },
     {
       "impl": "C API",
       "mode": "html",
-      "median_s": 0.007911
+      "median_s": 0.008251
     },
     {
       "impl": "Lua API",
       "mode": "ansi",
-      "median_s": 0.004676
+      "median_s": 0.005020
     },
     {
       "impl": "Lua API",
       "mode": "html",
-      "median_s": 0.010149
+      "median_s": 0.010681
     }
   ]
 }

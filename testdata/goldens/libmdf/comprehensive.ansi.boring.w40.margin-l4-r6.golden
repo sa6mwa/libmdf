@@ -109,9 +109,7 @@
       structure:
       - Nested unordered item.
       - Nested item with a link
-        
-        (https://example.com/nested)
-        .
+        (https://example.com/nested).
 
     1. Ordered item one.
     2. Ordered item two with a

@@ -50,7 +50,7 @@ int main(void)
 EOF
 
   cat >"$dir/CMakeLists.txt" <<'EOF'
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.24)
 project(libmdf_consumer C)
 find_package(libmdf CONFIG REQUIRED)
 add_executable(consumer main.c)
@@ -125,7 +125,7 @@ verify_install_tree() {
   test -f "$install/share/doc/libmdf/OFL.txt"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.3"
+    test -f "$libdir/libmdf.so.4"
   fi
 
   write_consumer_sources "$consumer/src"
@@ -205,6 +205,26 @@ expect_configured library-tests-without-cmdf \
   -DLIBMDF_BUILD_EXAMPLES=OFF \
   -DLIBMDF_BUILD_FUZZERS=OFF \
   -DLIBMDF_INSTALL=OFF
+
+expect_configured shared-only-internal-tests \
+  -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
+  -DLIBMDF_BUILD_STATIC=OFF \
+  -DLIBMDF_BUILD_SHARED=ON \
+  -DLIBMDF_BUILD_BINARY=OFF \
+  -DLIBMDF_BUILD_TESTS=ON \
+  -DLIBMDF_BUILD_EXAMPLES=OFF \
+  -DLIBMDF_BUILD_FUZZERS=OFF \
+  -DLIBMDF_INSTALL=OFF
+cmake --build "$BASE/shared-only-internal-tests" --target test_internal_api
+
+if grep -q -- '-std=c90' "$BASE/library-tests-without-cmdf/build.ninja"; then
+  printf '%s\n' 'project targets must not compile through CMake C90 mode' >&2
+  exit 1
+fi
+if ! grep -q -- '-std=c89' "$BASE/library-tests-without-cmdf/build.ninja"; then
+  printf '%s\n' 'project targets must compile with explicit C89 mode' >&2
+  exit 1
+fi
 
 verify_install_tree static-only lib/pkgconfig lib/cmake/libmdf include \
   -DLIBMDF_BUILD_STATIC=ON \

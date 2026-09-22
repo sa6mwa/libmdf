@@ -21,9 +21,7 @@
     >   strong text.
     > - Quoted list item with a
     >   link
-    >   
-    >   (https://example.com/quoted-list)
-    >   .
+    >   (https://example.com/quoted-list).
 
     - Top-level list item with
       enough text to wrap in
@@ -38,9 +36,7 @@
     2. Ordered item beta with a
        descriptive link to the
        project
-       
-       (https://pkt.systems/c/libmdf)
-       .
+       (https://pkt.systems/c/libmdf).
 
     # Table And Code
 

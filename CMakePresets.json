@@ -7,14 +7,12 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "CMAKE_C_STANDARD": "90",
-        "CMAKE_C_STANDARD_REQUIRED": "ON",
-        "CMAKE_C_EXTENSIONS": "OFF"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
     },
     { "name": "debug", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu", "LIBMDF_BUILD_TESTS": "ON", "LIBMDF_BUILD_EXAMPLES": "ON" } },
     { "name": "debug-lua", "inherits": "debug" },
+    { "name": "valgrind", "inherits": "debug" },
     { "name": "fuzz", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu-afl.cmake", "LIBMDF_BUILD_FUZZERS": "ON" } },
     { "name": "x86_64-linux-gnu-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
     { "name": "x86_64-linux-musl-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-musl.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-musl", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
@@ -27,6 +25,7 @@
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "debug-lua", "configurePreset": "debug-lua" },
+    { "name": "valgrind", "configurePreset": "valgrind" },
     { "name": "fuzz", "configurePreset": "fuzz" },
     { "name": "x86_64-linux-gnu-release", "configurePreset": "x86_64-linux-gnu-release" },
     { "name": "x86_64-linux-musl-release", "configurePreset": "x86_64-linux-musl-release" },
@@ -37,6 +36,7 @@
     { "name": "arm64-apple-darwin-release", "configurePreset": "arm64-apple-darwin-release" }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } }
+    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
+    { "name": "valgrind", "configurePreset": "valgrind", "output": { "outputOnFailure": true } }
   ]
 }

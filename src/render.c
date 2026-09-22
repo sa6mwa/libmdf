@@ -62,7 +62,11 @@ mdf_status render_emit(mdf_renderer *renderer, mdf_sink *sink, mdf_token_type ty
     tok.text = text;
     tok.len = len;
     tok.level = level;
-    return renderer->write_token(renderer, &tok, sink);
+    if (mdf_renderer_is_builtin(renderer)) {
+        return mdf_renderer_write_token_internal(renderer, &tok, sink);
+    }
+    (void)sink;
+    return renderer->write_token(renderer, &tok);
 }
 
 static const mdf_theme_style *theme_or_default(const mdf_impl *impl)
@@ -196,6 +200,10 @@ mdf_status mdf_renderer_finish_internal(mdf_renderer *self, mdf_sink *sink)
 
     impl = mdf_renderer_require_sink(self, sink, "finish requires renderer and sink");
     if (impl == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
+        mdf_set_error(self, "rendering requires reset after a failed reflow");
         return MDF_ERROR_INVALID;
     }
     if (impl->format == MDF_FORMAT_HTML_DECK) {

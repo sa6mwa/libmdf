@@ -196,7 +196,7 @@ static int run_baseline(const mdf_options *base_opts,
     renderer = NULL;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &renderer);
     if (st == MDF_OK) {
-        st = renderer->render(renderer, &source, &sink);
+        st = mdf_render(renderer, &source, &sink);
     }
     if (renderer != NULL) {
         renderer->destroy(renderer);
@@ -230,14 +230,14 @@ static int run_incremental(const mdf_options *base_opts,
         if (n > fragment_len) {
             n = fragment_len;
         }
-        st = renderer->feed(renderer, data + off, n, &sink);
+        st = mdf_feed(renderer, data + off, n, &sink);
         if (st == MDF_OK) {
-            st = renderer->flush(renderer, &sink);
+            st = mdf_flush(renderer, &sink);
         }
         off += n;
     }
     if (st == MDF_OK) {
-        st = renderer->finish_document(renderer, &sink);
+        st = mdf_finish_document(renderer, &sink);
     }
     if (renderer != NULL) {
         renderer->destroy(renderer);

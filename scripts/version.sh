@@ -2,14 +2,8 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-RESERVED_TEST_TAG=v99.99.99
-
 if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 &&
    [ "$(CDPATH= cd -- "$(git -C "$ROOT" rev-parse --show-toplevel)" && pwd)" = "$ROOT" ]; then
-  if git -C "$ROOT" show-ref --verify --quiet "refs/tags/$RESERVED_TEST_TAG"; then
-    printf '%s\n' "$RESERVED_TEST_TAG is reserved for lifecycle testing and cannot be a release tag" >&2
-    exit 1
-  fi
   tag=$(
     git -C "$ROOT" tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' |
       while IFS= read -r candidate; do

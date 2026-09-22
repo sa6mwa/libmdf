@@ -103,7 +103,12 @@ do
   local f = assert(io.open(cmdf_lua, "rb"))
   local generated = f:read("*a")
   f:close()
-  assert(generated:match("renderer:render_stream%("), "cmdf.lua uses streaming renderer API")
+  assert(generated:find("renderer:set_sink(write_chunk)", 1, true),
+         "cmdf.lua binds one renderer sink before streaming")
+  assert(generated:find("renderer:render_stream(read_chunk)", 1, true),
+         "cmdf.lua uses the bound-sink receiver streaming API")
+  assert(not generated:find("renderer:render_stream(read_chunk, write_chunk)", 1, true),
+         "cmdf.lua does not pass a sink to every receiver render call")
   assert(not generated:match('read%("%*a"%)'), "cmdf.lua must not materialize full input")
   assert(not generated:match("pending_chunks"), "cmdf.lua must not replay prescanned input")
   assert(not generated:match("detect_html_title"), "cmdf.lua must not own HTML title detection")
@@ -221,7 +226,95 @@ assert(not incremental_ok, "lua document stream rejects post-finish writes")
 assert(incremental:begin_document(), "lua document stream starts a next document")
 assert(incremental:write("Second document"), "lua document stream accepts next-document input")
 assert(incremental:finish_document(), "lua document stream finishes next document")
-incremental:close()
+incremental:destroy()
+
+do
+  local chunks = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true, width = 80 }, function(chunk)
+    chunks[#chunks + 1] = chunk
+  end)
+  assert(stream:write("alpha "), "lua document stream accepts input before runtime width change")
+  assert(stream:set_width(5), "lua document stream changes width during an active document")
+  assert(stream:write("beta\n"), "lua document stream continues after runtime width change")
+  assert(stream:finish_document(), "lua document stream finishes after runtime width change")
+  assert(table.concat(chunks):match("alpha\nbeta"),
+         "lua document stream applies runtime width to later layout decisions")
+  stream:close()
+end
+
+do
+  local first = {}
+  local second = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true, osc8 = true }, function(chunk)
+    first[#first + 1] = chunk
+  end)
+  assert(stream:write("discarded "), "lua document stream starts before sink replacement")
+  assert(stream:set_sink(function(chunk)
+    second[#second + 1] = chunk
+  end), "lua document stream replaces its persistent sink")
+  assert(table.concat(first):find("\27%[0m"),
+         "lua document stream closes ANSI state on the replaced sink")
+  assert(stream:write("fresh\n"), "lua document stream accepts caller replay after sink replacement")
+  assert(stream:finish_document(), "lua document stream finishes replay on replacement sink")
+  assert(table.concat(second):match("fresh") and not table.concat(second):match("discarded"),
+         "lua document stream does not buffer discarded input for replay")
+  stream:close()
+end
+
+do
+  local chunks = {}
+  local sink = function(chunk)
+    chunks[#chunks + 1] = chunk
+  end
+  local stream = mdf.document_stream({ format = "ansi", boring = true }, sink)
+  assert(stream:write("retained"), "lua document stream starts before an identical sink bind")
+  assert(stream:set_sink(sink), "lua document stream accepts an identical sink bind")
+  assert(stream:write(" input\n"), "lua document stream continues after an identical sink bind")
+  assert(stream:finish_document(), "lua document stream finishes after an identical sink bind")
+  assert(table.concat(chunks):match("retained input"),
+         "lua document stream does not reset state when its sink is unchanged")
+  stream:close()
+end
+
+do
+  local replacement = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+    return false
+  end)
+  assert(stream:write("discarded"),
+         "lua document stream retains undecided input until a replacement reset")
+  assert(stream:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua document stream adopts a replacement sink after old cleanup fails")
+  assert(stream:write("fresh\n"),
+         "lua document stream accepts caller replay after failed old-sink cleanup")
+  assert(stream:finish_document(),
+         "lua document stream finishes after failed old-sink cleanup")
+  assert(table.concat(replacement):match("fresh") and not table.concat(replacement):match("discarded"),
+         "lua document stream replacement discards state despite old cleanup failure")
+  stream:close()
+end
+
+do
+  local replacement = {}
+  local stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+    return false
+  end)
+  assert(stream:write("discarded"), "lua document stream starts before a failed reset")
+  local reset_ok = pcall(function() stream:reset() end)
+  assert(not reset_ok and stream:error():match("sink write failed while resetting renderer"),
+         "lua document stream reports a failed terminal reset write")
+  assert(stream:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua document stream replaces its sink after a failed reset")
+  assert(stream:write("fresh after reset\n"),
+         "lua document stream accepts replay after a failed reset")
+  assert(stream:finish_document(), "lua document stream finishes replay after a failed reset")
+  assert(table.concat(replacement):match("fresh after reset") and
+         not table.concat(replacement):match("discarded"),
+         "lua document stream failed reset discards state without buffering replay")
+  stream:close()
+end
 
 do
   local weak = setmetatable({}, { __mode = "v" })
@@ -244,6 +337,46 @@ do
 end
 
 do
+  local handle_ok, handle_error = pcall(mdf.new, { width = 1 })
+  local stream_ok, stream_error = pcall(mdf.document_stream, { width = 1 }, function() end)
+
+  assert(not handle_ok and type(handle_error) == "string",
+         "lua handle constructor reports invalid width without crashing")
+  assert(not stream_ok and type(stream_error) == "string",
+         "lua document stream constructor reports invalid width without crashing")
+end
+
+do
+  local weak = setmetatable({}, { __mode = "v" })
+
+  local function create_cyclic_handle()
+    local handle
+
+    handle = mdf.new({ format = "ansi", boring = true })
+    assert(handle:set_sink(function()
+      return handle:set_width(80)
+    end), "lua handle accepts a sink that captures its receiver")
+    weak.handle = handle
+  end
+
+  local function create_cyclic_stream()
+    local stream
+
+    stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+      return stream:set_width(80)
+    end)
+    weak.stream = stream
+  end
+
+  create_cyclic_handle()
+  create_cyclic_stream()
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak.handle == nil and weak.stream == nil,
+         "persistent Lua callbacks that capture their receiver remain collectible")
+end
+
+do
   local markdown = "# Split Lua\n\n- item\n\n`code` [link](https://example.com)\n"
   local chunks = {}
   local split = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
@@ -259,11 +392,74 @@ do
   collectgarbage("collect")
 end
 
+do
+  local input = "(<https://example.com>.\n"
+  local outputs = {}
+
+  for run = 1, 2 do
+    local writes = {}
+    local traces = {}
+    local stream = mdf.document_stream({
+      format = "ansi", width = 21, margin_left = 1, margin_right = 1,
+      write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+    }, function(chunk) writes[#writes + 1] = chunk end)
+    for i = 1, #input do
+      local char = input:sub(i, i)
+      assert(stream:write(char), "lua pending autolink accepts byte-sized input")
+      if run == 2 and char == ">" then
+        assert(stream:set_width(21), "lua unchanged width accepts pending autolink")
+      end
+    end
+    assert(stream:finish_document(), "lua unchanged-width autolink finishes")
+    assert(#writes > 0 and #writes == #traces,
+           "lua unchanged-width autolink keeps sink and trace counts equal")
+    for i = 1, #writes do
+      assert_equal(writes[i], traces[i],
+                   "lua unchanged-width autolink keeps each sink and trace emission equal")
+    end
+    outputs[run] = table.concat(writes)
+    stream:close()
+  end
+  assert_equal(outputs[2], outputs[1],
+               "lua unchanged width preserves pending autolink layout")
+end
+
+do
+  local input = "> 1. <https://example.com> next\n"
+  local expected = "> 1.\n>    https://example.com\n>    next\n"
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", width = 20, boring = true, osc8 = false,
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("> 1. <https://example.com>"),
+         "lua quoted-list autolink accepts pending prefix")
+  local writes_before = #writes
+  local traces_before = #traces
+  assert(stream:set_width(21), "lua quoted-list autolink widens")
+  assert(#writes == writes_before and #traces == traces_before,
+         "lua quoted-list autolink width change does not emit")
+  assert(stream:write(" next\n"), "lua quoted-list autolink accepts suffix")
+  assert(stream:finish_document(), "lua quoted-list autolink finishes")
+  assert(#writes == #traces, "lua quoted-list autolink sink and trace counts match")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i],
+                 "lua quoted-list autolink sink and trace bytes match")
+  end
+  assert_equal(table.concat(writes), expected,
+               "lua quoted-list autolink does not add an empty prefix line")
+  stream:close()
+  assert_equal(mdf.render(input, { format = "ansi", width = 21, boring = true, osc8 = false }),
+               expected, "lua quoted-list baseline agrees with resized stream")
+end
+
 local callback_failure = mdf.document_stream({ format = "ansi", boring = true }, function()
   return false
 end)
 local callback_ok = pcall(function() callback_failure:write("callback failure") end)
 assert(not callback_ok, "lua document stream surfaces callback failure")
+assert_equal(callback_failure:error(), "sink write failed",
+             "lua document stream exposes its core error after callback failure")
 callback_failure:close()
 
 local ok, err = pcall(function()
@@ -288,13 +484,458 @@ assert(tostring(err):match("mdf_render_stream: io error"), tostring(err))
 local handle = mdf.new(parity_opts)
 assert_equal(handle:render(sample), cmdf_ansi, "lua handle render parity")
 
+local handle_chunks = {}
+local handle_sink = function(chunk)
+  handle_chunks[#handle_chunks + 1] = chunk
+end
+assert(handle:set_sink(handle_sink), "lua handle binds one persistent sink")
+
 ok, err = pcall(function()
   handle:render_stream(function()
     return false
-  end, function() end)
+  end)
 end)
 assert(not ok, "lua handle render_stream rejects non-string reader chunks")
 assert(tostring(err):match("mdf_render_stream: io error"), tostring(err))
+
+do
+  local phase = 0
+  assert(handle:reset(), "lua handle reset discards failed streaming state")
+  assert(handle:set_width(80), "lua handle restores wide runtime width")
+  assert(handle:render_stream(function()
+    phase = phase + 1
+    if phase == 1 then return "alpha " end
+    if phase == 2 then
+      local reset_ok = pcall(function() handle:reset() end)
+      local sink_ok = pcall(function()
+        handle:set_sink(function() end)
+      end)
+      local same_sink_ok = pcall(function()
+        handle:set_sink(handle_sink)
+      end)
+      assert(not reset_ok, "lua handle reset rejects interruption from its reader")
+      assert(not sink_ok, "lua handle set_sink rejects interruption from its reader")
+      assert(same_sink_ok, "lua handle allows an identical sink bind from its reader")
+      assert(handle:set_width(5), "lua handle changes width from its source callback")
+      return "beta\n"
+    end
+    return nil
+  end), "lua handle renders through its bound sink")
+  assert(table.concat(handle_chunks):match("alpha\nbeta"),
+         "lua handle applies source-time width changes to later decisions")
+end
+
+do
+  local writes = {}
+  local traces = {}
+  local width_change_ok
+  local trace_width_change_ok
+  local handle
+
+  handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    width = 80,
+    write_trace = function(_, chunk)
+      traces[#traces + 1] = chunk
+      if trace_width_change_ok == nil then
+        trace_width_change_ok = pcall(function() handle:set_width(3) end)
+      end
+    end,
+  })
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+    if width_change_ok == nil then
+      width_change_ok = pcall(function() handle:set_width(3) end)
+    end
+  end), "lua handle binds an output-callback width-change regression sink")
+  assert(handle:feed("`abcdefghij` text\n"),
+         "lua handle renders while its sink attempts a width change")
+  assert(handle:finish_document(),
+         "lua handle finishes after rejecting an output-callback width change")
+  assert(not width_change_ok,
+         "lua handle rejects a width change from an output callback")
+  assert(not trace_width_change_ok,
+         "lua handle rejects a width change from a trace callback")
+  assert_equal(table.concat(writes),
+               mdf.render("`abcdefghij` text\n", { format = "ansi", boring = true, width = 80 }),
+               "lua output-callback width rejection preserves the active layout")
+  assert(#writes == #traces,
+         "lua output-callback width rejection keeps sink and trace event counts aligned")
+  for index, chunk in ipairs(writes) do
+    assert_equal(traces[index], chunk,
+                 "lua output-callback width rejection keeps sink and trace bytes aligned")
+  end
+  handle:close()
+end
+
+do
+  local weak = setmetatable({}, { __mode = "v" })
+  local handle_trace = function() end
+  local stream_trace = function() end
+  local ok
+
+  weak[1] = handle_trace
+  ok = pcall(function()
+    mdf.new({
+      format = "html",
+      write_trace = handle_trace,
+      html_font = { regular_format = "invalid" },
+    })
+  end)
+  assert(not ok, "lua handle constructor rejects invalid HTML font options after trace options")
+  handle_trace = nil
+
+  weak[2] = stream_trace
+  ok = pcall(function()
+    mdf.document_stream({
+      format = "html",
+      write_trace = stream_trace,
+      html_font = { regular_format = "invalid" },
+    }, function() end)
+  end)
+  assert(not ok, "lua stream constructor rejects invalid HTML font options after trace options")
+  stream_trace = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(weak[1] == nil and weak[2] == nil,
+         "failed Lua constructors release untransferred trace callback references")
+end
+
+do
+  local writes = {}
+  local traces = {}
+  local handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    width = 80,
+    write_trace = function(_, chunk)
+      traces[#traces + 1] = chunk
+    end,
+  })
+
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+  end), "lua handle binds a separator-reflow regression sink")
+  assert(handle:feed("a "), "lua handle accepts the prefix before pending code")
+  assert(handle:feed("`a.b.c.d.e.f`"), "lua handle retains complete code before its boundary")
+  assert_equal(table.concat(writes), "a",
+               "lua pending code has not decided its separator before resize")
+  assert(handle:set_width(5), "lua handle accepts a narrow width before pending code emission")
+  assert(handle:feed(" text\n"), "lua handle continues after pending-code resize")
+  assert(handle:finish_document(), "lua handle finishes separator-reflow regression input")
+  assert_equal(table.concat(writes), "a\na.b.…\ntext\n",
+               "lua separator reflow recomputes placement at the new width")
+  assert_equal(#writes, #traces,
+               "lua separator reflow keeps sink and trace event counts aligned")
+  for index, chunk in ipairs(writes) do
+    assert_equal(traces[index], chunk,
+                 "lua separator reflow keeps sink and trace event bytes aligned")
+  end
+  handle:close()
+end
+
+do
+  local writes = {}
+  local width_change_ok
+  local handle = mdf.new({
+    format = "html",
+    width = 80,
+    html_title = "HTML callback guard",
+  })
+
+  assert(handle:set_sink(function(chunk)
+    writes[#writes + 1] = chunk
+    if width_change_ok == nil then
+      width_change_ok = pcall(function() handle:set_width(3) end)
+    end
+  end), "lua HTML handle binds an output-callback width-change sink")
+  assert(handle:feed("HTML callback width guard\n"),
+         "lua HTML handle renders while its sink attempts a width change")
+  assert(handle:finish_document(),
+         "lua HTML handle finishes after rejecting an output-callback width change")
+  assert(not width_change_ok,
+         "lua HTML handle rejects a width change from an output callback")
+  assert_equal(table.concat(writes),
+               mdf.render("HTML callback width guard\n", {
+                 format = "html",
+                 width = 80,
+                 html_title = "HTML callback guard",
+               }),
+               "lua HTML output-callback width rejection preserves output")
+  handle:close()
+end
+
+do
+  local replacement = {}
+  assert(handle:set_sink(function()
+    return false
+  end), "lua handle binds a sink that will reject terminal cleanup")
+  assert(handle:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua handle adopts a replacement sink after old cleanup fails")
+  assert_equal(handle:error(), "", "lua handle replacement clears the old sink error")
+  local emitted = false
+  assert(handle:render_stream(function()
+    if emitted then return nil end
+    emitted = true
+    return "fresh\n"
+  end), "lua handle renders through a replacement sink after failed cleanup")
+  assert(table.concat(replacement):match("fresh"),
+         "lua handle sends subsequent output only to its replacement sink")
+end
+
+do
+  local replacement = {}
+  local reset_handle = mdf.new({ format = "ansi", boring = true })
+  assert(reset_handle:set_sink(function()
+    return false
+  end), "lua handle binds a sink before a failed reset")
+  assert(reset_handle:feed("discarded"), "lua handle starts before a failed reset")
+  local reset_ok = pcall(function() reset_handle:reset() end)
+  assert(not reset_ok and reset_handle:error():match("sink write failed while resetting renderer"),
+         "lua handle reports a failed terminal reset write")
+  assert(reset_handle:set_sink(function(chunk)
+    replacement[#replacement + 1] = chunk
+  end), "lua handle replaces its sink after a failed reset")
+  assert(reset_handle:feed("fresh after reset\n"), "lua handle accepts replay after a failed reset")
+  assert(reset_handle:finish_document(), "lua handle finishes replay after a failed reset")
+  reset_handle:close()
+  assert(table.concat(replacement):match("fresh after reset") and
+         not table.concat(replacement):match("discarded"),
+         "lua handle failed reset discards state without buffering replay")
+end
+
+do
+  local stream_old_chunks = {}
+  local stream_new_chunks = {}
+  local stream_trace = {}
+  local stream_co = coroutine.create(function()
+    return mdf.document_stream({
+      format = "ansi",
+      boring = true,
+      write_trace = function(_, chunk)
+        stream_trace[#stream_trace + 1] = chunk
+      end,
+    }, function(chunk)
+      stream_old_chunks[#stream_old_chunks + 1] = chunk
+    end)
+  end)
+  local stream_ok, coroutine_stream = coroutine.resume(stream_co)
+  assert(stream_ok, "lua coroutine creates a document stream")
+  stream_co = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(coroutine_stream:set_sink(function(chunk)
+    stream_new_chunks[#stream_new_chunks + 1] = chunk
+  end), "lua document stream replaces a coroutine-created sink after collection")
+  assert(coroutine_stream:write("stream after coroutine collection\n"),
+         "lua document stream refreshes its collected coroutine callback context")
+  assert(coroutine_stream:finish_document(), "lua document stream finishes after coroutine collection")
+  coroutine_stream:close()
+  assert(table.concat(stream_old_chunks):match("\27%[0m") and
+         table.concat(stream_new_chunks):match("stream after coroutine collection") and
+         #stream_trace > 0,
+         "lua document stream refreshes sink and trace callbacks for each caller state")
+
+  local handle_old_chunks = {}
+  local handle_new_chunks = {}
+  local handle_trace = {}
+  local handle_co = coroutine.create(function()
+    local coroutine_handle = mdf.new({
+      format = "ansi",
+      boring = true,
+      write_trace = function(_, chunk)
+        handle_trace[#handle_trace + 1] = chunk
+      end,
+    })
+    assert(coroutine_handle:set_sink(function(chunk)
+      handle_old_chunks[#handle_old_chunks + 1] = chunk
+    end))
+    return coroutine_handle
+  end)
+  local handle_ok, coroutine_handle = coroutine.resume(handle_co)
+  assert(handle_ok, "lua coroutine creates a bound handle")
+  handle_co = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  assert(coroutine_handle:reset(), "lua handle resets a coroutine-created sink after collection")
+  assert(coroutine_handle:set_sink(function(chunk)
+    handle_new_chunks[#handle_new_chunks + 1] = chunk
+  end), "lua handle replaces its sink after coroutine collection")
+  assert(coroutine_handle:feed("handle after coroutine collection\n"),
+         "lua handle refreshes its collected coroutine callback context")
+  assert(coroutine_handle:finish_document(), "lua handle finishes after coroutine collection")
+  coroutine_handle:close()
+  assert(table.concat(handle_old_chunks):match("\27%[0m") and
+         table.concat(handle_new_chunks):match("handle after coroutine collection") and
+         #handle_trace > 0,
+         "lua handle refreshes sink and trace callbacks for each caller state")
+
+  local nested_chunks = {}
+  local nested_handle = mdf.new({ format = "ansi", boring = true })
+  local nested_once = false
+  local nested_sink
+  nested_sink = function(chunk)
+    nested_chunks[#nested_chunks + 1] = chunk
+    if not nested_once then
+      local nested_co
+
+      nested_once = true
+      nested_co = coroutine.create(function()
+        local reset_ok = pcall(function() nested_handle:reset() end)
+        local width_ok = pcall(function() nested_handle:set_width(80) end)
+
+        assert(not reset_ok)
+        assert(nested_handle:set_sink(nested_sink))
+        assert(not width_ok)
+      end)
+      assert(coroutine.resume(nested_co),
+             "nested coroutine can inspect and configure an active lua handle")
+    end
+  end
+  assert(nested_handle:set_sink(nested_sink), "lua handle binds a nested-coroutine regression sink")
+  assert(nested_handle:feed("nested coroutine callback\n"),
+         "nested coroutine leaves the active sink callback context intact")
+  assert(nested_handle:finish_document(), "nested coroutine handle finishes its document")
+  nested_handle:close()
+  assert(table.concat(nested_chunks):match("nested coroutine callback"),
+         "nested coroutine callback preserves subsequent Lua sink writes")
+
+  local source_chunks = {}
+  local source_handle = mdf.new({ format = "ansi", boring = true })
+  local source_done = false
+  assert(source_handle:set_sink(function(chunk)
+    source_chunks[#source_chunks + 1] = chunk
+  end), "lua handle binds a nested-source regression sink")
+  assert(source_handle:render_stream(function()
+    if source_done then return nil end
+    source_done = true
+    local source_co = coroutine.create(function()
+      local render_ok = pcall(function()
+        source_handle:render_stream(function()
+          return nil
+        end)
+      end)
+      local reset_ok = pcall(function() source_handle:reset() end)
+      local close_ok = pcall(function() source_handle:close() end)
+
+      assert(not render_ok)
+      assert(not reset_ok)
+      assert(not close_ok)
+    end)
+    assert(coroutine.resume(source_co),
+           "nested coroutine cannot reset an active lua source render")
+    source_co = nil
+    collectgarbage("collect")
+    return "source callback after nested coroutine\n"
+  end), "nested source coroutine leaves later sink callback context valid")
+  source_handle:close()
+  assert(table.concat(source_chunks):match("source callback after nested coroutine"),
+         "nested source coroutine preserves Lua sink writes after collection")
+
+  local close_stream_chunks = {}
+  local close_stream
+  close_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+    close_stream_chunks[#close_stream_chunks + 1] = chunk
+    local close_ok = pcall(function() close_stream:close() end)
+    assert(not close_ok, "lua document stream rejects close from its sink callback")
+  end)
+  assert(close_stream:write("close callback remains live\n"),
+         "lua document stream remains valid after rejected callback close")
+  assert(close_stream:finish_document(),
+         "lua document stream finishes after rejected callback close")
+  close_stream:close()
+  assert(table.concat(close_stream_chunks):match("close callback remains live"),
+         "lua document stream preserves its sink after rejected callback close")
+
+  local reset_chunks = {}
+  local reset_trace = {}
+  local reset_handle
+  local reset_reentered = false
+  reset_handle = mdf.new({
+    format = "ansi",
+    boring = true,
+    write_trace = function(_, chunk)
+      reset_trace[#reset_trace + 1] = chunk
+    end,
+  })
+  assert(reset_handle:set_sink(function(chunk)
+    reset_chunks[#reset_chunks + 1] = chunk
+    if not reset_reentered then
+      local feed_ok
+
+      reset_reentered = true
+      feed_ok = pcall(function() reset_handle:feed("nested ") end)
+      assert(not feed_ok, "lua reset sink callback cannot reenter feed")
+    end
+  end), "lua handle binds a reset reentry regression sink")
+  assert(reset_handle:reset(), "lua handle resets through its guarded sink")
+  assert(#reset_chunks == #reset_trace,
+         "lua reset sink writes and traces have matching event counts")
+  for index, chunk in ipairs(reset_chunks) do
+    assert_equal(reset_trace[index], chunk,
+                 "lua reset sink writes and traces preserve exact bytes")
+  end
+  reset_handle:close()
+
+  local handle_a_chunks = {}
+  local handle_b_chunks = {}
+  local handle_c_chunks = {}
+  local replacement_handle
+  local handle_nested_replace_ok
+  replacement_handle = mdf.new({ format = "ansi", boring = true })
+  assert(replacement_handle:set_sink(function(chunk)
+    handle_a_chunks[#handle_a_chunks + 1] = chunk
+    if handle_nested_replace_ok == nil then
+      handle_nested_replace_ok = pcall(function()
+        replacement_handle:set_sink(function(next_chunk)
+          handle_c_chunks[#handle_c_chunks + 1] = next_chunk
+        end)
+      end)
+    end
+  end), "lua handle binds the old replacement sink")
+  assert(replacement_handle:set_sink(function(chunk)
+    handle_b_chunks[#handle_b_chunks + 1] = chunk
+  end), "lua handle installs the requested replacement sink")
+  assert(not handle_nested_replace_ok,
+         "lua handle rejects nested sink replacement during terminal cleanup")
+  assert(replacement_handle:feed("handle replacement target\n"),
+         "lua handle accepts output after guarded sink replacement")
+  assert(replacement_handle:finish_document(),
+         "lua handle finishes after guarded sink replacement")
+  replacement_handle:close()
+  assert(table.concat(handle_b_chunks):match("handle replacement target") and #handle_c_chunks == 0,
+         "lua handle retains the outer replacement rather than a nested sink")
+
+  local stream_a_chunks = {}
+  local stream_b_chunks = {}
+  local stream_c_chunks = {}
+  local replacement_stream
+  local stream_nested_replace_ok
+  replacement_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+    stream_a_chunks[#stream_a_chunks + 1] = chunk
+    if stream_nested_replace_ok == nil then
+      stream_nested_replace_ok = pcall(function()
+        replacement_stream:set_sink(function(next_chunk)
+          stream_c_chunks[#stream_c_chunks + 1] = next_chunk
+        end)
+      end)
+    end
+  end)
+  assert(replacement_stream:set_sink(function(chunk)
+    stream_b_chunks[#stream_b_chunks + 1] = chunk
+  end), "lua document stream installs the requested replacement sink")
+  assert(not stream_nested_replace_ok,
+         "lua document stream rejects nested sink replacement during terminal cleanup")
+  assert(replacement_stream:write("stream replacement target\n"),
+         "lua document stream accepts output after guarded sink replacement")
+  assert(replacement_stream:finish_document(),
+         "lua document stream finishes after guarded sink replacement")
+  replacement_stream:close()
+  assert(table.concat(stream_b_chunks):match("stream replacement target") and #stream_c_chunks == 0,
+         "lua document stream retains the outer replacement rather than a nested sink")
+end
 
 handle:close()
 
@@ -303,6 +944,26 @@ html_handle:set_html_title("Handle HTML")
 local handle_html = html_handle:render("# Ignored\n\nbody\n")
 html_handle:close()
 assert(handle_html:match("<title>Handle HTML</title>"), "lua html handle set_html_title applies title")
+
+do
+  local chunks = {}
+  local stream = mdf.document_stream({ format = "html" }, function(chunk)
+    chunks[#chunks + 1] = chunk
+  end)
+  assert(stream:set_html_title("Stream HTML Setter"),
+         "lua document stream sets an HTML title before its first write")
+  assert(stream:write("# Ignored Stream Heading\n\nbody\n"),
+         "lua document stream accepts HTML after setting its title")
+  local late_title_ok = pcall(function() stream:set_html_title("Late Stream Title") end)
+  assert(not late_title_ok and stream:error():match("HTML title must be set before rendering starts"),
+         "lua document stream rejects an HTML title change after its first write")
+  assert(stream:finish_document(), "lua document stream finishes HTML after setting its title")
+  stream:close()
+  assert(table.concat(chunks):match("<title>Stream HTML Setter</title>"),
+         "lua document stream applies its explicit HTML title")
+  assert(not table.concat(chunks):match("Late Stream Title"),
+         "lua document stream preserves the title emitted in its shell")
+end
 
 local external_font_html = mdf.render("# External Font\n", {
   html = true,
@@ -364,13 +1025,32 @@ assert(io.open(lua_regular_font_path, "rb") == nil and io.open(lua_italic_font_p
 
 local token_out = {}
 local token_handle = mdf.new({ boring = true })
-token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "space", text = " " }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "text", text = "Lua" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:write_token({ type = "document_end" }, function(chunk) token_out[#token_out + 1] = chunk end)
-token_handle:finish(function(chunk) token_out[#token_out + 1] = chunk end)
+token_handle:set_sink(function(chunk) token_out[#token_out + 1] = chunk end)
+token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" })
+token_handle:write_token({ type = "space", text = " " })
+token_handle:write_token({ type = "text", text = "Lua" })
+token_handle:write_token({ type = "document_end" })
+token_handle:finish()
 token_handle:close()
 assert(table.concat(token_out):match("Hello Lua"), "lua manual token API renders text")
+
+do
+  local chunks = {}
+  local receiver = mdf.new({ format = "ansi", boring = true })
+  local sink = function(chunk) chunks[#chunks + 1] = chunk end
+  assert(receiver:set_sink(sink),
+         "lua handle binds its incremental receiver sink")
+  assert(receiver:feed("first"), "lua handle feeds an incremental document")
+  assert(receiver:set_sink(sink), "lua handle accepts an identical sink bind")
+  assert(receiver:flush(), "lua handle flushes an incremental document")
+  assert(receiver:finish_document(), "lua handle finishes an incremental document")
+  assert(receiver:begin_document(), "lua handle begins a distinct next incremental document")
+  assert(receiver:feed("second\n"), "lua handle feeds its next incremental document")
+  assert(receiver:finish_document(), "lua handle finishes its next incremental document")
+  receiver:close()
+  assert(table.concat(chunks):match("first") and table.concat(chunks):match("second"),
+         "lua handle preserves its sink across incremental document boundaries")
+end
 
 local cmdf_lua_ansi = run_capture(shell_quote(cmdf_lua) .. " -b", sample)
 assert_equal(cmdf_lua_ansi, cmdf_ansi, "cmdf.lua ansi parity")

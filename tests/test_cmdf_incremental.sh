@@ -18,6 +18,20 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 mkdir -p "$TMP"
 
+# cmdf binds its output exactly once per renderer. The normal and incremental
+# drivers then use the receiver API; the explicit-sink wrappers remain public
+# compatibility functions, but are not cmdf's steady-state output path.
+grep -F -q 'renderer->set_sink(renderer, &sink)' "$ROOT/src/cmdf.c"
+grep -F -q 'renderer->set_sink(renderer, sink)' "$ROOT/src/cmdf.c"
+grep -F -q 'renderer->render(renderer, &source)' "$ROOT/src/cmdf.c"
+grep -F -q 'renderer->feed(renderer, buf, n)' "$ROOT/src/cmdf.c"
+grep -F -q 'renderer->flush(renderer)' "$ROOT/src/cmdf.c"
+grep -F -q 'renderer->finish_document(renderer)' "$ROOT/src/cmdf.c"
+if grep -E -q 'mdf_(render|feed|flush|finish_document)\(' "$ROOT/src/cmdf.c"; then
+  printf '%s\n' 'cmdf must use bound-sink receiver rendering methods' >&2
+  exit 1
+fi
+
 if "$CMDF" --incremental --html "$INPUT" > /dev/null 2> "$TMP/html.err"; then
   printf '%s\n' '--incremental unexpectedly accepted HTML without a title' >&2
   exit 1

@@ -443,7 +443,8 @@ local function write_chunk(chunk)
   output_file:flush()
 end
 
-renderer:render_stream(read_chunk, write_chunk)
+renderer:set_sink(write_chunk)
+renderer:render_stream(read_chunk)
 renderer:close()
 
 if input_file ~= io.stdin then

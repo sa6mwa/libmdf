@@ -215,7 +215,7 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     source.read = chunk_read;
     sink.userdata = cap;
     sink.write = capture_write;
-    st = inst->render(inst, &source, &sink);
+    st = mdf_render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
 }
@@ -244,14 +244,14 @@ static mdf_status incremental_capture(mdf_options *opts, const char *markdown,
         if (n > fragment) {
             n = fragment;
         }
-        st = inst->feed(inst, markdown + off, n, &sink);
+        st = mdf_feed(inst, markdown + off, n, &sink);
         if (st == MDF_OK) {
-            st = inst->flush(inst, &sink);
+            st = mdf_flush(inst, &sink);
         }
         off += n;
     }
     if (st == MDF_OK) {
-        st = inst->finish_document(inst, &sink);
+        st = mdf_finish_document(inst, &sink);
     }
     if (inst != NULL) {
         inst->destroy(inst);
@@ -282,7 +282,7 @@ static mdf_status render_count(mdf_format format, mdf_options *opts, const char 
     source.read = chunk_read;
     sink.userdata = count;
     sink.write = count_write;
-    st = inst->render(inst, &source, &sink);
+    st = mdf_render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
 }
@@ -681,7 +681,7 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental flush trace renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "Hello ", strlen("Hello "), &sink);
+            st = mdf_feed(inst, "Hello ", strlen("Hello "), &sink);
             fails += expect(st == MDF_OK && cap.write_count == 1,
                             "incremental feed emits a word closed by real input");
             fails += expect_write_sequence(&cap,
@@ -689,7 +689,7 @@ static int test_stream_trace_contract(void)
                                            sizeof(expected) / sizeof(expected[0]),
                                            "incremental feed emits the closed word exactly once");
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental flush succeeds without manufacturing a decision");
@@ -698,7 +698,7 @@ static int test_stream_trace_contract(void)
             fails += expect(cap.write_count == 1,
                             "incremental flush does not emit after a feed decision");
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental EOF resolves the pending decision");
@@ -728,9 +728,9 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental wrapped-decision renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "12345 abc", strlen("12345 abc"), &sink);
+            st = mdf_feed(inst, "12345 abc", strlen("12345 abc"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental flush retains a trailing undecided suffix");
@@ -739,10 +739,10 @@ static int test_stream_trace_contract(void)
             fails += expect_no_write_contains(&cap, "abc",
                                               "incremental flush does not emit an incomplete suffix");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "defghi", strlen("defghi"), &sink);
+                st = mdf_feed(inst, "defghi", strlen("defghi"), &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental wrapped partial suffix finishes");
@@ -819,19 +819,19 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental tab-boundary renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "hello\t", strlen("hello\t"), &sink);
+            st = mdf_feed(inst, "hello\t", strlen("hello\t"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental tab boundary flush succeeds");
             fails += expect(cap.out_len == 0,
                             "incremental flush retains a trailing tab decision");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "\n", 1, &sink);
+                st = mdf_feed(inst, "\n", 1, &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental tab-boundary document finishes");
@@ -859,14 +859,14 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental unresolved-delimiter renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "hello* ", strlen("hello* "), &sink);
+            st = mdf_feed(inst, "hello* ", strlen("hello* "), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.out_len == 0,
                             "incremental flush retains delimiter plus trailing space");
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental unresolved-delimiter document finishes");
@@ -895,17 +895,17 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental pending-tab wrapping renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, "helloabcde\t", strlen("helloabcde\t"), &sink);
+            st = mdf_feed(inst, "helloabcde\t", strlen("helloabcde\t"), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.out_len == 0,
                             "incremental flush retains a tab-dependent wrap decision");
             if (st == MDF_OK) {
-                st = inst->feed(inst, "world\n", strlen("world\n"), &sink);
+                st = mdf_feed(inst, "world\n", strlen("world\n"), &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental pending-tab wrapping document finishes");
@@ -943,12 +943,12 @@ static int test_stream_trace_contract(void)
         fails += expect(st == MDF_OK && inst != NULL,
                         "incremental empty-heading renderer creates");
         if (inst != NULL) {
-            st = inst->feed(inst, markdown, strlen(markdown), &sink);
+            st = mdf_feed(inst, markdown, strlen(markdown), &sink);
             if (st == MDF_OK) {
-                st = inst->flush(inst, &sink);
+                st = mdf_flush(inst, &sink);
             }
             if (st == MDF_OK) {
-                st = inst->finish_document(inst, &sink);
+                st = mdf_finish_document(inst, &sink);
             }
             fails += expect(st == MDF_OK && cap.failed == 0,
                             "incremental empty-heading document finishes");
@@ -1304,6 +1304,524 @@ static int test_chart_trace_contract(void)
     fails += expect_contains(visible, "Build 40", "tile chart raw-value legend is present");
     free(visible);
     capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_width_autolink_contract(void)
+{
+    static const char prefix[] = "hello <https://example.com>";
+    static const char expected[] = "hello \nhttps://example.com\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t write_count;
+    size_t trace_count;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL,
+                    "runtime-width autolink contract creates a renderer");
+    if (inst != NULL) {
+        if (st == MDF_OK) {
+            st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+        }
+        write_count = cap.write_count;
+        trace_count = cap.trace_count;
+        if (st == MDF_OK) {
+            st = mdf_set_width(inst, 22);
+        }
+        fails += expect(st == MDF_OK && cap.write_count == write_count && cap.trace_count == trace_count,
+                        "runtime-width autolink reflow does not emit before its boundary");
+        if (st == MDF_OK) {
+            st = mdf_finish_document(inst, &sink);
+        }
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "runtime-width autolink reflow completes without capture feedback");
+        fails += expect_trace_matches_writes(&cap,
+                                             "runtime-width autolink reflow writes match traces");
+        fails += expect(cap.out != NULL && strcmp(cap.out, expected) == 0,
+                        "runtime-width autolink reflow wraps without replaying its committed separator");
+        inst->destroy(inst);
+    }
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_fallback_link_punctuation_contract(void)
+{
+    static const char markdown[] = "[Centaurx](https://github.com/sa6mwa/centaurx).\n";
+    static const char *const expected_writes[] = {
+        "Centaurx",
+        " ",
+        "(https://github.com/sa6mwa/centaurx).",
+        "\n"
+    };
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "one-byte fallback-link punctuation render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "fallback-link punctuation writes match traces");
+    fails += expect_write_sequence(&cap, expected_writes,
+                                   sizeof(expected_writes) / sizeof(expected_writes[0]),
+                                   "fallback-link punctuation remains one emission");
+    fails += expect_output_equals(&cap, "Centaurx (https://github.com/sa6mwa/centaurx).\n",
+                                  "fallback-link punctuation remains attached when rendered");
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_autolink_punctuation_contract(void)
+{
+    static const char markdown[] = "<https://example.com/path>.\n";
+    static const char *const expected_writes[] = {
+        "https://example.com/path.",
+        "\n"
+    };
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "one-byte autolink punctuation render succeeds");
+    fails += expect_trace_matches_writes(&cap,
+                                         "autolink punctuation writes match traces");
+    fails += expect_write_sequence(&cap, expected_writes,
+                                   sizeof(expected_writes) / sizeof(expected_writes[0]),
+                                   "autolink punctuation remains one emission");
+    fails += expect_output_equals(&cap, "https://example.com/path.\n",
+                                  "autolink punctuation remains attached when rendered");
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_width_autolink_margin_contract(void)
+{
+    static const char prefix[] = "alpha <https://example.com>";
+    static const char suffix[] = " tail\n";
+    static const char expected[] = "  alpha \n  https://example.com\n  tail\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.margin_left = 2;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 22);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width autolink margin reflow does not emit before its boundary");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width autolink margin reflow completes without capture feedback");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width autolink margin writes match traces");
+    fails += expect(cap.out != NULL && strcmp(cap.out, expected) == 0,
+                    "runtime-width autolink margin follows its reflowed newline");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_width_quoted_list_autolink_contract(void)
+{
+    static const char prefix[] = "> 1. <https://example.com>";
+    static const char suffix[] = " next\n";
+    static const char complete[] = "> 1. <https://example.com> next\n";
+    static const char expected_boring[] =
+        "> 1.\n>    https://example.com\n>    next\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int boring;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring <= 1; boring++) {
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.boring = boring;
+        opts.osc8 = 0;
+        opts.width = 20;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) {
+            st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+        }
+        writes_before_resize = cap.write_count;
+        traces_before_resize = cap.trace_count;
+        if (st == MDF_OK) {
+            st = mdf_set_width(inst, 21);
+        }
+        fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                        cap.trace_count == traces_before_resize,
+                        "quoted-list autolink reflow waits for its emission boundary");
+        if (st == MDF_OK) {
+            st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+        }
+        if (st == MDF_OK) {
+            st = mdf_finish_document(inst, &sink);
+        }
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "quoted-list autolink reflow finishes");
+        fails += expect_trace_matches_writes(&cap,
+                                             "quoted-list autolink reflow writes match traces");
+        if (inst != NULL) {
+            inst->destroy(inst);
+        }
+
+        mdf_options_init(&opts);
+        opts.boring = boring;
+        opts.osc8 = 0;
+        opts.width = 21;
+        st = incremental_capture(&opts, complete, 1, &baseline);
+        fails += expect(st == MDF_OK && baseline.failed == 0,
+                        "quoted-list autolink baseline stream finishes");
+        fails += expect_trace_matches_writes(&baseline,
+                                             "quoted-list autolink baseline writes match traces");
+        fails += expect(cap.out != NULL && baseline.out != NULL &&
+                        strcmp(cap.out, baseline.out) == 0,
+                        "quoted-list autolink reflow does not replay an empty prefix line");
+        if (boring) {
+            fails += expect(cap.out != NULL && strcmp(cap.out, expected_boring) == 0,
+                            "quoted-list autolink reflow has exact visible layout");
+        }
+        capture_free(&cap);
+        capture_free(&baseline);
+    }
+    return fails;
+}
+
+static int test_runtime_width_autolink_noop_contract(void)
+{
+    static const char prefix[] = "<https://example.com/path>";
+    static const char suffix[] = " world\n";
+    static const char complete[] = "<https://example.com/path> world\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    memset(&baseline, 0, sizeof(baseline));
+    mdf_options_init(&opts);
+    opts.width = 26;
+    opts.margin_left = 1;
+    opts.osc8 = 0;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 26);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width autolink noop does not emit before its boundary");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width autolink noop completes without capture feedback");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width autolink noop writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.width = 26;
+    opts.margin_left = 1;
+    opts.osc8 = 0;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width autolink noop baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width autolink noop preserves bytes and left margins");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
+static int test_runtime_width_link_tail_contract(void)
+{
+    static const char prefix[] = "**hello <https://example.com/abcdef>xyz";
+    static const char suffix[] = " next**\n";
+    static const char complete[] = "**hello <https://example.com/abcdef>xyz next**\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 60);
+    }
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width link reflow preserves buffered suffix input");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width link suffix writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 60;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width link suffix baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width link reflow matches the final-width document output");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
+static int test_runtime_width_code_margin_contract(void)
+{
+    static const char prefix[] = "hello (`foo`";
+    static const char suffix[] = "). next\n";
+    static const char complete[] = "hello (`foo`). next\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    size_t i;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 8;
+    opts.margin_left = 2;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    for (i = 0; st == MDF_OK && i < strlen(prefix); i++) {
+        st = mdf_feed(inst, prefix + i, 1, &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 8);
+    }
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width code reflow preserves committed margins");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width code margin writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    mdf_options_init(&opts);
+    opts.boring = 1;
+    opts.width = 8;
+    opts.margin_left = 2;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, 1, &baseline);
+    fails += expect(st == MDF_OK && baseline.failed == 0,
+                    "runtime-width code margin baseline render succeeds");
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width code reflow does not replay committed margins");
+    capture_free(&cap);
+    capture_free(&baseline);
+    return fails;
+}
+
+static int test_runtime_width_list_prefix_progress_contract(void)
+{
+    static const char prefix[] = "1. `12345678` [next](https://test.com/x)";
+    static const char suffix[] = "\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    mdf_status baseline_status;
+    size_t writes_before_resize;
+    size_t traces_before_resize;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    memset(&baseline, 0, sizeof(baseline));
+    mdf_options_init(&opts);
+    opts.width = 80;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    writes_before_resize = cap.write_count;
+    traces_before_resize = cap.trace_count;
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 3);
+    }
+    if (st == MDF_OK) {
+        st = mdf_set_width(inst, 80);
+    }
+    fails += expect(st == MDF_OK && cap.write_count == writes_before_resize &&
+                    cap.trace_count == traces_before_resize,
+                    "runtime-width list-prefix reflow makes bounded progress without early output");
+    if (st == MDF_OK) {
+        st = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (st == MDF_OK) {
+        st = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "runtime-width list-prefix reflow completes without exhausting its decision buffer");
+    fails += expect_trace_matches_writes(&cap,
+                                         "runtime-width list-prefix reflow writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+
+    inst = NULL;
+    mdf_options_init(&opts);
+    opts.width = 80;
+    opts.write_trace.userdata = &baseline;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &baseline;
+    sink.write = capture_write;
+    baseline_status = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_feed(inst, prefix, strlen(prefix), &sink);
+    }
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_feed(inst, suffix, strlen(suffix), &sink);
+    }
+    if (baseline_status == MDF_OK) {
+        baseline_status = mdf_finish_document(inst, &sink);
+    }
+    fails += expect(baseline_status == MDF_OK && baseline.failed == 0,
+                    "runtime-width list-prefix feed baseline succeeds");
+    fails += expect_trace_matches_writes(&baseline,
+                                         "runtime-width list-prefix baseline writes match traces");
+    if (inst != NULL) {
+        inst->destroy(inst);
+    }
+    fails += expect(cap.out != NULL && baseline.out != NULL && strcmp(cap.out, baseline.out) == 0,
+                    "runtime-width list-prefix resize round-trip preserves final-width output");
+    capture_free(&cap);
+    capture_free(&baseline);
     return fails;
 }
 
@@ -2457,6 +2975,15 @@ int main(void)
     fails += test_margin_contract();
     fails += test_table_contract();
     fails += test_chart_trace_contract();
+    fails += test_runtime_width_autolink_contract();
+    fails += test_fallback_link_punctuation_contract();
+    fails += test_autolink_punctuation_contract();
+    fails += test_runtime_width_autolink_margin_contract();
+    fails += test_runtime_width_quoted_list_autolink_contract();
+    fails += test_runtime_width_autolink_noop_contract();
+    fails += test_runtime_width_link_tail_contract();
+    fails += test_runtime_width_code_margin_contract();
+    fails += test_runtime_width_list_prefix_progress_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();

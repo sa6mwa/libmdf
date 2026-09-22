@@ -202,7 +202,7 @@ int main(int argc, char **argv)
         src.read = file_read;
         sink.userdata = repeat == 1 ? (void *)stdout : (void *)&counted;
         sink.write = repeat == 1 ? stdout_write : count_write;
-        st = renderer->render(renderer, &src, &sink);
+        st = mdf_render(renderer, &src, &sink);
         if (st != MDF_OK) {
             fprintf(stderr, "render: %s: %s\n", mdf_status_string(st),
                     renderer->error(renderer) != NULL ? renderer->error(renderer) : "");
