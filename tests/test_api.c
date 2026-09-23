@@ -8,6 +8,27 @@
  * that are not part of the public header. */
 #include "../src/mdf_internal.h"
 
+/* v0.11.0 receiver layout: geometry consumes reserve[0], not an existing
+ * method slot or an extra word at the end of the ABI-4 allocation. */
+typedef struct mdf_v011_layout {
+    mdf_status (*write_token)(mdf *, const mdf_token *);
+    mdf_status (*finish)(mdf *);
+    mdf_status (*render)(mdf *, mdf_source *);
+    mdf_status (*render_cstr)(mdf *, const char *, char **);
+    const char *(*error)(const mdf *);
+    void (*destroy)(mdf *);
+    void (*string_free)(mdf *, char *);
+    mdf_status (*feed)(mdf *, const char *, size_t);
+    mdf_status (*flush)(mdf *);
+    mdf_status (*finish_document)(mdf *);
+    mdf_status (*begin_document)(mdf *);
+    mdf_status (*set_width)(mdf *, int);
+    mdf_status (*reset)(mdf *);
+    mdf_status (*set_sink)(mdf *, const mdf_sink *);
+    void (*reserved[5])(void);
+    void *impl;
+} mdf_v011_layout;
+
 typedef struct counting_allocator {
     size_t allocs;
     size_t frees;
@@ -1990,9 +2011,16 @@ int main(void)
                     renderer->finish_document != NULL &&
                     renderer->begin_document != NULL &&
                     renderer->set_width != NULL &&
+                    renderer->set_geometry != NULL &&
                     renderer->reset != NULL &&
                     renderer->set_sink != NULL,
                     "single-handle api populates receiver methods");
+    fails += expect(sizeof(mdf) == sizeof(mdf_v011_layout) &&
+                    offsetof(mdf, reset) == offsetof(mdf_v011_layout, reset) &&
+                    offsetof(mdf, set_sink) == offsetof(mdf_v011_layout, set_sink) &&
+                    offsetof(mdf, set_geometry) == offsetof(mdf_v011_layout, reserved) &&
+                    offsetof(mdf, impl) == offsetof(mdf_v011_layout, impl),
+                    "runtime geometry consumes an ABI-4 reserve slot without shifting old members");
     for (reserved_index = 0; reserved_index < MDF_RECEIVER_RESERVED_SLOTS; reserved_index++) {
         fails += expect(renderer->reserved[reserved_index] == NULL,
                         "single-handle api leaves reserved receiver slots null");
@@ -2001,6 +2029,8 @@ int main(void)
                     "error reports invalid instance for null handle");
     st = mdf_render(NULL, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null self");
+    st = mdf_set_geometry(NULL, 80, 0, 0);
+    fails += expect(st == MDF_ERROR_INVALID, "geometry setter rejects null self");
     st = mdf_render(renderer, NULL, NULL);
     fails += expect(st == MDF_ERROR_INVALID, "render rejects null source and sink");
     st = renderer->render_cstr(renderer, NULL, &out);

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -35,6 +36,7 @@ typedef struct width_change_output_sink {
     emission_log capture;
     int calls;
     mdf_status width_status;
+    mdf_status geometry_status;
 } width_change_output_sink;
 
 typedef struct cstr_source {
@@ -53,6 +55,7 @@ typedef struct chunked_cstr_source {
 typedef struct width_change_source {
     mdf *renderer;
     int reads;
+    int geometry;
     mdf_status width_status;
 } width_change_source;
 
@@ -497,6 +500,7 @@ static int width_change_output_write(void *userdata, const char *src, size_t len
     sink = (width_change_output_sink *)userdata;
     if (sink->calls == 0) {
         sink->width_status = sink->renderer->set_width(sink->renderer, 3);
+        sink->geometry_status = sink->renderer->set_geometry(sink->renderer, 12, 2, 2);
     }
     sink->calls++;
     return emission_log_append(&sink->capture, src, len);
@@ -583,7 +587,9 @@ static size_t width_change_source_read(void *userdata, char *dst, size_t cap, in
     if (src->reads == 0) {
         chunk = first;
     } else if (src->reads == 1) {
-        src->width_status = src->renderer->set_width(src->renderer, 5);
+        src->width_status = src->geometry ?
+                            src->renderer->set_geometry(src->renderer, 9, 2, 1) :
+                            src->renderer->set_width(src->renderer, 5);
         chunk = second;
     } else {
         return 0;
@@ -3004,8 +3010,9 @@ int main(void)
                 st = inst->finish_document(inst);
             }
             fails += expect(st == MDF_OK && output.calls > 0 &&
-                            output.width_status == MDF_ERROR_INVALID,
-                            "output callbacks cannot change width during an emission");
+                            output.width_status == MDF_ERROR_INVALID &&
+                            output.geometry_status == MDF_ERROR_INVALID,
+                            "output callbacks cannot change width or geometry during an emission");
             fails += expect(emission_logs_equal(&output.capture, &traces),
                             "rejected output-callback width changes preserve exact sink and trace bytes");
 
@@ -3175,8 +3182,11 @@ int main(void)
 
     {
         static const char pending_code[] = "`abcdefghij`";
+        static const char after_reset[] = "a b c\n";
         emission_log writes;
         mdf_sink bound_sink;
+        mdf *reference;
+        char *expected;
 
         memset(&writes, 0, sizeof(writes));
         mdf_options_init(&opts);
@@ -3195,11 +3205,16 @@ int main(void)
                 st = inst->feed(inst, pending_code, strlen(pending_code));
             }
             if (st == MDF_OK) {
-                st = inst->set_width(inst, 80);
+                st = inst->set_geometry(inst, 80, 1, 1);
             }
             fails += expect(st == MDF_ERROR_NOMEM,
-                            "oversized pending-code reflow reports allocation failure");
+                            "oversized pending-code geometry reflow reports allocation failure");
             if (st == MDF_ERROR_NOMEM) {
+                st = inst->set_geometry(inst, 80, 1, 1);
+            }
+            fails += expect(st == MDF_ERROR_INVALID,
+                            "failed pending-code reflow rejects geometry changes until reset");
+            if (st == MDF_ERROR_INVALID) {
                 st = inst->set_width(inst, 3);
             }
             fails += expect(st == MDF_ERROR_INVALID,
@@ -3214,6 +3229,32 @@ int main(void)
             }
             fails += expect(st == MDF_OK,
                             "reset recovers a renderer after failed pending-code reflow");
+            emission_log_free(&writes);
+            if (st == MDF_OK) {
+                st = inst->feed(inst, after_reset, strlen(after_reset));
+            }
+            if (st == MDF_OK) {
+                st = inst->finish_document(inst);
+            }
+            reference = NULL;
+            expected = NULL;
+            mdf_options_init(&opts);
+            opts.boring = 1;
+            opts.width = 3;
+            if (mdf_create(MDF_FORMAT_ANSI, &opts, &reference) == MDF_OK) {
+                if (reference->render_cstr(reference, after_reset, &expected) != MDF_OK) {
+                    expected = NULL;
+                }
+            }
+            fails += expect(st == MDF_OK && expected != NULL &&
+                            emission_log_equals_bytes(&writes, expected, strlen(expected)),
+                            "failed geometry change rolls back width and margins after reset");
+            if (expected != NULL) {
+                reference->string_free(reference, expected);
+            }
+            if (reference != NULL) {
+                reference->destroy(reference);
+            }
             inst->destroy(inst);
             inst = NULL;
         }
@@ -3845,8 +3886,9 @@ int main(void)
                 st = inst->finish_document(inst);
             }
             fails += expect(st == MDF_OK && output.calls > 0 &&
-                            output.width_status == MDF_ERROR_INVALID,
-                            "HTML output callbacks cannot change width during a write");
+                            output.width_status == MDF_ERROR_INVALID &&
+                            output.geometry_status == MDF_ERROR_INVALID,
+                            "HTML output callbacks cannot change width or geometry during a write");
 
             reference = NULL;
             expected = NULL;
@@ -3913,6 +3955,7 @@ int main(void)
                         "bound-sink receiver renderer creates");
         if (inst != NULL) {
             fails += expect(inst->set_sink != NULL && inst->set_width != NULL &&
+                            inst->set_geometry != NULL &&
                             inst->reset != NULL && inst->render != NULL &&
                             inst->feed != NULL && inst->flush != NULL &&
                             inst->finish_document != NULL,
@@ -3948,6 +3991,20 @@ int main(void)
             st = inst->set_width(inst, 0);
             fails += expect(st == MDF_ERROR_INVALID,
                             "receiver set_width rejects an invalid width");
+
+            grow_free(&bound_capture);
+            memset(&width_source, 0, sizeof(width_source));
+            width_source.renderer = inst;
+            width_source.geometry = 1;
+            src.userdata = &width_source;
+            src.read = width_change_source_read;
+            st = inst->render(inst, &src);
+            fails += expect(st == MDF_OK && width_source.width_status == MDF_OK &&
+                            bound_capture.buf != NULL &&
+                            strstr(bound_capture.buf, "  beta") != NULL,
+                            "receiver source callback changes geometry without restarting its render");
+            st = inst->set_geometry(inst, 80, 0, 0);
+            fails += expect(st == MDF_OK, "receiver restores default geometry after source callback");
 
             grow_free(&bound_capture);
             memset(&control_source, 0, sizeof(control_source));
@@ -4189,6 +4246,12 @@ int main(void)
     opts.margin_right = 5;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID, "ansi rejects margins that consume width");
+    opts.width = 80;
+    opts.margin_left = INT_MAX;
+    opts.margin_right = INT_MAX;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_ERROR_INVALID && inst == NULL,
+                    "ansi rejects oversized margins without integer overflow");
 
     mdf_options_init(&opts);
     opts.width = 1;
@@ -4220,8 +4283,10 @@ int main(void)
         html_with_margins = NULL;
         html_without_margins = NULL;
         plain_html = NULL;
-        st = inst->render_cstr(inst, "alpha\n", &html_with_margins);
-        fails += expect(st == MDF_OK && html_with_margins != NULL, "html render with ansi margins");
+        st = inst->set_geometry(inst, 80, 5, 6);
+        fails += expect(st == MDF_OK, "html accepts a geometry update with ignored ansi margins");
+        if (st == MDF_OK) st = inst->render_cstr(inst, "alpha\n", &html_with_margins);
+        fails += expect(st == MDF_OK && html_with_margins != NULL, "html render with runtime ansi margins");
         mdf_options_init(&opts);
         st = mdf_create(MDF_FORMAT_HTML, &opts, &plain_html);
         fails += expect(st == MDF_OK && plain_html != NULL, "html renderer without ansi margins");

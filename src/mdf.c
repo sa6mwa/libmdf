@@ -2,6 +2,7 @@
 
 #define MDF_MIN_ANSI_CONTENT_WIDTH 3
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2414,6 +2415,7 @@ static void mdf_bind_receiver_methods(mdf *inst)
     inst->finish_document = mdf_method_finish_document;
     inst->begin_document = mdf_begin_document;
     inst->set_width = mdf_set_width;
+    inst->set_geometry = mdf_set_geometry;
     inst->reset = mdf_reset;
     inst->set_sink = mdf_set_sink;
 }
@@ -2669,8 +2671,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
         return MDF_ERROR_INVALID;
     }
     if (format == MDF_FORMAT_ANSI &&
-        defaults.width > 0 &&
-        defaults.width - defaults.margin_left - defaults.margin_right < MDF_MIN_ANSI_CONTENT_WIDTH) {
+        (defaults.width < MDF_MIN_ANSI_CONTENT_WIDTH ||
+         defaults.margin_left > defaults.width - MDF_MIN_ANSI_CONTENT_WIDTH ||
+         defaults.margin_right > defaults.width - MDF_MIN_ANSI_CONTENT_WIDTH - defaults.margin_left)) {
         return MDF_ERROR_INVALID;
     }
     theme = mdf_theme_resolve(defaults.theme_name);
@@ -2979,42 +2982,98 @@ static void mdf_parser_set_width(mdf_parser *parser, int width)
     parser_impl->opts.width = width;
 }
 
-mdf_status mdf_set_width(mdf *renderer, int width)
+mdf_status mdf_set_geometry(mdf *renderer, int width, int margin_left, int margin_right)
 {
     mdf_impl *impl;
     int effective_width;
+    int old_width;
+    int old_margin_left;
+    int old_margin_right;
+    int old_quote_prefix_indent;
+    int quote_visible_indent;
+    int committed_col;
+    int committed_margin_pending;
 
     if (renderer == NULL || renderer->impl == NULL) {
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_impl *)renderer->impl;
     if (impl->incremental_state == MDF_INCREMENTAL_FAILED) {
-        mdf_set_error(renderer, "set_width requires reset after a failed render operation");
+        mdf_set_error(renderer, "set_geometry requires reset after a failed render operation");
         return MDF_ERROR_INVALID;
     }
-    if (width <= 0 ||
+    if (width <= 0 || margin_left < 0 || margin_right < 0 ||
         (impl->format == MDF_FORMAT_ANSI &&
-         width - impl->opts.margin_left - impl->opts.margin_right < MDF_MIN_ANSI_CONTENT_WIDTH)) {
-        mdf_set_error(renderer, "width must leave at least three ANSI content columns");
+         (width < MDF_MIN_ANSI_CONTENT_WIDTH ||
+          margin_left > width - MDF_MIN_ANSI_CONTENT_WIDTH ||
+          margin_right > width - MDF_MIN_ANSI_CONTENT_WIDTH - margin_left))) {
+        mdf_set_error(renderer, "geometry must leave at least three ANSI content columns");
         return MDF_ERROR_INVALID;
     }
     effective_width = width;
-    if (impl->format == MDF_FORMAT_ANSI && impl->opts.margin_right > 0) {
-        effective_width -= impl->opts.margin_right;
+    if (impl->format == MDF_FORMAT_ANSI) {
+        effective_width -= margin_right;
     }
     if (impl->emission_active) {
-        mdf_set_error(renderer, "set_width cannot change width during an output callback");
+        mdf_set_error(renderer, "set_geometry cannot change geometry during an output callback");
         return MDF_ERROR_INVALID;
     }
-    if (impl->opts.width == effective_width) {
+    if (impl->opts.width == effective_width && impl->opts.margin_left == margin_left &&
+        impl->opts.margin_right == margin_right) {
         return MDF_OK;
     }
+    old_width = impl->opts.width;
+    old_margin_left = impl->opts.margin_left;
+    old_margin_right = impl->opts.margin_right;
+    old_quote_prefix_indent = impl->quote_prefix_indent;
+    quote_visible_indent = old_quote_prefix_indent;
+    committed_col = impl->ansi_col;
+    committed_margin_pending = impl->ansi_pending_left_margin;
+    if (impl->ansi_pending_emit_valid && impl->ansi_pending_code_valid) {
+        committed_col = impl->ansi_pending_code_col;
+        committed_margin_pending = impl->ansi_pending_code_left_margin;
+    } else if (impl->ansi_pending_emit_valid && impl->ansi_pending_link_kind != 0) {
+        committed_col = impl->ansi_pending_link_state.col;
+        committed_margin_pending = impl->ansi_pending_link_state.left_margin;
+    }
+    if (impl->format == MDF_FORMAT_ANSI && quote_visible_indent > 0) {
+        if (old_margin_left > 0 && quote_visible_indent >= old_margin_left) {
+            quote_visible_indent -= old_margin_left;
+        }
+        if (margin_left > INT_MAX - quote_visible_indent) {
+            mdf_set_error(renderer, "geometry overflows the active quote indentation");
+            return MDF_ERROR_INVALID;
+        }
+    }
     impl->opts.width = effective_width;
+    impl->opts.margin_left = margin_left;
+    impl->opts.margin_right = margin_right;
+    if (impl->format == MDF_FORMAT_ANSI && margin_left > 0 &&
+        committed_margin_pending && committed_col > 0) {
+        /* A zero-margin line may already have committed text while still
+         * reporting its margin as pending.  Never insert the new margin in
+         * that line, including when a retained decision is reflowed. */
+        impl->ansi_suppress_left_margin = 1;
+        if (impl->ansi_pending_emit_valid && impl->ansi_pending_code_valid) {
+            impl->ansi_pending_code_suppress_left_margin = 1;
+        } else if (impl->ansi_pending_emit_valid && impl->ansi_pending_link_kind != 0) {
+            impl->ansi_pending_link_state.suppress_left_margin = 1;
+        }
+    }
+    if (impl->format == MDF_FORMAT_ANSI && old_quote_prefix_indent > 0) {
+        /* This cached column includes the margin at quote entry.  Keep its
+         * structural indentation relative to the newly configured margin. */
+        impl->quote_prefix_indent = quote_visible_indent + margin_left;
+    }
     if (impl->format == MDF_FORMAT_ANSI &&
         (ansi_reflow_pending_code(impl) != 0 || ansi_reflow_pending_link(impl) != 0)) {
         /* Reflow may have consumed the old decision buffer before an
          * allocation failure.  Do not allow later calls to continue with
          * silently lost input; reset lets the caller replay its source. */
+        impl->opts.width = old_width;
+        impl->opts.margin_left = old_margin_left;
+        impl->opts.margin_right = old_margin_right;
+        impl->quote_prefix_indent = old_quote_prefix_indent;
         mdf_impl_mark_oom(impl);
         impl->incremental_state = MDF_INCREMENTAL_FAILED;
         return MDF_ERROR_NOMEM;
@@ -3022,6 +3081,17 @@ mdf_status mdf_set_width(mdf *renderer, int width)
     mdf_parser_set_width(impl->render_parser, effective_width);
     mdf_parser_set_width(impl->incremental_parser, effective_width);
     return MDF_OK;
+}
+
+mdf_status mdf_set_width(mdf *renderer, int width)
+{
+    mdf_impl *impl;
+
+    if (renderer == NULL || renderer->impl == NULL) {
+        return MDF_ERROR_INVALID;
+    }
+    impl = (mdf_impl *)renderer->impl;
+    return mdf_set_geometry(renderer, width, impl->opts.margin_left, impl->opts.margin_right);
 }
 
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink)

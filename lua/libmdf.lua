@@ -19,15 +19,15 @@ local mdf = {}
 ---@field boring? boolean Disable ANSI decoration.
 ---@field osc8? boolean Enable ANSI OSC8 hyperlinks when supported.
 ---@field width? integer Total ANSI width before margins.
----@field margin_left? integer ANSI columns left of content.
----@field margin_right? integer ANSI columns right of content.
+---@field margin_left? integer ANSI columns left of content; may change later through `set_geometry`.
+---@field margin_right? integer ANSI columns right of content; may change later through `set_geometry`.
 ---@field theme? string Built-in ANSI theme name.
 ---@field html_content_width_ch? number HTML content width in `ch` units.
 ---@field html_title? string Explicit HTML or deck title.
 ---@field deck_transition? "fade"|"cross"|"hard" Deck slide transition.
 ---@field slide_numbers? boolean Show deck slide numbers after the first slide.
 ---@field deck_center_front_text? boolean Center first-slide paragraph text.
----@field table_buffer_mode? "full"|"row" Table decision-buffer policy.
+---@field table_buffer_mode? "full"|"row" ANSI table policy; HTML always retains the full table.
 ---@field table_wire_mode? "line"|"ascii"|"space" Table border style.
 ---@field write_trace? libmdf.Trace Observe completed ANSI sink writes.
 ---@field html_font? libmdf.FontOptions Custom embedded HTML/deck faces.
@@ -50,13 +50,14 @@ local mdf = {}
 ---@field render fun(self: libmdf.Handle, markdown: string): string Materializes one complete render without using the bound sink.
 ---@field render_stream fun(self: libmdf.Handle, read: libmdf.Reader): boolean Streams one source to the bound sink.
 ---@field set_sink fun(self: libmdf.Handle, write: libmdf.Writer): boolean Replaces the persistent sink and discards an unfinished document.
----@field set_width fun(self: libmdf.Handle, width: integer): boolean Reflows un-emitted decisions only when width changes.
+---@field set_width fun(self: libmdf.Handle, width: integer): boolean Reflows un-emitted decisions only when width changes; tables follow `set_geometry` rules.
+---@field set_geometry fun(self: libmdf.Handle, width: integer, margin_left: integer, margin_right: integer): boolean Changes total width and nonnegative ANSI margins; never inserts a new margin after committed text on the current line. Full tables use it at completion, row tables for future rows; ANSI requires at least three content columns.
 ---@field reset fun(self: libmdf.Handle): boolean Closes ANSI state and discards current parsing state.
 ---@field set_html_title fun(self: libmdf.Handle, title: string|nil): boolean Sets an HTML/deck title before output begins.
 ---@field write_token fun(self: libmdf.Handle, token: libmdf.Token): boolean Streams one manual token to the bound sink.
 ---@field finish fun(self: libmdf.Handle): boolean Finishes manual-token rendering.
 ---@field feed fun(self: libmdf.Handle, chunk: string): boolean Feeds one nonempty incremental fragment.
----@field flush fun(self: libmdf.Handle): boolean Validates a non-EOF boundary without emitting.
+---@field flush fun(self: libmdf.Handle): boolean Validates a non-EOF boundary without emitting or forcing an unfinished table.
 ---@field finish_document fun(self: libmdf.Handle): boolean Applies EOF exactly once.
 ---@field begin_document fun(self: libmdf.Handle): boolean Starts the next document after a successful finish.
 ---@field error fun(self: libmdf.Handle): string Returns the latest diagnostic.
@@ -65,11 +66,12 @@ local mdf = {}
 
 ---@class libmdf.DocumentStream
 ---@field write fun(self: libmdf.DocumentStream, chunk: string): boolean Feeds one nonempty incremental fragment.
----@field flush fun(self: libmdf.DocumentStream): boolean Validates a non-EOF boundary without emitting.
+---@field flush fun(self: libmdf.DocumentStream): boolean Validates a non-EOF boundary without emitting or forcing an unfinished table.
 ---@field finish_document fun(self: libmdf.DocumentStream): boolean Applies EOF exactly once.
 ---@field begin_document fun(self: libmdf.DocumentStream): boolean Starts the next document after a successful finish.
 ---@field set_sink fun(self: libmdf.DocumentStream, write: libmdf.Writer): boolean Replaces the writer and discards an unfinished document.
----@field set_width fun(self: libmdf.DocumentStream, width: integer): boolean Reflows un-emitted decisions only when width changes.
+---@field set_width fun(self: libmdf.DocumentStream, width: integer): boolean Reflows un-emitted decisions only when width changes; tables follow `set_geometry` rules.
+---@field set_geometry fun(self: libmdf.DocumentStream, width: integer, margin_left: integer, margin_right: integer): boolean Changes total width and nonnegative ANSI margins between writes; never inserts a new margin after committed text on the current line. Full tables use it at completion, row tables for future rows; ANSI requires at least three content columns.
 ---@field reset fun(self: libmdf.DocumentStream): boolean Closes ANSI state and discards current parsing state.
 ---@field set_html_title fun(self: libmdf.DocumentStream, title: string|nil): boolean Sets an HTML/deck title before output begins.
 ---@field error fun(self: libmdf.DocumentStream): string Returns the latest diagnostic.
@@ -91,7 +93,7 @@ mdf.version_patch = core.version_patch
 
 ---Create a renderer handle. Bind one persistent output callback with
 ---`handle:set_sink(write)` before streaming receiver methods. A reader may
----change width; sink/trace callbacks cannot mutate lifecycle state.
+---change width or margins; sink/trace callbacks cannot mutate geometry or lifecycle state.
 ---@param opts? libmdf.Options
 ---@return libmdf.Handle
 function mdf.new(opts)
@@ -125,7 +127,19 @@ function mdf.render_stream(read, write, opts)
 end
 
 ---Create an incremental document stream with one persistent writer callback.
----`set_width` recomputes only un-emitted decisions; `reset` and `set_sink`
+---`set_width` and `set_geometry` recompute only un-emitted decisions;
+---`set_geometry(width, left, right)` preserves the active document and emits
+---nothing itself; new left margins start on future lines if the current line
+---already contains emitted text. `write` consumes each fragment without
+---waiting for future input, but full-buffer ANSI tables emit only at their
+---terminating line or EOF, using the then-current geometry. Row-buffered ANSI
+---tables emit after the header and first row (or two headerless rows), then
+---refit later rows and the closing border without replaying emitted rows.
+---`flush` does not force an unfinished table to emit. Writer calls are
+---synchronous; `reset`
+---and `set_sink` may invoke the old writer for ANSI terminal cleanup.
+---A reflow allocation error keeps the previous geometry but requires reset
+---and caller-owned replay of the failed document. `reset` and `set_sink`
 ---discard state, so callers replay source for a complete reflow. Callbacks run
 ---on the Lua state making each method call, so collected coroutines are safe.
 ---@param opts libmdf.Options

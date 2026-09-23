@@ -243,6 +243,254 @@ do
 end
 
 do
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", boring = true, width = 80,
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("`abcdefghij`"), "lua geometry stream retains undecided inline code")
+  assert(#writes == 0 and #traces == 0, "lua geometry has no early emission")
+  assert(stream:set_geometry(12, 2, 2), "lua stream changes width and margins mid-document")
+  assert(#writes == 0 and #traces == 0, "lua geometry setter does not emit")
+  assert(stream:write(" tail\n"), "lua geometry stream continues without replay")
+  assert(stream:finish_document(), "lua geometry stream finishes its original document")
+  assert_equal(table.concat(writes),
+               mdf.render("`abcdefghij` tail\n", {
+                 format = "ansi", boring = true, width = 12, margin_left = 2, margin_right = 2,
+               }), "lua pending code uses new geometry")
+  assert(#writes == #traces, "lua geometry sink and trace counts match")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i], "lua geometry sink and trace bytes match")
+  end
+  local invalid = pcall(function() stream:set_geometry(4, 2, 1) end)
+  assert(not invalid, "lua geometry rejects insufficient content width")
+  assert(not pcall(function() stream:set_geometry(12, -1, 0) end),
+         "lua geometry rejects a negative left margin")
+  if math.maxinteger > 2147483647 then
+    assert(not pcall(function() stream:set_geometry(math.maxinteger, 0, 0) end),
+           "lua geometry rejects integers outside the C range")
+    assert(not pcall(function() mdf.new({ width = math.maxinteger }) end),
+           "lua constructor rejects out-of-range geometry options")
+  end
+  stream:close()
+end
+
+do
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", boring = true, width = 20,
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("alpha\n\nbeta "),
+         "lua zero-margin stream emits text after earlier newlines")
+  assert_equal(table.concat(writes), "alpha\n\nbeta",
+               "lua zero-margin current line is already committed")
+  local committed = #writes
+  assert(stream:set_geometry(20, 2, 0),
+         "lua stream changes from zero to positive left margin")
+  assert(#writes == committed, "lua midline geometry change does not emit")
+  assert(stream:write("tail\n\nnext\n"),
+         "lua stream continues after midline margin change")
+  assert(stream:finish_document(), "lua stream finishes after midline margin change")
+  assert_equal(table.concat(writes), "alpha\n\nbeta tail\n\n  next\n",
+               "lua new margin begins on a future line, not mid-line")
+  assert(#writes == #traces, "lua midline geometry trace count matches sink writes")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i], "lua midline geometry trace bytes match sink writes")
+  end
+  stream:close()
+end
+
+do
+  local cases = {
+    { "", "alpha\n", "  alpha\n", 0, 2 },
+    { "alpha\n\n", "beta\n", "alpha\n\n  beta\n", 0, 2 },
+    { "alpha ", "beta\n\nnext\n", "alpha beta\n\n  next\n", 0, 2 },
+    { "alpha\n\nbeta ", "tail\n\nnext\n", "alpha\n\nbeta tail\n\n  next\n", 0, 2 },
+    { "alpha\n\nbeta `code`", " tail\n\nnext\n",
+      "alpha\n\nbeta code tail\n\n  next\n", 0, 2 },
+    { "alpha\n\nbeta <https://example.com>", " tail\n\nnext\n",
+      "alpha\n\nbeta https://example.com tail\n\n  next\n", 0, 2 },
+    { "alpha\n\nbeta [site](https://example.com)", " tail\n\nnext\n",
+      "alpha\n\nbeta site (https://example.com) tail\n\n  next\n", 0, 2 },
+    { "alpha\n\nbeta ", "tail\n\nnext\n",
+      "  alpha\n\n  beta tail\n\nnext\n", 2, 0 },
+  }
+  for case_index, case in ipairs(cases) do
+    for chunk_mode = 1, 2 do
+      local writes, traces = {}, {}
+      local stream = mdf.document_stream({
+        format = "ansi", boring = true, width = 80, margin_left = case[4],
+        write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+      }, function(chunk) writes[#writes + 1] = chunk end)
+      local function feed(src)
+        if chunk_mode == 1 then
+          if #src > 0 then assert(stream:write(src)) end
+        else
+          for i = 1, #src do assert(stream:write(src:sub(i, i))) end
+        end
+      end
+      feed(case[1])
+      local committed = #writes
+      assert(stream:set_geometry(80, case[5], 0),
+             "lua margin matrix updates geometry")
+      assert(#writes == committed and #traces == committed,
+             "lua margin matrix setter never emits or traces")
+      feed(case[2])
+      assert(stream:finish_document(), "lua margin matrix finishes")
+      assert_equal(table.concat(writes), case[3],
+                   "lua margin matrix output case " .. case_index .. "/" .. chunk_mode)
+      assert(#writes == #traces, "lua margin matrix trace count")
+      for i = 1, #writes do
+        assert_equal(writes[i], traces[i], "lua margin matrix trace bytes")
+      end
+      stream:close()
+    end
+  end
+end
+
+do
+  local cases = {
+    { "alpha\n\nbeta ", "tail\n\nnext\n", "alpha\n\nbeta tail\n\n   next\n" },
+    { "alpha\n\nbeta `code`", " tail\n\nnext\n",
+      "alpha\n\nbeta code tail\n\n   next\n" },
+    { "alpha\n\nbeta <https://example.com>", " tail\n\nnext\n",
+      "alpha\n\nbeta https://example.com tail\n\n   next\n" },
+    { "alpha\n\nbeta [site](https://example.com)", " tail\n\nnext\n",
+      "alpha\n\nbeta site (https://example.com) tail\n\n   next\n" },
+  }
+  for case_index, case in ipairs(cases) do
+    local writes, traces = {}, {}
+    local stream = mdf.document_stream({
+      format = "ansi", boring = true, width = 80,
+      write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+    }, function(chunk) writes[#writes + 1] = chunk end)
+    assert(stream:write(case[1]), "lua repeated geometry feeds first fragment")
+    local committed = #writes
+    assert(not pcall(function() stream:set_geometry(4, 2, 1) end),
+           "lua invalid midline geometry is rejected")
+    assert(#writes == committed and #traces == committed,
+           "lua invalid midline geometry does not emit")
+    assert(stream:set_geometry(25, 2, 1), "lua repeated geometry sets margins")
+    assert(stream:set_width(30), "lua repeated geometry preserves margins on width change")
+    assert(stream:set_geometry(40, 0, 0), "lua repeated geometry removes margins")
+    assert(stream:set_geometry(40, 3, 2), "lua repeated geometry installs latest margins")
+    assert(stream:flush(), "lua repeated geometry accepts a soft boundary")
+    assert(#writes == committed and #traces == committed,
+           "lua repeated geometry does not emit or trace")
+    assert(stream:write(case[2]), "lua repeated geometry feeds last fragment")
+    assert(stream:finish_document(), "lua repeated geometry finishes")
+    assert_equal(table.concat(writes), case[3],
+                 "lua repeated geometry output case " .. case_index)
+    assert(stream:begin_document(), "lua repeated geometry starts a fresh document")
+    assert(stream:write("fresh\n"), "lua repeated geometry writes fresh document")
+    assert(stream:finish_document(), "lua repeated geometry finishes fresh document")
+    assert(table.concat(writes):find("\n   fresh\n", 1, true),
+           "lua fresh document clears previous line's margin suppression")
+    assert(#writes == #traces, "lua repeated geometry trace count")
+    for i = 1, #writes do
+      assert_equal(writes[i], traces[i], "lua repeated geometry trace bytes")
+    end
+    stream:close()
+  end
+end
+
+do
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", boring = true, width = 12,
+    table_buffer_mode = "row", table_wire_mode = "space",
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("| AlphaLongWord | 1234567890 |\n| BravoLongWord | 67890 |\n"),
+         "lua row table emits its first rows before geometry change")
+  local committed = #writes
+  assert(committed > 0, "lua row table actually streamed before resize")
+  assert(stream:set_geometry(40, 2, 2), "lua row table widens without a restart")
+  assert(#writes == committed, "lua row geometry does not replay emitted rows")
+  assert(stream:write("| LaterLongWord | 42 |\n\n"),
+         "lua row table emits the next row at the new geometry")
+  assert(stream:finish_document(), "lua row table closes at the new geometry")
+  assert(table.concat(writes, "", committed + 1):find("LaterLongWord", 1, true),
+         "lua row table recovers natural column width")
+  assert(#writes == #traces, "lua row geometry sink and trace counts match")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i], "lua row geometry sink and trace bytes match")
+  end
+  stream:close()
+end
+
+do
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", boring = true, width = 20, table_buffer_mode = "row",
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("| abcdefghij | one two six ten |\n| --- | --- |\n" ..
+                      "| abcdefghij | one two six ten |\n"),
+         "lua row table emits before a one-column widening")
+  local committed = #writes
+  assert(committed > 0, "lua row table has committed first rows")
+  assert(stream:set_geometry(21, 0, 0), "lua row table widens by one column")
+  assert(#writes == committed, "lua row-table resize makes no sink write")
+  assert(stream:write("| abcdefghij | one two six ten |\n\n"),
+         "lua row table emits the next row after widening")
+  assert(stream:finish_document(), "lua row table completes after widening")
+  local future = table.concat(writes, "", committed + 1)
+  assert(future:find("│ abcdefghij │ one ", 1, true),
+         "lua row-table widening keeps the preferred whole-word width")
+  assert(not future:find("│ abcdefg │", 1, true),
+         "lua row-table widening does not split a word unnecessarily")
+  assert(#writes == #traces, "lua row-table word-width trace count matches sink writes")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i], "lua row-table word-width trace bytes match sink writes")
+  end
+  stream:close()
+end
+
+do
+  local writes = {}
+  local handle = mdf.new({ format = "ansi", boring = true, width = 12 })
+  assert(handle:set_sink(function(chunk) writes[#writes + 1] = chunk end),
+         "lua geometry handle binds its sink")
+  local reads = 0
+  assert(handle:render_stream(function()
+    reads = reads + 1
+    if reads == 1 then return "alpha\n\n" end
+    if reads == 2 then
+      assert(handle:set_geometry(12, 2, 2),
+             "lua geometry changes from a synchronous source callback")
+      return "beta gamma\n"
+    end
+    return nil
+  end), "lua geometry handle keeps rendering through the same sink")
+  assert(table.concat(writes):match("  beta\n  gamma"),
+         "lua geometry handle applies the new margins and wrap width")
+  handle:close()
+end
+
+do
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({
+    format = "ansi", boring = true, width = 12,
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  assert(stream:write("alpha\n\n"), "lua geometry stream emits its first paragraph")
+  local committed = #writes
+  assert(stream:set_geometry(12, 2, 2), "lua stream updates geometry after output")
+  assert(#writes == committed, "lua geometry does not replay committed output")
+  assert(stream:write("beta gamma\n"), "lua stream continues the same document")
+  assert(stream:finish_document(), "lua stream finishes after the geometry change")
+  assert(table.concat(writes):match("^alpha\n\n  beta\n  gamma"),
+         "lua active document applies new width and margin to future output")
+  assert(#writes == #traces, "lua active geometry sink and trace counts match")
+  for i = 1, #writes do
+    assert_equal(writes[i], traces[i], "lua active geometry sink and trace bytes match")
+  end
+  stream:close()
+end
+
+do
   local first = {}
   local second = {}
   local stream = mdf.document_stream({ format = "ansi", boring = true, osc8 = true }, function(chunk)
@@ -530,6 +778,8 @@ do
   local traces = {}
   local width_change_ok
   local trace_width_change_ok
+  local geometry_change_ok
+  local trace_geometry_change_ok
   local handle
 
   handle = mdf.new({
@@ -540,6 +790,7 @@ do
       traces[#traces + 1] = chunk
       if trace_width_change_ok == nil then
         trace_width_change_ok = pcall(function() handle:set_width(3) end)
+        trace_geometry_change_ok = pcall(function() handle:set_geometry(12, 2, 2) end)
       end
     end,
   })
@@ -547,6 +798,7 @@ do
     writes[#writes + 1] = chunk
     if width_change_ok == nil then
       width_change_ok = pcall(function() handle:set_width(3) end)
+      geometry_change_ok = pcall(function() handle:set_geometry(12, 2, 2) end)
     end
   end), "lua handle binds an output-callback width-change regression sink")
   assert(handle:feed("`abcdefghij` text\n"),
@@ -557,6 +809,8 @@ do
          "lua handle rejects a width change from an output callback")
   assert(not trace_width_change_ok,
          "lua handle rejects a width change from a trace callback")
+  assert(not geometry_change_ok and not trace_geometry_change_ok,
+         "lua handle rejects geometry changes from sink and trace callbacks")
   assert_equal(table.concat(writes),
                mdf.render("`abcdefghij` text\n", { format = "ansi", boring = true, width = 80 }),
                "lua output-callback width rejection preserves the active layout")

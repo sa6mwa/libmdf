@@ -4,6 +4,7 @@
 #include <libmdf/mdf.h>
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -56,6 +57,28 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_VALUE_TRACE 4
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
+
+static int lua_mdf_check_int_arg(lua_State *L, int index)
+{
+    lua_Integer value;
+
+    value = luaL_checkinteger(L, index);
+    if (value < INT_MIN || value > INT_MAX) {
+        luaL_argerror(L, index, "integer is outside the C int range");
+    }
+    return (int)value;
+}
+
+static int lua_mdf_check_option_int(lua_State *L, int index, const char *name)
+{
+    lua_Integer value;
+
+    value = luaL_checkinteger(L, index);
+    if (value < INT_MIN || value > INT_MAX) {
+        luaL_error(L, "%s is outside the C int range", name);
+    }
+    return (int)value;
+}
 
 static void lua_mdf_register_owner(lua_State *L, int owner_index, void *owner_ptr)
 {
@@ -339,17 +362,17 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_pop(L, 1);
     lua_getfield(L, index, "width");
     if (!lua_isnil(L, -1)) {
-        opts->width = (int)luaL_checkinteger(L, -1);
+        opts->width = lua_mdf_check_option_int(L, -1, "width");
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "margin_left");
     if (!lua_isnil(L, -1)) {
-        opts->margin_left = (int)luaL_checkinteger(L, -1);
+        opts->margin_left = lua_mdf_check_option_int(L, -1, "margin_left");
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "margin_right");
     if (!lua_isnil(L, -1)) {
-        opts->margin_right = (int)luaL_checkinteger(L, -1);
+        opts->margin_right = lua_mdf_check_option_int(L, -1, "margin_right");
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "theme");
@@ -1143,9 +1166,30 @@ static int lua_mdf_document_stream_set_width(lua_State *L)
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
-    st = stream->mdf->set_width(stream->mdf, (int)luaL_checkinteger(L, 2));
+    st = stream->mdf->set_width(stream->mdf, lua_mdf_check_int_arg(L, 2));
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.set_width: %s: %s",
+                          mdf_status_string(st), stream->mdf->error(stream->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_document_stream_set_geometry(lua_State *L)
+{
+    lua_mdf_document_stream *stream;
+    int width;
+    int margin_left;
+    int margin_right;
+    mdf_status st;
+
+    stream = lua_mdf_check_document_stream(L, 1);
+    width = lua_mdf_check_int_arg(L, 2);
+    margin_left = lua_mdf_check_int_arg(L, 3);
+    margin_right = lua_mdf_check_int_arg(L, 4);
+    st = stream->mdf->set_geometry(stream->mdf, width, margin_left, margin_right);
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_document_stream.set_geometry: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
     }
     lua_pushboolean(L, 1);
@@ -1417,9 +1461,30 @@ static int lua_mdf_handle_set_width(lua_State *L)
     mdf_status st;
 
     handle = lua_mdf_check_handle(L, 1);
-    st = handle->mdf->set_width(handle->mdf, (int)luaL_checkinteger(L, 2));
+    st = handle->mdf->set_width(handle->mdf, lua_mdf_check_int_arg(L, 2));
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_handle.set_width: %s: %s",
+                          mdf_status_string(st), handle->mdf->error(handle->mdf));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int lua_mdf_handle_set_geometry(lua_State *L)
+{
+    lua_mdf_handle *handle;
+    int width;
+    int margin_left;
+    int margin_right;
+    mdf_status st;
+
+    handle = lua_mdf_check_handle(L, 1);
+    width = lua_mdf_check_int_arg(L, 2);
+    margin_left = lua_mdf_check_int_arg(L, 3);
+    margin_right = lua_mdf_check_int_arg(L, 4);
+    st = handle->mdf->set_geometry(handle->mdf, width, margin_left, margin_right);
+    if (st != MDF_OK) {
+        return luaL_error(L, "mdf_handle.set_geometry: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
     }
     lua_pushboolean(L, 1);
@@ -1728,6 +1793,7 @@ static const luaL_Reg lua_mdf_methods[] = {
     {"render_stream", lua_mdf_handle_render_stream},
     {"set_sink", lua_mdf_handle_set_sink},
     {"set_width", lua_mdf_handle_set_width},
+    {"set_geometry", lua_mdf_handle_set_geometry},
     {"reset", lua_mdf_handle_reset},
     {"set_html_title", lua_mdf_handle_set_html_title},
     {"write_token", lua_mdf_handle_write_token},
@@ -1750,6 +1816,7 @@ static const luaL_Reg lua_mdf_document_stream_methods[] = {
     {"begin_document", lua_mdf_document_stream_begin_document},
     {"set_sink", lua_mdf_document_stream_set_sink},
     {"set_width", lua_mdf_document_stream_set_width},
+    {"set_geometry", lua_mdf_document_stream_set_geometry},
     {"reset", lua_mdf_document_stream_reset},
     {"set_html_title", lua_mdf_document_stream_set_html_title},
     {"error", lua_mdf_document_stream_error},

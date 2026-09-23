@@ -67,11 +67,11 @@ typedef enum mdf_deck_transition {
     MDF_DECK_TRANSITION_HARD = 2
 } mdf_deck_transition;
 
-/** Streaming/buffering mode for Markdown table rendering. */
+/** ANSI table buffering policy; HTML tables always retain the full table. */
 typedef enum mdf_table_buffer_mode {
-    /** Buffer the complete table before rendering it. */
+    /** Default: accept incremental feeds, but render the table only at its end. */
     MDF_TABLE_BUFFER_FULL = 0,
-    /** Buffer only enough for the header and first row, then emit later rows. */
+    /** Emit header/first row (or two headerless rows), then later rows. */
     MDF_TABLE_BUFFER_ROW = 1
 } mdf_table_buffer_mode;
 
@@ -211,9 +211,9 @@ typedef struct mdf_options {
      * Horizontal/vertical/tile charts fit to this width after margins.
      */
     int width;
-    /** ANSI-only left margin emitted on non-empty lines, including chart lines. */
+    /** ANSI-only left margin emitted on non-empty lines, including chart lines; mutable through set_geometry. */
     int margin_left;
-    /** ANSI-only right margin; reduces available text and chart width. */
+    /** ANSI-only right margin; reduces available text and chart width; mutable through set_geometry. */
     int margin_right;
     /** Disable styling. Charts still render shapes and calculated percentages. */
     int boring;
@@ -278,7 +278,7 @@ typedef struct mdf_options {
     int slide_numbers;
     /** Center-align paragraph text on the first deck slide. */
     int deck_center_front_text;
-    /** Table buffering mode; does not affect chart fence buffering. */
+    /** ANSI table buffering mode; HTML tables and chart fences ignore it. */
     mdf_table_buffer_mode table_buffer_mode;
     /** ANSI table border style; does not affect chart fence drawing. */
     mdf_table_wire_mode table_wire_mode;
@@ -384,7 +384,7 @@ typedef struct mdf_token {
 typedef struct mdf mdf;
 
 /** Receiver vtable slots reserved for ABI-compatible future expansion. */
-#define MDF_RECEIVER_RESERVED_SLOTS 5
+#define MDF_RECEIVER_RESERVED_SLOTS 4
 
 struct mdf {
     /**
@@ -440,7 +440,7 @@ struct mdf {
      * width; existing sink writes are never reflowed. The width includes
      * configured margins and must leave at least three content columns. It may
      * run from a source callback, but not a sink or trace callback. See
-     * mdf_set_width.
+     * mdf_set_width or mdf_set_geometry.
      */
     mdf_status (*set_width)(mdf *self, int width);
     /**
@@ -452,6 +452,11 @@ struct mdf {
     mdf_status (*reset)(mdf *self);
     /** Replace the renderer's one bound output sink. See mdf_set_sink. */
     mdf_status (*set_sink)(mdf *self, const mdf_sink *sink);
+    /**
+     * Change total width and both margins between feeds without ending the
+     * active document or rewriting completed output. See mdf_set_geometry.
+     */
+    mdf_status (*set_geometry)(mdf *self, int width, int margin_left, int margin_right);
     /**
      * Library-owned ABI reserve. Slots are initialized to NULL; callers must
      * not write, retain, or call them, and their values have no public meaning.
@@ -489,19 +494,43 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  */
 mdf_status mdf_set_sink(mdf *renderer, const mdf_sink *sink);
 /**
- * Change an existing renderer's width without changing its other options.
+ * Change an existing renderer's width without changing its current margins.
  * width is the total ANSI wrap width before configured margins and must be
  * positive; ANSI renderers require at least three content columns after
  * margins. The new value applies to subsequent parser decisions and recomputes
  * retained inline code and link decisions that have not yet been emitted,
  * including in an active incremental document. Setting the current width is
  * a no-op after validation and preserves pending decisions. It never rewrites
- * a completed sink emission, so callers that need complete reflow should call
+ * a completed sink emission; tables follow the same future-output rules as
+ * mdf_set_geometry. Use mdf_set_geometry to change margins too.
+ * Callers that need complete reflow should call
  * mdf_reset and resend their own source. This operation has no terminal or signal
  * handling. It may run from a source callback, but returns MDF_ERROR_INVALID
  * from a sink or write-trace callback so the active emission stays intact.
+ * If reflow runs out of memory, the previous width remains configured, but
+ * the failed document requires reset and caller-owned replay.
  */
 mdf_status mdf_set_width(mdf *renderer, int width);
+/**
+ * Atomically change the total width and ANSI margins of an existing renderer.
+ * Margins must be nonnegative; ANSI content width must remain at least three
+ * columns. The active incremental document is preserved. Only future output
+ * uses the new geometry: completed sink writes, including a left margin
+ * already emitted on the current line, are not rewritten. A new left margin
+ * is not inserted after committed text on that line; it begins on the next
+ * line. Retained inline code and link decisions are recomputed before emission.
+ * A full-buffer ANSI table uses the geometry current at its terminating line
+ * or EOF, even after earlier feeds retained rows. In row-buffered ANSI mode,
+ * later rows and the closing border refit the new geometry while emitted rows
+ * stay unchanged.
+ * No sink write occurs during this call. It may run between feeds or from a
+ * source callback, but returns MDF_ERROR_INVALID from
+ * a sink or write-trace callback. HTML and deck output ignore ANSI margins,
+ * as at creation. On reflow allocation failure, the previous geometry remains
+ * configured but the current document fails; reset and caller-owned replay
+ * are required, as with mdf_set_width.
+ */
+mdf_status mdf_set_geometry(mdf *renderer, int width, int margin_left, int margin_right);
 /**
  * Close ANSI terminal state through the bound sink, then discard an unfinished
  * manual-token or incremental document without emitting EOF closure. ANSI
@@ -533,9 +562,11 @@ mdf_status mdf_render(mdf *renderer, mdf_source *source, mdf_sink *sink);
 /**
  * Feed a nonempty Markdown fragment into one incremental document.
  * Rendering is synchronous: sink is borrowed only for this call, does not
- * replace any receiver binding, and each
- * decided emission must be accepted completely. This is not EOF; call
- * mdf_finish_document to resolve an unterminated construct and close output.
+ * replace any receiver binding, and each decided emission must be accepted
+ * completely. Feed consumes the supplied fragment without waiting for future
+ * fragments, but a full-buffer table emits no table bytes until its end.
+ * This is not EOF; call mdf_finish_document to resolve an unterminated
+ * construct and close output.
  * A pending table or chart construct is limited to 65536 retained bytes;
  * tables are also limited to 1024 retained rows. Exceeding either limit fails
  * with MDF_ERROR_PARSE rather than buffering an unbounded document suffix.
@@ -547,10 +578,10 @@ mdf_status mdf_render(mdf *renderer, mdf_source *source, mdf_sink *sink);
 mdf_status mdf_feed(mdf *renderer, const char *data, size_t len, mdf_sink *sink);
 /**
  * Validate a non-EOF boundary on an incremental document through an explicit
- * sink borrowed for this call and does not replace any receiver binding. This
- * never emits,
- * resolves, or otherwise changes retained input: feed emits every decision as
- * it becomes final, and mdf_finish_document alone applies EOF semantics.
+ * sink borrowed for this call; it does not replace any receiver binding. This
+ * never emits, resolves, or otherwise changes retained input, including an
+ * unfinished table: feed emits every decision as it becomes final, and
+ * mdf_finish_document alone applies EOF semantics.
  */
 mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
 /**
@@ -563,7 +594,7 @@ mdf_status mdf_flush(mdf *renderer, mdf_sink *sink);
 mdf_status mdf_finish_document(mdf *renderer, mdf_sink *sink);
 /**
  * Start a distinct next incremental document after a successful
- * mdf_finish_document. It leaves the bound sink and configured width intact.
+ * mdf_finish_document. It leaves the bound sink and configured geometry intact.
  */
 mdf_status mdf_begin_document(mdf *renderer);
 /**

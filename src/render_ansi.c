@@ -1934,6 +1934,7 @@ void ansi_reset_line_output_state(mdf_impl *impl)
     impl->ansi_col = 0;
     impl->ansi_writing_left_margin = 0;
     impl->ansi_pending_left_margin = 1;
+    impl->ansi_suppress_left_margin = 0;
     impl->ansi_pending_space = 0;
     impl->ansi_pending_space_no_split = 0;
     impl->ansi_pending_space_plain = 0;
@@ -1955,6 +1956,7 @@ int ansi_ensure_left_margin(mdf_impl *impl, mdf_sink *sink)
     if (impl->format != MDF_FORMAT_ANSI ||
         impl->opts.margin_left <= 0 ||
         (!impl->ansi_pending_left_margin && impl->ansi_col != 0) ||
+        impl->ansi_suppress_left_margin ||
         impl->ansi_writing_left_margin) {
         return 0;
     }
@@ -6323,6 +6325,7 @@ static void ansi_capture_pending_state(mdf_impl *impl, mdf_ansi_pending_state *s
     state->col = impl->ansi_col;
     state->writing_left_margin = impl->ansi_writing_left_margin;
     state->left_margin = impl->ansi_pending_left_margin;
+    state->suppress_left_margin = impl->ansi_suppress_left_margin;
     state->space = impl->ansi_pending_space;
     state->space_no_split = impl->ansi_pending_space_no_split;
     state->space_plain = impl->ansi_pending_space_plain;
@@ -6343,6 +6346,7 @@ static void ansi_restore_pending_state(mdf_impl *impl, const mdf_ansi_pending_st
     impl->ansi_col = state->col;
     impl->ansi_writing_left_margin = state->writing_left_margin;
     impl->ansi_pending_left_margin = state->left_margin;
+    impl->ansi_suppress_left_margin = state->suppress_left_margin;
     impl->ansi_pending_space = state->space;
     impl->ansi_pending_space_no_split = state->space_no_split;
     impl->ansi_pending_space_plain = state->space_plain;
@@ -6371,6 +6375,7 @@ static int ansi_store_pending_inline_code(mdf_impl *impl,
     impl->ansi_pending_code_col = state->col;
     impl->ansi_pending_code_writing_left_margin = state->writing_left_margin;
     impl->ansi_pending_code_left_margin = state->left_margin;
+    impl->ansi_pending_code_suppress_left_margin = state->suppress_left_margin;
     impl->ansi_pending_code_space = state->space;
     impl->ansi_pending_code_space_no_split = state->space_no_split;
     impl->ansi_pending_code_space_plain = state->space_plain;
@@ -6513,6 +6518,7 @@ int ansi_reflow_pending_code(mdf_impl *impl)
     state.col = impl->ansi_pending_code_col;
     state.writing_left_margin = impl->ansi_pending_code_writing_left_margin;
     state.left_margin = impl->ansi_pending_code_left_margin;
+    state.suppress_left_margin = impl->ansi_pending_code_suppress_left_margin;
     state.space = impl->ansi_pending_code_space;
     state.space_no_split = impl->ansi_pending_code_space_no_split;
     state.space_plain = impl->ansi_pending_code_space_plain;

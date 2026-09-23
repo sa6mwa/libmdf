@@ -9,10 +9,16 @@ if ! command -v valgrind >/dev/null 2>&1; then
 fi
 
 "$ROOT/scripts/configure_preset.sh" valgrind dev
-cmake --build --preset valgrind --target test_public_api
+cmake --build --preset valgrind --target test_public_api test_contracts
 valgrind \
   --leak-check=full \
   --show-leak-kinds=all \
   --track-origins=yes \
   --error-exitcode=1 \
   "$ROOT/build/valgrind/test_public_api"
+valgrind \
+  --leak-check=full \
+  --show-leak-kinds=all \
+  --track-origins=yes \
+  --error-exitcode=1 \
+  "$ROOT/build/valgrind/test_contracts" --under-valgrind

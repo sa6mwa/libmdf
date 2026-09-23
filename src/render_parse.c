@@ -412,6 +412,10 @@ typedef struct table_filter {
     int has_header;
     int row_layout_ready;
     size_t row_widths[TABLE_MAX_COLUMNS];
+    /* Row-only column metrics: natural, preferred, then glyph minima. */
+    size_t *row_natural_widths;
+    size_t row_natural_widths_cap;
+    int row_available_width;
     size_t retained_bytes;
     int incremental_limits;
     int retention_limit_exceeded;
@@ -447,6 +451,8 @@ static void table_filter_destroy(table_filter *tf)
     mdf_free_mem(tf->allocator, tf->delimiter, tf->delimiter_len + 1);
     mdf_free_mem(tf->allocator, tf->rows, tf->rows_cap * sizeof(tf->rows[0]));
     mdf_free_mem(tf->allocator, tf->row_lens, tf->rows_cap * sizeof(tf->row_lens[0]));
+    mdf_free_mem(tf->allocator, tf->row_natural_widths,
+                 3 * tf->row_natural_widths_cap * sizeof(tf->row_natural_widths[0]));
     memset(tf, 0, sizeof(*tf));
 }
 
@@ -3484,7 +3490,10 @@ static int table_available_width(mdf_impl *impl, table_filter *tf)
     return impl->opts.width - prefix_width;
 }
 
-static mdf_status table_compute_ansi_widths(table_filter *tf, mdf_renderer *renderer, size_t *widths)
+static mdf_status table_compute_ansi_widths(table_filter *tf, mdf_renderer *renderer,
+                                            size_t *widths, size_t *natural_out,
+                                            size_t *preferred_mins_out,
+                                            size_t *break_mins_out)
 {
     mdf_impl *impl;
     size_t natural[TABLE_MAX_COLUMNS];
@@ -3532,6 +3541,15 @@ static mdf_status table_compute_ansi_widths(table_filter *tf, mdf_renderer *rend
             preferred_mins[c] = 1;
         }
     }
+    if (natural_out != NULL) {
+        memcpy(natural_out, natural, tf->cols * sizeof(natural[0]));
+    }
+    if (preferred_mins_out != NULL) {
+        memcpy(preferred_mins_out, preferred_mins, tf->cols * sizeof(preferred_mins[0]));
+    }
+    if (break_mins_out != NULL) {
+        memcpy(break_mins_out, break_mins, tf->cols * sizeof(break_mins[0]));
+    }
     avail_width = table_available_width(impl, tf);
     table_fit_widths(widths, preferred_mins, tf->cols, avail_width, impl->opts.table_wire_mode);
     if (avail_width > 0 && table_total_width(widths, tf->cols, impl->opts.table_wire_mode) > (size_t)avail_width) {
@@ -3562,7 +3580,7 @@ static mdf_status table_render_ansi(table_filter *tf, mdf_renderer *renderer, md
     impl = (mdf_impl *)renderer->impl;
     if (ansi_flush_pending_breaks(impl, sink) != 0) return MDF_ERROR_IO;
     if (ansi_flush_pending_space(impl, sink) != 0) return MDF_ERROR_IO;
-    st = table_compute_ansi_widths(tf, renderer, widths);
+    st = table_compute_ansi_widths(tf, renderer, widths, NULL, NULL, NULL);
     if (st != MDF_OK) return st;
     if (table_render_border(impl, &impl->allocator, sink, widths, tf->cols, 0, tf->indent_prefix, tf->quote_content_indent, tf->quote_prefix) != 0) return MDF_ERROR_IO;
     if (tf->has_header) {
@@ -3580,14 +3598,27 @@ static mdf_status table_render_ansi(table_filter *tf, mdf_renderer *renderer, md
 static mdf_status table_render_ansi_row_open(table_filter *tf, mdf_renderer *renderer, mdf_sink *sink)
 {
     mdf_impl *impl;
+    size_t *next_widths;
     size_t i;
     mdf_status st;
 
     impl = (mdf_impl *)renderer->impl;
     if (ansi_flush_pending_breaks(impl, sink) != 0) return MDF_ERROR_IO;
     if (ansi_flush_pending_space(impl, sink) != 0) return MDF_ERROR_IO;
-    st = table_compute_ansi_widths(tf, renderer, tf->row_widths);
+    if (tf->row_natural_widths_cap < tf->cols) {
+        next_widths = (size_t *)mdf_realloc_mem(tf->allocator, tf->row_natural_widths,
+                                                3 * tf->row_natural_widths_cap * sizeof(tf->row_natural_widths[0]),
+                                                3 * tf->cols * sizeof(tf->row_natural_widths[0]));
+        if (next_widths == NULL) return MDF_ERROR_NOMEM;
+        tf->row_natural_widths = next_widths;
+        tf->row_natural_widths_cap = tf->cols;
+    }
+    st = table_compute_ansi_widths(tf, renderer, tf->row_widths,
+                                   tf->row_natural_widths,
+                                   tf->row_natural_widths + tf->row_natural_widths_cap,
+                                   tf->row_natural_widths + 2 * tf->row_natural_widths_cap);
     if (st != MDF_OK) return st;
+    tf->row_available_width = table_available_width(impl, tf);
     if (table_render_border(impl, &impl->allocator, sink, tf->row_widths, tf->cols, 0, tf->indent_prefix, tf->quote_content_indent, tf->quote_prefix) != 0) return MDF_ERROR_IO;
     if (tf->has_header) {
         if (table_render_row(renderer, sink, tf->header, tf->header_len, tf->row_widths, tf->align, tf->cols, 1, 0, tf->indent_prefix, tf->quote_content_indent, tf->quote_prefix) != 0) return MDF_ERROR_IO;
@@ -3601,8 +3632,37 @@ static mdf_status table_render_ansi_row_open(table_filter *tf, mdf_renderer *ren
     return MDF_OK;
 }
 
+static void table_reflow_ansi_row_geometry(table_filter *tf, mdf_renderer *renderer)
+{
+    mdf_impl *impl;
+    int available_width;
+
+    impl = (mdf_impl *)renderer->impl;
+    available_width = table_available_width(impl, tf);
+    if (available_width == tf->row_available_width) {
+        return;
+    }
+    memcpy(tf->row_widths, tf->row_natural_widths, tf->cols * sizeof(tf->row_widths[0]));
+    /* Prefer whole words when they fit; discarded rows cannot be rescanned. */
+    table_fit_widths(tf->row_widths,
+                     tf->row_natural_widths + tf->row_natural_widths_cap,
+                     tf->cols, available_width,
+                     impl->opts.table_wire_mode);
+    if (available_width > 0 &&
+        table_total_width(tf->row_widths, tf->cols, impl->opts.table_wire_mode) >
+            (size_t)available_width) {
+        /* A tighter width requires splitting words, but never wide glyphs. */
+        table_fit_widths(tf->row_widths,
+                         tf->row_natural_widths + 2 * tf->row_natural_widths_cap,
+                         tf->cols, available_width,
+                         impl->opts.table_wire_mode);
+    }
+    tf->row_available_width = available_width;
+}
+
 static mdf_status table_render_ansi_row_continue(table_filter *tf, mdf_renderer *renderer, mdf_sink *sink, const char *row, size_t row_len)
 {
+    table_reflow_ansi_row_geometry(tf, renderer);
     if (table_render_row(renderer, sink, row, row_len, tf->row_widths, tf->align, tf->cols, 0, !tf->has_header && !tf->truncated_columns, tf->indent_prefix, tf->quote_content_indent, tf->quote_prefix) != 0) {
         return MDF_ERROR_IO;
     }
@@ -3617,6 +3677,7 @@ static mdf_status table_render_ansi_row_finish(table_filter *tf, mdf_renderer *r
     if (!tf->row_layout_ready) {
         return table_render_ansi(tf, renderer, sink);
     }
+    table_reflow_ansi_row_geometry(tf, renderer);
     if (table_render_border(impl, &impl->allocator, sink, tf->row_widths, tf->cols, 2, tf->indent_prefix, tf->quote_content_indent, tf->quote_prefix) != 0) {
         return MDF_ERROR_IO;
     }

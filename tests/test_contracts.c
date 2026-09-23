@@ -7,6 +7,9 @@
 
 #define MAX_RECORDS 65536
 
+/* Memcheck's CPU overhead is unrelated to the native hot-path budget. */
+static int contract_under_valgrind;
+
 /* The normal build is the performance gate. Memory/thread sanitizers
  * instrument every access, so keep the same regression fixture there with a
  * bounded but sanitizer-appropriate CPU budget. */
@@ -32,10 +35,12 @@ typedef struct record {
 } record;
 
 typedef struct capture {
-    record writes[MAX_RECORDS];
-    record traces[MAX_RECORDS];
+    record *writes;
+    record *traces;
     size_t write_count;
+    size_t write_cap;
     size_t trace_count;
+    size_t trace_cap;
     char *out;
     size_t out_len;
     size_t out_cap;
@@ -101,16 +106,32 @@ static int capture_append_output(capture *cap, const char *src, size_t len)
     return 0;
 }
 
-static int capture_record(record *records, size_t *count, const char *src, size_t len)
+static int capture_record(record **records, size_t *count, size_t *capacity,
+                          const char *src, size_t len)
 {
+    record *next;
+    size_t next_cap;
+
     if (*count >= MAX_RECORDS) {
         return -1;
     }
-    records[*count].data = dup_bytes(src, len);
-    if (records[*count].data == NULL) {
+    if (*count == *capacity) {
+        next_cap = *capacity == 0 ? 16 : *capacity * 2;
+        if (next_cap > MAX_RECORDS) {
+            next_cap = MAX_RECORDS;
+        }
+        next = (record *)realloc(*records, next_cap * sizeof((*records)[0]));
+        if (next == NULL) {
+            return -1;
+        }
+        *records = next;
+        *capacity = next_cap;
+    }
+    (*records)[*count].data = dup_bytes(src, len);
+    if ((*records)[*count].data == NULL) {
         return -1;
     }
-    records[*count].len = len;
+    (*records)[*count].len = len;
     (*count)++;
     return 0;
 }
@@ -120,7 +141,7 @@ static int capture_write(void *userdata, const char *src, size_t len)
     capture *cap;
 
     cap = (capture *)userdata;
-    if (capture_record(cap->writes, &cap->write_count, src, len) != 0 ||
+    if (capture_record(&cap->writes, &cap->write_count, &cap->write_cap, src, len) != 0 ||
         capture_append_output(cap, src, len) != 0) {
         cap->failed = 1;
         return -1;
@@ -134,7 +155,7 @@ static int capture_trace(void *userdata, mdf_format format, const char *src, siz
 
     (void)format;
     cap = (capture *)userdata;
-    if (capture_record(cap->traces, &cap->trace_count, src, len) != 0) {
+    if (capture_record(&cap->traces, &cap->trace_count, &cap->trace_cap, src, len) != 0) {
         cap->failed = 1;
         return -1;
     }
@@ -165,6 +186,8 @@ static void capture_free(capture *cap)
     for (i = 0; i < cap->trace_count; i++) {
         free(cap->traces[i].data);
     }
+    free(cap->writes);
+    free(cap->traces);
     free(cap->out);
     memset(cap, 0, sizeof(*cap));
 }
@@ -2834,8 +2857,9 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             elapsed = clock() - started;
             fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
                             "deep nested link-label emphasis render succeeds");
-            fails += expect(elapsed != (clock_t)-1 && elapsed <
-                            2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC,
+            fails += expect(elapsed != (clock_t)-1 &&
+                            (contract_under_valgrind || elapsed <
+                             2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC),
                             "deep nested link-label emphasis remains bounded");
             free(source);
         }
@@ -2871,8 +2895,9 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             elapsed = clock() - started;
             fails += expect(st == MDF_OK && count.failed == 0 && count.bytes > 0,
                             "large malformed code link-label render succeeds");
-            fails += expect(elapsed != (clock_t)-1 && elapsed <
-                            2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC,
+            fails += expect(elapsed != (clock_t)-1 &&
+                            (contract_under_valgrind || elapsed <
+                             2 * CONTRACT_TIMING_MULTIPLIER * CLOCKS_PER_SEC),
                             "large malformed code link-label remains bounded");
             free(source);
         }
@@ -2966,10 +2991,828 @@ static int test_html_blockquote_nested_emphasis_contract(void)
     return fails;
 }
 
-int main(void)
+static int test_runtime_geometry_stream_contract(void)
+{
+    static const char first[] = "alpha\n\n";
+    static const char second[] = "beta gamma\n\n";
+    static const char third[] = "delta\n\n";
+    static const char fourth[] = "end\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t writes_before;
+    size_t traces_before;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 12;
+    opts.boring = 1;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    fails += expect(st == MDF_OK && inst != NULL, "runtime geometry creates renderer");
+    if (inst != NULL) {
+        st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+        writes_before = cap.write_count;
+        traces_before = cap.trace_count;
+        if (st == MDF_OK) st = inst->set_geometry(inst, 12, 2, 2);
+        fails += expect(st == MDF_OK && cap.write_count == writes_before &&
+                        cap.trace_count == traces_before,
+                        "runtime geometry changes both margins without output or replay");
+        if (st == MDF_OK) st = inst->set_geometry(inst, 12, 2, 2);
+        fails += expect(st == MDF_OK && cap.write_count == writes_before &&
+                        cap.trace_count == traces_before,
+                        "unchanged geometry preserves pending decisions and output count");
+        if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out, "  beta\n  gamma") != NULL,
+                        "active document wraps under new content width and left margin");
+        if (st == MDF_OK) st = mdf_set_geometry(inst, 4, 2, 1);
+        fails += expect(st == MDF_ERROR_INVALID,
+                        "invalid geometry is rejected atomically");
+        if (st == MDF_ERROR_INVALID) st = mdf_set_geometry(inst, 12, -1, 0);
+        fails += expect(st == MDF_ERROR_INVALID, "negative left margin is rejected");
+        if (st == MDF_ERROR_INVALID) st = mdf_set_geometry(inst, 12, 0, -1);
+        fails += expect(st == MDF_ERROR_INVALID, "negative right margin is rejected");
+        if (st == MDF_ERROR_INVALID) st = mdf_set_width(inst, 14);
+        if (st == MDF_OK) st = inst->feed(inst, third, strlen(third));
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out, "  delta") != NULL,
+                        "width-only setter keeps live margins after a geometry change");
+        if (st == MDF_OK) st = mdf_set_geometry(inst, 14, 0, 0);
+        if (st == MDF_OK) st = inst->feed(inst, fourth, strlen(fourth));
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out, "alpha") == cap.out &&
+                        strstr(cap.out, "end") != NULL,
+                        "runtime geometry preserves the document and emitted prefix");
+        fails += expect_trace_matches_writes(&cap,
+                                             "runtime geometry sink writes match traces");
+        inst->destroy(inst);
+    }
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_pending_contract(void)
+{
+    static const char *const pending[] = {
+        "`abcdefghij`", "<https://example.com/abcdefghij>"
+    };
+    static const char suffix[] = " tail\n";
+    size_t i;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(pending) / sizeof(pending[0]); i++) {
+        mdf_options opts;
+        mdf_sink sink;
+        mdf *inst;
+        capture cap;
+        capture baseline;
+        char full[128];
+        mdf_status st;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        memset(&baseline, 0, sizeof(baseline));
+        mdf_options_init(&opts);
+        opts.width = 80;
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK) st = inst->feed(inst, pending[i], strlen(pending[i]));
+        fails += expect(st == MDF_OK && cap.write_count == 0 && cap.trace_count == 0,
+                        "runtime geometry retains inline decision before its boundary");
+        if (st == MDF_OK) st = mdf_set_geometry(inst, 12, 2, 2);
+        fails += expect(st == MDF_OK && cap.write_count == 0 && cap.trace_count == 0,
+                        "pending geometry change does not emit or trace");
+        if (st == MDF_OK) st = inst->feed(inst, suffix, strlen(suffix));
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "pending decision emits under new geometry");
+        fails += expect_trace_matches_writes(&cap,
+                                             "pending geometry sink writes match traces");
+        if (inst != NULL) inst->destroy(inst);
+        mdf_options_init(&opts);
+        opts.width = 12;
+        opts.margin_left = 2;
+        opts.margin_right = 2;
+        opts.boring = 1;
+        strcpy(full, pending[i]);
+        strcat(full, suffix);
+        st = render_capture(MDF_FORMAT_ANSI, &opts, full, strlen(full), &baseline);
+        fails += expect(st == MDF_OK && cap.out != NULL && baseline.out != NULL &&
+                        strcmp(cap.out, baseline.out) == 0,
+                        "pending inline code and link match new-geometry baseline");
+        capture_free(&baseline);
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_runtime_geometry_midline_contract(void)
+{
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t writes_before;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 20;
+    opts.boring = 1;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, "alpha ", 6);
+    writes_before = cap.write_count;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 20, 2, 2);
+    fails += expect(st == MDF_OK && cap.write_count == writes_before,
+                    "midline margin change does not insert a prefix immediately");
+    if (st == MDF_OK) st = inst->feed(inst, "beta\n\nnext\n", 11);
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strcmp(cap.out, "alpha beta\n\n  next\n") == 0,
+                    "new left margin starts on next line, not inside committed text");
+    fails += expect_trace_matches_writes(&cap,
+                                         "midline geometry sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_zero_margin_after_newline_contract(void)
+{
+    static const char first[] = "alpha\n\nbeta ";
+    static const char rest[] = "tail\n\nnext\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    size_t committed_writes;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 20;
+    opts.boring = 1;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strcmp(cap.out, "alpha\n\nbeta") == 0,
+                    "zero-margin line emits before a geometry change");
+    committed_len = cap.out_len;
+    committed_writes = cap.write_count;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 20, 2, 0);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len &&
+                    cap.write_count == committed_writes,
+                    "zero-to-positive margin change does not emit");
+    if (st == MDF_OK) st = inst->feed(inst, rest, strlen(rest));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strcmp(cap.out, "alpha\n\nbeta tail\n\n  next\n") == 0,
+                    "new margin starts on a future line after earlier newlines");
+    fails += expect_trace_matches_writes(&cap,
+                                         "zero-to-positive margin sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_margin_transition_matrix(void)
+{
+    struct margin_case {
+        const char *first;
+        const char *rest;
+        const char *expected;
+        int initial_left;
+        int new_left;
+    };
+    static const struct margin_case cases[] = {
+        {"", "alpha\n", "  alpha\n", 0, 2},
+        {"alpha\n\n", "beta\n", "alpha\n\n  beta\n", 0, 2},
+        {"alpha ", "beta\n\nnext\n", "alpha beta\n\n  next\n", 0, 2},
+        {"alpha\n\nbeta ", "tail\n\nnext\n", "alpha\n\nbeta tail\n\n  next\n", 0, 2},
+        {"alpha\n\nbeta `code`", " tail\n\nnext\n",
+         "alpha\n\nbeta code tail\n\n  next\n", 0, 2},
+        {"alpha\n\nbeta <https://example.com>", " tail\n\nnext\n",
+         "alpha\n\nbeta https://example.com tail\n\n  next\n", 0, 2},
+        {"alpha\n\nbeta [site](https://example.com)", " tail\n\nnext\n",
+         "alpha\n\nbeta site (https://example.com) tail\n\n  next\n", 0, 2},
+        {"alpha\n\nbeta ", "tail\n\nnext\n", "  alpha\n\n  beta tail\n\nnext\n", 2, 0}
+    };
+    size_t i;
+    size_t chunk_mode;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+      for (chunk_mode = 0; chunk_mode < 2; chunk_mode++) {
+        mdf_options opts;
+        mdf_sink sink;
+        mdf *inst;
+        capture cap;
+        mdf_status st;
+        size_t writes_before;
+        size_t traces_before;
+        size_t j;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.width = 80;
+        opts.margin_left = cases[i].initial_left;
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK && chunk_mode == 0 && cases[i].first[0] != '\0') {
+            st = inst->feed(inst, cases[i].first, strlen(cases[i].first));
+        } else if (st == MDF_OK) {
+            for (j = 0; j < strlen(cases[i].first) && st == MDF_OK; j++) {
+                st = inst->feed(inst, cases[i].first + j, 1);
+            }
+        }
+        writes_before = cap.write_count;
+        traces_before = cap.trace_count;
+        if (st == MDF_OK) st = inst->set_geometry(inst, 80, cases[i].new_left, 0);
+        if (st != MDF_OK || cap.write_count != writes_before ||
+            cap.trace_count != traces_before) {
+            fprintf(stderr, "margin case %lu chunk %lu setter status %d\n",
+                    (unsigned long)i, (unsigned long)chunk_mode, (int)st);
+        }
+        fails += expect(st == MDF_OK && cap.write_count == writes_before &&
+                        cap.trace_count == traces_before,
+                        "margin transition never emits or traces from its setter");
+        if (st == MDF_OK && chunk_mode == 0) {
+            st = inst->feed(inst, cases[i].rest, strlen(cases[i].rest));
+        } else if (st == MDF_OK) {
+            for (j = 0; j < strlen(cases[i].rest) && st == MDF_OK; j++) {
+                st = inst->feed(inst, cases[i].rest + j, 1);
+            }
+        }
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        if (st != MDF_OK || cap.out == NULL ||
+            strcmp(cap.out, cases[i].expected) != 0) {
+            fprintf(stderr, "margin case %lu chunk %lu output: %s\n",
+                    (unsigned long)i, (unsigned long)chunk_mode,
+                    cap.out == NULL ? "(null)" : cap.out);
+        }
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strcmp(cap.out, cases[i].expected) == 0,
+                        "margin transition preserves committed lines and updates future lines");
+        fails += expect_trace_matches_writes(&cap,
+                                             "margin transition sink writes match traces");
+        if (inst != NULL) inst->destroy(inst);
+        capture_free(&cap);
+      }
+    }
+    return fails;
+}
+
+static int test_runtime_geometry_repeated_midline_updates(void)
+{
+    static const char *const first[] = {
+        "alpha\n\nbeta ",
+        "alpha\n\nbeta `code`",
+        "alpha\n\nbeta <https://example.com>",
+        "alpha\n\nbeta [site](https://example.com)"
+    };
+    static const char *const rest[] = {
+        "tail\n\nnext\n", " tail\n\nnext\n", " tail\n\nnext\n",
+        " tail\n\nnext\n"
+    };
+    static const char *const expected[] = {
+        "alpha\n\nbeta tail\n\n   next\n",
+        "alpha\n\nbeta code tail\n\n   next\n",
+        "alpha\n\nbeta https://example.com tail\n\n   next\n",
+        "alpha\n\nbeta site (https://example.com) tail\n\n   next\n"
+    };
+    size_t i;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(first) / sizeof(first[0]); i++) {
+        mdf_options opts;
+        mdf_sink sink;
+        mdf *inst;
+        capture cap;
+        mdf_status st;
+        size_t writes_before;
+        size_t traces_before;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.width = 80;
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK) st = inst->feed(inst, first[i], strlen(first[i]));
+        writes_before = cap.write_count;
+        traces_before = cap.trace_count;
+        if (st == MDF_OK) {
+            mdf_status invalid;
+
+            invalid = inst->set_geometry(inst, 4, 2, 1);
+            fails += expect(invalid == MDF_ERROR_INVALID &&
+                            cap.write_count == writes_before &&
+                            cap.trace_count == traces_before,
+                            "invalid midline geometry leaves output unchanged");
+        }
+        if (st == MDF_OK) st = inst->set_geometry(inst, 25, 2, 1);
+        if (st == MDF_OK) st = inst->set_width(inst, 30);
+        if (st == MDF_OK) st = inst->set_geometry(inst, 40, 0, 0);
+        if (st == MDF_OK) st = inst->set_geometry(inst, 40, 3, 2);
+        if (st == MDF_OK) st = inst->flush(inst);
+        fails += expect(st == MDF_OK && cap.write_count == writes_before &&
+                        cap.trace_count == traces_before,
+                        "repeated geometry and width updates leave committed output untouched");
+        if (st == MDF_OK) st = inst->feed(inst, rest[i], strlen(rest[i]));
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        if (st != MDF_OK || cap.out == NULL || strcmp(cap.out, expected[i]) != 0) {
+            fprintf(stderr, "repeated margin case %lu output: %s\n",
+                    (unsigned long)i, cap.out == NULL ? "(null)" : cap.out);
+        }
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strcmp(cap.out, expected[i]) == 0,
+                        "latest margin applies on next line after repeated updates");
+        if (st == MDF_OK) st = inst->begin_document(inst);
+        if (st == MDF_OK) st = inst->feed(inst, "fresh\n", 6);
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out, "\n   fresh\n") != NULL,
+                        "new document clears prior-line margin suppression");
+        fails += expect_trace_matches_writes(&cap,
+                                             "repeated geometry sink writes match traces");
+        if (inst != NULL) inst->destroy(inst);
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_runtime_geometry_midline_pending_contract(void)
+{
+    static const char *const pending[] = {"a `b`", "a <https://example.com>"};
+    static const char *const expected_prefix[] = {"a b tail", "a https://example.com tail"};
+    size_t i;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(pending) / sizeof(pending[0]); i++) {
+        mdf_options opts;
+        mdf_sink sink;
+        mdf *inst;
+        capture cap;
+        mdf_status st;
+        size_t writes_before;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.width = 80;
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK) st = inst->feed(inst, pending[i], strlen(pending[i]));
+        writes_before = cap.write_count;
+        if (st == MDF_OK) st = inst->set_geometry(inst, 80, 2, 2);
+        fails += expect(st == MDF_OK && cap.write_count == writes_before,
+                        "midline pending geometry change does not emit");
+        if (st == MDF_OK) st = inst->feed(inst, " tail\n\nnext\n", 12);
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out, expected_prefix[i]) == cap.out &&
+                        strstr(cap.out, "\n  next\n") != NULL,
+                        "pending code/link keeps committed separator and applies next-line margin");
+        fails += expect_trace_matches_writes(&cap,
+                                             "midline pending geometry sink writes match traces");
+        if (inst != NULL) inst->destroy(inst);
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_runtime_geometry_quoted_list_contract(void)
+{
+    static const char first[] = "- item\n  > alpha ";
+    static const char rest[] = "beta gamma delta epsilon zeta eta theta iota\n";
+    static const int old_margins[] = {0, 4};
+    static const int new_margins[] = {4, 0};
+    static const char *const expected_prefixes[] = {"\n          > ", "\n      > "};
+    size_t i;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(old_margins) / sizeof(old_margins[0]); i++) {
+        mdf_options opts;
+        mdf_sink sink;
+        mdf *inst;
+        capture cap;
+        mdf_status st;
+        size_t committed_len;
+        size_t committed_writes;
+
+        inst = NULL;
+        memset(&cap, 0, sizeof(cap));
+        mdf_options_init(&opts);
+        opts.width = 30;
+        opts.margin_left = old_margins[i];
+        opts.boring = 1;
+        opts.write_trace.userdata = &cap;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &cap;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+        if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+        committed_len = cap.out_len;
+        committed_writes = cap.write_count;
+        if (st == MDF_OK) st = inst->set_geometry(inst, 30, new_margins[i], 0);
+        fails += expect(st == MDF_OK && cap.out_len == committed_len &&
+                        cap.write_count == committed_writes,
+                        "quoted-list geometry change preserves committed output");
+        if (st == MDF_OK) st = inst->feed(inst, rest, strlen(rest));
+        if (st == MDF_OK) st = inst->finish_document(inst);
+        fails += expect(st == MDF_OK && cap.out != NULL &&
+                        strstr(cap.out + committed_len, expected_prefixes[i]) != NULL,
+                        "quoted-list continuation uses the new left margin");
+        fails += expect_trace_matches_writes(&cap,
+                                             "quoted-list geometry sink writes match traces");
+        if (inst != NULL) inst->destroy(inst);
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_runtime_geometry_row_table_contract(void)
+{
+    static const char first[] =
+        "| Name | Value |\n| --- | --- |\n| AlphaLongWord | 1234567890 |\n";
+    static const char second[] = "| BravoLongWord | 67890 |\n";
+    static const char third[] = "| Delta | 12345 |\n\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    size_t committed_writes;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 16;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.write_count > 0,
+                    "row table emits header and first row before geometry change");
+    committed_len = cap.out_len;
+    committed_writes = cap.write_count;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 40, 2, 2);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len &&
+                    cap.write_count == committed_writes,
+                    "row-table geometry setter does not replay committed rows");
+    if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strstr(cap.out + committed_len, "BravoLongWord") != NULL,
+                    "row table recovers natural column width after widening");
+    if (cap.out != NULL && committed_len < cap.out_len) {
+        fails += expect_line_margins(cap.out + committed_len, 2, 38,
+                                     "later row-table output honors new geometry");
+    }
+    committed_len = cap.out_len;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 16, 0, 0);
+    if (st == MDF_OK) st = inst->feed(inst, third, strlen(third));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    cap.out_len > committed_len,
+                    "row table narrows subsequent rows without restarting the table");
+    if (cap.out != NULL && committed_len < cap.out_len) {
+        fails += expect_line_margins(cap.out + committed_len, 0, 16,
+                                     "narrowed row-table output uses latest geometry");
+    }
+    fails += expect_trace_matches_writes(&cap,
+                                         "row-table geometry sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_row_table_word_width_contract(void)
+{
+    static const char first[] =
+        "| abcdefghij | one two six ten |\n| --- | --- |\n"
+        "| abcdefghij | one two six ten |\n";
+    static const char second[] = "| abcdefghij | one two six ten |\n\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    size_t committed_writes;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 20;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.write_count > 0 && cap.out != NULL &&
+                    strstr(cap.out, "│ abcdefghij │") != NULL,
+                    "row table emits whole words before widening");
+    committed_len = cap.out_len;
+    committed_writes = cap.write_count;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 21, 0, 0);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len &&
+                    cap.write_count == committed_writes,
+                    "row-table widening does not replay committed rows");
+    if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strstr(cap.out + committed_len, "│ abcdefghij │ one ") != NULL &&
+                    strstr(cap.out + committed_len, "│ abcdefg │") == NULL,
+                    "row-table widening preserves preferred whole-word widths");
+    fails += expect_trace_matches_writes(&cap,
+                                         "row-table word-width sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_row_table_wide_glyph_contract(void)
+{
+    static const char first[] =
+        "| 界 | abcdef |\n| --- | --- |\n| 界 | abcdef |\n";
+    static const char second[] = "| 界 | abcdef |\n\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    size_t committed_writes;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 30;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.write_count > 0,
+                    "wide-glyph row table emits its first row before resize");
+    committed_len = cap.out_len;
+    committed_writes = cap.write_count;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 10, 0, 0);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len &&
+                    cap.write_count == committed_writes,
+                    "wide-glyph row-table resize leaves committed output untouched");
+    if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strstr(cap.out + committed_len, "│ 界 │ a │") != NULL &&
+                    strstr(cap.out + committed_len, "└────┴───┘") != NULL,
+                    "resized row and border respect the wide glyph minimum");
+    fails += expect_trace_matches_writes(&cap,
+                                         "wide-glyph row-table sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_full_table_contract(void)
+{
+    static const char first[] =
+        "| Name | Value |\n| --- | --- |\n| AlphaLongWord | 1234567890 |\n";
+    static const char second[] = "| BravoLongWord | 67890 |\n\n";
+    static const char complete[] =
+        "| Name | Value |\n| --- | --- |\n| AlphaLongWord | 1234567890 |\n"
+        "| BravoLongWord | 67890 |\n\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    memset(&baseline, 0, sizeof(baseline));
+    mdf_options_init(&opts);
+    opts.width = 80;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_FULL;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.write_count == 0 && cap.trace_count == 0,
+                    "full table remains undecided before its boundary");
+    if (st == MDF_OK) st = inst->set_geometry(inst, 22, 2, 2);
+    fails += expect(st == MDF_OK && cap.write_count == 0 && cap.trace_count == 0,
+                    "full-table geometry change does not emit or replay");
+    if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL,
+                    "full table emits under its latest geometry");
+    if (cap.out != NULL) {
+        fails += expect_line_margins(cap.out, 2, 20,
+                                     "full-table output honors changed width and margins");
+    }
+    fails += expect_trace_matches_writes(&cap,
+                                         "full-table geometry sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+
+    mdf_options_init(&opts);
+    opts.width = 22;
+    opts.margin_left = 2;
+    opts.margin_right = 2;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_FULL;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
+    fails += expect(st == MDF_OK && cap.out != NULL && baseline.out != NULL &&
+                    strcmp(cap.out, baseline.out) == 0,
+                    "undecided full table matches a render begun at the new geometry");
+    capture_free(&baseline);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_headerless_row_table_contract(void)
+{
+    static const char first[] =
+        "| AlphaLongWord | 1234567890 |\n| BravoLongWord | 67890 |\n";
+    static const char second[] = "| LaterLongWord | 42 |\n\n";
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 12;
+    opts.boring = 1;
+    opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
+    opts.table_wire_mode = MDF_TABLE_WIRE_SPACE;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, first, strlen(first));
+    fails += expect(st == MDF_OK && cap.write_count > 0,
+                    "headerless row table emits its first two rows before resize");
+    committed_len = cap.out_len;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 40, 2, 2);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len,
+                    "headerless row-table geometry leaves emitted rows untouched");
+    if (st == MDF_OK) st = inst->feed(inst, second, strlen(second));
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strstr(cap.out + committed_len, "LaterLongWord") != NULL,
+                    "headerless space-wire row table recovers natural width");
+    if (cap.out != NULL && committed_len < cap.out_len) {
+        fails += expect_line_margins(cap.out + committed_len, 2, 38,
+                                     "headerless row-table output honors latest geometry");
+    }
+    fails += expect_trace_matches_writes(&cap,
+                                         "headerless row-table geometry sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+static int test_runtime_geometry_next_document_contract(void)
+{
+    mdf_options opts;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t committed_len;
+    int fails;
+
+    fails = 0;
+    inst = NULL;
+    memset(&cap, 0, sizeof(cap));
+    mdf_options_init(&opts);
+    opts.width = 12;
+    opts.boring = 1;
+    opts.write_trace.userdata = &cap;
+    opts.write_trace.emit = capture_trace;
+    sink.userdata = &cap;
+    sink.write = capture_write;
+    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+    if (st == MDF_OK) st = inst->set_sink(inst, &sink);
+    if (st == MDF_OK) st = inst->feed(inst, "alpha\n", 6);
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    committed_len = cap.out_len;
+    if (st == MDF_OK) st = inst->set_geometry(inst, 12, 2, 2);
+    fails += expect(st == MDF_OK && cap.out_len == committed_len,
+                    "geometry may change after EOF without replaying the finished document");
+    if (st == MDF_OK) st = inst->begin_document(inst);
+    if (st == MDF_OK) st = inst->feed(inst, "beta\n", 5);
+    if (st == MDF_OK) st = inst->finish_document(inst);
+    fails += expect(st == MDF_OK && cap.out != NULL &&
+                    strcmp(cap.out, "alpha\n  beta\n") == 0,
+                    "next document starts with the updated geometry");
+    fails += expect_trace_matches_writes(&cap,
+                                         "next-document geometry sink writes match traces");
+    if (inst != NULL) inst->destroy(inst);
+    capture_free(&cap);
+    return fails;
+}
+
+int main(int argc, char **argv)
 {
     int fails;
 
+    if (argc == 2 && strcmp(argv[1], "--under-valgrind") == 0) {
+        contract_under_valgrind = 1;
+    } else if (argc != 1) {
+        fprintf(stderr, "usage: test_contracts [--under-valgrind]\n");
+        return 2;
+    }
     fails = 0;
     fails += test_stream_trace_contract();
     fails += test_margin_contract();
@@ -2984,6 +3827,20 @@ int main(void)
     fails += test_runtime_width_link_tail_contract();
     fails += test_runtime_width_code_margin_contract();
     fails += test_runtime_width_list_prefix_progress_contract();
+    fails += test_runtime_geometry_stream_contract();
+    fails += test_runtime_geometry_pending_contract();
+    fails += test_runtime_geometry_midline_contract();
+    fails += test_runtime_geometry_zero_margin_after_newline_contract();
+    fails += test_runtime_geometry_margin_transition_matrix();
+    fails += test_runtime_geometry_repeated_midline_updates();
+    fails += test_runtime_geometry_midline_pending_contract();
+    fails += test_runtime_geometry_quoted_list_contract();
+    fails += test_runtime_geometry_row_table_contract();
+    fails += test_runtime_geometry_row_table_word_width_contract();
+    fails += test_runtime_geometry_row_table_wide_glyph_contract();
+    fails += test_runtime_geometry_full_table_contract();
+    fails += test_runtime_geometry_headerless_row_table_contract();
+    fails += test_runtime_geometry_next_document_contract();
     fails += test_html_link_safety_contract();
     fails += test_ansi_nested_emphasis_edge_contract();
     fails += test_html_blockquote_nested_emphasis_contract();

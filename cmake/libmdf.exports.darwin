@@ -17,6 +17,7 @@ _mdf_pager_source
 _mdf_paths_alias
 _mdf_render
 _mdf_reset
+_mdf_set_geometry
 _mdf_set_html_title
 _mdf_set_sink
 _mdf_set_width

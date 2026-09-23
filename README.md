@@ -259,7 +259,9 @@ Important options:
 - `slide_numbers`: show deck slide numbers after the first slide.
 - `deck_center_front_text`: center-align paragraph text on the first deck
   slide.
-- `table_buffer_mode`: `MDF_TABLE_BUFFER_FULL` or `MDF_TABLE_BUFFER_ROW`.
+- `table_buffer_mode`: `MDF_TABLE_BUFFER_FULL` (default) or
+  `MDF_TABLE_BUFFER_ROW` for ANSI tables. HTML tables use browser layout and
+  retain the complete table regardless of this option.
 - `table_wire_mode`: `MDF_TABLE_WIRE_LINE`, `MDF_TABLE_WIRE_ASCII`, or
   `MDF_TABLE_WIRE_SPACE`.
 - `write_trace`: callback for ANSI decision-emission tracing.
@@ -273,8 +275,9 @@ one renderer for one document and use the additive document lifecycle. `feed`
 emits each final renderer decision as it is made. For example, a real input
 space normally closes and emits the preceding word while the renderer retains
 the separator until wrapping decides it. `flush` is an output-neutral
-soft-boundary check: it never emits, resolves input, or acts as EOF. Only
-`finish_document` resolves an unfinished construct and closes output. The one
+soft-boundary check: it never emits, resolves input, or acts as EOF. `feed`
+resolves constructs when real input supplies their boundary; `finish_document`
+applies EOF to anything still unfinished and closes output. The one
 bound sink is synchronous and borrowed until it is replaced or the renderer is
 destroyed, so its write callback must accept every complete decision emission
 or fail the document. libmdf deliberately supplies no
@@ -294,8 +297,9 @@ sink.userdata = stdout;
 sink.write = stdout_write;
 
 renderer->set_sink(renderer, &sink);
-renderer->feed(renderer, "Hello ", 6);
+renderer->feed(renderer, "Hello\n\n", 7);
 renderer->flush(renderer);                     /* still not EOF */
+renderer->set_geometry(renderer, 80, 2, 0);    /* next line uses the new margin */
 renderer->feed(renderer, "**world**", 9);
 renderer->finish_document(renderer);           /* the sole EOF operation */
 renderer->begin_document(renderer);            /* now a distinct document may start */
@@ -310,30 +314,48 @@ then call `render`, `write_token`, `finish`, `feed`, `flush`, or
 as `mdf_render`, `mdf_feed`, and `mdf_finish_document` instead borrow the sink
 only for that call; they never install or replace the receiver binding.
 
-To change width at any decision boundary, call `renderer->set_width`. It
-changes subsequent parsing decisions and recomputes retained inline code/link
-layout that has not reached the sink yet, including when a `render` source
-callback changes width. Setting the current width preserves pending decisions.
-It never reflows a completed sink write, so call
+To change total width and both ANSI margins atomically between incremental
+feeds, call `renderer->set_geometry(renderer, width, left, right)` or the free
+function `mdf_set_geometry`. `renderer->set_width` changes only total width and
+keeps the current margins. Both setters preserve the active document, make no
+sink write, and recompute retained inline code/link decisions under the new
+geometry before they emit, including from a `render` source callback. A
+left-margin prefix already written on the current line remains in place, and
+a new margin is never inserted after text already emitted on that line;
+subsequent line prefixes use the new margin. The resulting ANSI content width
+must remain at least three columns. Setting unchanged geometry preserves
+pending decisions. The new geometry also applies to later documents. If
+pending-decision reflow runs out of memory, the previous geometry remains
+configured, but callers must reset and replay the failed document. A
+full-buffer ANSI table uses the geometry in effect when its terminating line
+or EOF makes it render, even if the geometry changed while rows were retained.
+In row-buffered ANSI mode, the header and first body row (or the first two
+headerless rows) emit once their layout can be decided; already-emitted rows
+remain unchanged, while subsequent rows and the closing border refit the
+latest geometry.
+
+Neither setter reflows a completed sink write, so call
 `renderer->reset` and replay caller-owned source for a complete reflow. Reset
 and sink replacement close ANSI terminal state before discarding parser state;
 reset and sink replacement are rejected while a synchronous `render` call is
-active. A source callback may change width for later output. Sink and trace
-callbacks cannot change width, reset, or move a live render to a different
+active. A source callback may change geometry for later output. Sink and trace
+callbacks cannot change geometry, reset, or move a live render to a different
 sink. libmdf never retains input for replay. If terminal cleanup on the old
 sink fails during replacement, the renderer still discards state and binds the
 new sink; replay remains the caller's responsibility.
-Pending table and chart constructs retain at most 65536 bytes, and tables
-retain at most 1024 rows; an oversized unfinished construct fails with
-`MDF_ERROR_PARSE` instead of growing without bound. The incremental lifecycle
-supports ANSI and HTML documents; HTML callers must set an explicit title before
-the first feed because automatic title detection is a one-shot source feature.
+
+In incremental mode, pending table and chart constructs retain at most 65536
+bytes, and tables retain at most 1024 rows; an oversized unfinished construct
+fails with `MDF_ERROR_PARSE` instead of growing without bound. The incremental
+lifecycle supports ANSI and HTML documents; HTML callers must set an explicit
+title before the first feed because automatic title detection is a one-shot
+source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `4`. Lua facade and `cmdf.lua`
-changes do not require a C ABI bump; changes to installed C headers,
-`mdf_options`, exported symbols, or shared-library layout determine whether the
-ABI version changes.
+The shared library uses SONAME ABI version `4`. `set_geometry` consumes one
+receiver reserve slot and adds an exported function without changing the
+receiver's size or any existing member offset, so this addition retains ABI 4.
+Lua facade and `cmdf.lua` changes do not themselves require a C ABI bump.
 
 For HTML, `mdf_set_html_title(renderer, title)` can set an optional document
 title after `mdf_create` and before rendering starts. Passing `NULL` clears the
@@ -444,8 +466,14 @@ one parser/renderer decision buffer -> one emission -> one sink write
 When `write_trace` is configured for ANSI output, trace events describe the
 exact sink writes in the same order. Tables are the exception to ordinary
 word-sized streaming: `MDF_TABLE_BUFFER_FULL` buffers the full table before
-rendering, while `MDF_TABLE_BUFFER_ROW` emits header plus first row, then later
-rows as the parser can decide them.
+rendering, while `MDF_TABLE_BUFFER_ROW` emits the header and first body row
+(or first two headerless rows), then later rows as the parser can decide them.
+Both modes accept successive incremental fragments: `feed` consumes the
+supplied fragment and returns without waiting for future fragments, but full
+mode emits no table bytes until the table ends.
+
+`flush` cannot force an unfinished table to render. Sink writes remain
+synchronous, so neither mode promises nonblocking I/O.
 
 The Go `mdf` implementation is the behavioral reference for ANSI streaming.
 Parity checks compare the C hot path against that reference. Deliberate,
@@ -681,7 +709,7 @@ form: its callbacks are borrowed for that call. For streaming receiver methods,
 bind one callback once, then change width, reset, or replace the callback on
 the object itself. `reset` closes ANSI state and discards unfinished parser
 state even when the terminal callback fails; replay remains the caller's job.
-A `render_stream` reader may change width for later decisions, but `reset` and
+A `render_stream` reader may change geometry for later decisions, but `reset` and
 sink replacement are rejected until
 that synchronous render returns. This rejection also applies while terminal
 reset and manual-token output invoke a sink or trace callback. `close` is
@@ -693,13 +721,16 @@ Rebinding the identical callback is a no-op.
 local h = mdf.new({ boring = true })
 h:set_sink(function(chunk) io.write(chunk) end)
 h:set_width(80)
+h:set_geometry(80, 2, 0) -- total width, left margin, right margin
 h:render_stream(reader)
 h:reset()
 ```
 
 Lua hosts can use the same incremental document boundaries with a synchronous
-callback. The callback runs only from `write` or `finish_document`; `flush`
-does not invoke it.
+callback. Normal document emissions occur during `write` or
+`finish_document`; `reset` and sink replacement may also call the old writer
+to close ANSI terminal state. `flush`, `set_width`, and `set_geometry` do not
+invoke the writer.
 
 ```lua
 local chunks = {}
@@ -709,15 +740,17 @@ end)
 
 assert(stream:write("Hello "))
 assert(stream:flush())             -- not EOF
+assert(stream:set_geometry(80, 2, 0)) -- active document; future lines use new margin
 assert(stream:write("world"))
 assert(stream:finish_document())   -- EOF exactly once
 assert(stream:begin_document())
 stream:close()
 ```
 
-`document_stream` also exposes `set_width(width)`, `reset()`,
+`document_stream` also exposes `set_width(width)`,
+`set_geometry(width, margin_left, margin_right)`, `reset()`,
 `set_sink(callback)`, `set_html_title(title)`, and `error()`. Set an HTML title
-before its first `write`; `error()` returns the latest core diagnostic. Width,
+before its first `write`; `error()` returns the latest core diagnostic. Geometry,
 reset, and sink replacement have the same future-decision, caller-owned replay,
 and terminal-closure behavior as their C receiver counterparts. Replacing the
 callback resets the current document, so resend the source you want on the new
@@ -729,11 +762,15 @@ callback is active. Sink and optional `write_trace` callbacks run
 on the Lua state making each method call, so streams returned from collected
 coroutines remain usable.
 
-`set_width` also recomputes retained inline code/link layout that has not yet
-been passed to the callback; it never rewrites a callback emission that already
-completed. Use `reset()` and resend caller-owned source when the whole document
-must reflow. For the manual-token surface, `handle:write_token` accepts a table
-such as `{ type = "text", text = "hello" }` or a numeric `mdf.token.*` type,
+`set_width` and `set_geometry` also recompute retained inline code/link layout
+that has not yet been passed to the callback; neither rewrites an emission
+already completed. With `table_buffer_mode = "full"`, an unfinished ANSI table
+uses the geometry in effect when it renders; `write` still accepts fragments
+while it waits for a terminating line or EOF. With `"row"`, later rows and the
+closing border use the new geometry without replaying earlier rows. Use
+`reset()` and resend caller-owned source when the whole document must reflow.
+For the manual-token surface, `handle:write_token` accepts a table such as
+`{ type = "text", text = "hello" }` or a numeric `mdf.token.*` type,
 with optional `level`; finish that stream with `handle:finish()`.
 
 Interactive file paging is available as `mdf.pager(path, opts)`. It uses the
@@ -812,7 +849,7 @@ and `mdf.token` constants corresponding to the public C values that are useful
 from Lua. `mdf.theme_names()`, `mdf.theme_exists(name)`,
 `mdf.detect_osc8_support()`, `mdf.terminal_width(fd, fallback)`, and
 `mdf.status_string(status)` expose their corresponding read-only library
-queries. Handle objects expose `set_sink`, `set_width`, `reset`,
+queries. Handle objects expose `set_sink`, `set_width`, `set_geometry`, `reset`,
 `set_html_title`, `render`, `render_stream`, `write_token`, `finish`, `error`,
 `feed`, `flush`, `finish_document`, `begin_document`, and `close`. `render`
 returns a string and needs no sink; the other output receiver methods use the

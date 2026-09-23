@@ -22,6 +22,7 @@ mdf_pager_source
 mdf_paths_alias
 mdf_render
 mdf_reset
+mdf_set_geometry
 mdf_set_html_title
 mdf_set_sink
 mdf_set_width
