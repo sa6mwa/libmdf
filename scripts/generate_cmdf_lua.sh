@@ -38,6 +38,8 @@ local function usage()
   io.stderr:write("Usage: cmdf.lua [flags] [input]\\n")
   io.stderr:write("  -H, --html                 Render HTML\\n")
   io.stderr:write("      --deck                 Render HTML slide deck\\n")
+  io.stderr:write("      --ascii                UTF-8 output without escape sequences (ANSI renderer)\\n")
+  io.stderr:write("      --ansi MODE            Escape policy: auto|on|off (default auto)\\n")
   io.stderr:write("  -b, --boring               Boring ANSI output\\n")
   io.stderr:write("  -p, --pager                Page a named file interactively\\n")
   io.stderr:write("  -o, --output PATH          Output file\\n")
@@ -144,6 +146,15 @@ while i <= #arg do
     opts.deck = true
     opts.html = nil
     format_explicit = true
+  elseif a == "--ascii" then
+    opts.ansi_mode = "off"
+  elseif a == "--ansi" then
+    i = i + 1
+    local mode = arg[i]
+    if mode ~= "auto" and mode ~= "on" and mode ~= "off" then
+      error("cmdf.lua: invalid ANSI mode (expected auto|on|off)", 0)
+    end
+    opts.ansi_mode = mode
   elseif a == "-b" or a == "--boring" then
     opts.boring = true
   elseif a == "-p" or a == "--pager" then
@@ -322,8 +333,8 @@ if opts.dump_font and not opts.font_uri and not opts.font_regular_uri and not op
    (opts.font_path or opts.font_regular_path or opts.font_italic_path) then
   local relative_regular_path, relative_italic_path = mdf.html_font_dump_paths(opts)
   local output_dir = output_parent_dir(output_path)
-  opts.font_regular_uri = core.path_relative_to(output_dir, relative_regular_path)
-  opts.font_italic_uri = core.path_relative_to(output_dir, relative_italic_path)
+  opts.font_regular_uri = mdf.path_relative_to(output_dir, relative_regular_path)
+  opts.font_italic_uri = mdf.path_relative_to(output_dir, relative_italic_path)
 end
 
 if output_path and opts.dump_font and (opts.font_uri or opts.font_regular_uri or opts.font_italic_uri) and
@@ -399,6 +410,14 @@ if trace_path then
   end
 end
 
+local output_file = io.stdout
+if not html_like then
+  -- Append mode opens the actual destination without destroying existing
+  -- data. Regular files are truncated only after renderer validation.
+  if output_path then output_file = assert(io.open(output_path, "ab")) end
+  opts.output_fd = mdf.file_descriptor(output_file)
+end
+
 -- Font dumping happens during renderer creation, so the post-dump identity
 -- check catches aliases that only become visible once the target file exists.
 local renderer = mdf.new(opts)
@@ -410,11 +429,12 @@ if opts.dump_font and
   error("cmdf.lua: HTML font dump destination aliases input, output, or stdout", 0)
 end
 
-local output_file
 if output_path then
-  output_file = assert(io.open(output_path, "wb"))
-else
-  output_file = io.stdout
+  if html_like then
+    output_file = assert(io.open(output_path, "wb"))
+  else
+    core._truncate_output(output_file)
+  end
 end
 
 local simulated_reads = 0

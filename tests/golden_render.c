@@ -110,6 +110,7 @@ int main(int argc, char **argv)
     input = NULL;
     repeat = 1;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
 
     i = 1;
     while (i < argc) {

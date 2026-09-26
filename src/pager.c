@@ -1731,6 +1731,7 @@ static mdf_status mdf_pager_make_view(mdf_pager_view *view, const mdf_pager_buff
     }
     mdf_options_init(&render_opts);
     if (opts != NULL) render_opts = *opts;
+    if (render_opts.ansi_mode == MDF_ANSI_AUTO) render_opts.ansi_mode = MDF_ANSI_ON;
     render_opts.width = mdf_pager_render_width(&render_opts, width);
     mdf_pager_buffer_init(&sanitized, opts);
     if (mdf_pager_sanitize_markdown(input, &sanitized) != 0) {

@@ -478,6 +478,7 @@ static int run_margin_corpus_case(const char *path, int width, int left_margin, 
         return 0;
     }
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = width;
     opts.margin_left = left_margin;
@@ -1532,6 +1533,7 @@ static int run_ansi_link_wrap_regression_case(const char *name, const char *mark
     size_t len;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = width;
     opts.margin_left = left_margin;
     opts.margin_right = right_margin;
@@ -1725,6 +1727,7 @@ static int run_ansi_margin_table_regression_case(const char *name, const char *m
     size_t len;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = width;
     opts.margin_left = left_margin;
     opts.margin_right = right_margin;
@@ -1851,6 +1854,7 @@ static int run_ansi_table_cell_margin_regression_case(void)
     size_t len;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 100;
     opts.margin_left = 10;
     opts.margin_right = 10;
@@ -1907,6 +1911,7 @@ static int run_ansi_table_osc8_regression_case(void)
     int ok;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 30;
     opts.margin_left = 6;
     opts.margin_right = 4;
@@ -1984,6 +1989,7 @@ int main(void)
     fails = 0;
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2070,6 +2076,7 @@ int main(void)
     renderer = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &renderer);
     fails += expect(st == MDF_OK && renderer != NULL, "deck renderer create before parser token-stream rejection");
     if (renderer != NULL) {
@@ -2172,6 +2179,7 @@ int main(void)
         memset(&first_probe, 0, sizeof(first_probe));
         memset(&second_probe, 0, sizeof(second_probe));
         mdf_options_init(&reset_opts);
+        reset_opts.ansi_mode = MDF_ANSI_ON;
         reset_opts.boring = 0;
         reset_opts.osc8 = 1;
         reset_opts.write_trace.userdata = &first_probe;
@@ -2216,6 +2224,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
     opts.allocator.realloc = test_realloc;

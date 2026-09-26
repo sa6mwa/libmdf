@@ -73,6 +73,7 @@ static const mdf_theme_style *theme_or_default(const mdf_impl *impl)
 {
     const mdf_theme_style *theme;
 
+    if (impl != NULL && impl->format == MDF_FORMAT_ANSI && impl->opts.ansi_mode == MDF_ANSI_OFF) return NULL;
     theme = impl == NULL ? NULL : impl->theme;
     if (theme == NULL) {
         theme = mdf_theme_resolve("default");

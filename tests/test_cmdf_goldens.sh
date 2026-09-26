@@ -34,7 +34,7 @@ run_case() {
 run_ansi_case() {
   name=$1
   shift
-  run_case "$name" --osc8 on "$@"
+  run_case "$name" --ansi on --osc8 on "$@"
 }
 
 run_ansi_case comprehensive.ansi.styled.w80 -w 80

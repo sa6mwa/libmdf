@@ -293,7 +293,12 @@ static mdf_status render_incremental_pager_file(void *userdata, const mdf_option
     input_source.userdata = &file_data;
     input_source.read = file_read;
     renderer = NULL;
-    st = mdf_create(MDF_FORMAT_ANSI, opts, &renderer);
+    {
+        mdf_options pager_opts;
+        pager_opts = *opts;
+        if (pager_opts.ansi_mode == MDF_ANSI_AUTO) pager_opts.ansi_mode = MDF_ANSI_ON;
+        st = mdf_create(MDF_FORMAT_ANSI, &pager_opts, &renderer);
+    }
     if (st != MDF_OK) {
         (void)fclose(input);
         return st;
@@ -439,6 +444,8 @@ static void usage(FILE *fp)
     fprintf(fp, "  -V, --version              Show version\n");
     fprintf(fp, "      --html                 Render HTML\n");
     fprintf(fp, "      --deck                 Render HTML slide deck\n");
+    fprintf(fp, "      --ascii                UTF-8 output without escape sequences (ANSI renderer)\n");
+    fprintf(fp, "      --ansi MODE            Escape policy: auto|on|off (default auto)\n");
     fprintf(fp, "  -b, --boring               Boring ANSI output\n");
     fprintf(fp, "  -p, --pager                Page a named file interactively\n");
     fprintf(fp, "  -o, --output PATH          Output file\n");
@@ -702,11 +709,15 @@ int main(int argc, char **argv)
     char output_italic_font_path[4096];
     int html_font_dump_requested;
     int pager_requested;
+    int output_fd;
+    struct stat output_stat;
     static const struct option long_options[] = {
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {"html", no_argument, NULL, 'H'},
         {"deck", no_argument, NULL, 1009},
+        {"ascii", no_argument, NULL, 1022},
+        {"ansi", required_argument, NULL, 1023},
         {"boring", no_argument, NULL, 'b'},
         {"pager", no_argument, NULL, 'p'},
         {"output", required_argument, NULL, 'o'},
@@ -798,6 +809,18 @@ int main(int argc, char **argv)
             format = MDF_FORMAT_HTML_DECK;
             format_explicit = 1;
             deck_requested = 1;
+            break;
+        case 1022:
+            opts.ansi_mode = MDF_ANSI_OFF;
+            break;
+        case 1023:
+            if (strcmp(optarg, "auto") == 0) opts.ansi_mode = MDF_ANSI_AUTO;
+            else if (strcmp(optarg, "on") == 0) opts.ansi_mode = MDF_ANSI_ON;
+            else if (strcmp(optarg, "off") == 0) opts.ansi_mode = MDF_ANSI_OFF;
+            else {
+                fprintf(stderr, "cmdf: invalid ANSI mode: %s (expected auto|on|off)\n", optarg);
+                return 2;
+            }
             break;
         case 'b':
             opts.boring = 1;
@@ -1062,9 +1085,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "cmdf: --incremental --html requires --title because automatic title detection is source-based\n");
         return 2;
     }
-    if (format == MDF_FORMAT_ANSI && width_flag == 0) {
-        opts.width = mdf_terminal_width(STDOUT_FILENO, 80);
-    }
     if ((simulate_enabled || simulate_delay_seconds > 0.0) && simulate_chunk == 0) {
         simulate_chunk = 3;
     }
@@ -1143,12 +1163,38 @@ int main(int argc, char **argv)
         opts.write_trace.userdata = &trace_data;
         opts.write_trace.emit = trace_emit;
     }
+    if (format == MDF_FORMAT_ANSI) {
+        if (out_path != NULL) {
+            /* Detect the opened destination without truncating it until
+             * renderer construction has validated the requested options. */
+            output_fd = open(out_path, O_WRONLY | O_CREAT, 0666);
+            out_fp = output_fd < 0 ? NULL : fdopen(output_fd, "wb");
+            if (out_fp == NULL) {
+                if (output_fd >= 0) close(output_fd);
+                fprintf(stderr, "cmdf: open output %s: %s\n", out_path, strerror(errno));
+                if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
+                if (in_fp != stdin) fclose(in_fp);
+                return 1;
+            }
+        }
+        opts.output_fd = fileno(out_fp);
+    }
     renderer = NULL;
     st = mdf_create(format, &opts, &renderer);
     if (st != MDF_OK) {
         fprintf(stderr, "cmdf: create renderer: %s\n", mdf_status_string(st));
         if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
         if (out_fp != stdout) fclose(out_fp);
+        if (in_fp != stdin) fclose(in_fp);
+        return 1;
+    }
+    if (format == MDF_FORMAT_ANSI && out_path != NULL &&
+        (fstat(fileno(out_fp), &output_stat) != 0 ||
+         (S_ISREG(output_stat.st_mode) && ftruncate(fileno(out_fp), 0) != 0))) {
+        fprintf(stderr, "cmdf: prepare output %s: %s\n", out_path, strerror(errno));
+        renderer->destroy(renderer);
+        if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);
+        fclose(out_fp);
         if (in_fp != stdin) fclose(in_fp);
         return 1;
     }
@@ -1176,7 +1222,7 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    if (out_path != NULL) {
+    if (out_path != NULL && format != MDF_FORMAT_ANSI) {
         out_fp = fopen(out_path, "wb");
         if (out_fp == NULL) {
             fprintf(stderr, "cmdf: open output %s: %s\n", out_path, strerror(errno));

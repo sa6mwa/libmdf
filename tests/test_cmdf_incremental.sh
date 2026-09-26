@@ -32,13 +32,13 @@ if grep -E -q 'mdf_(render|feed|flush|finish_document)\(' "$ROOT/src/cmdf.c"; th
   exit 1
 fi
 
-if "$CMDF" --incremental --html "$INPUT" > /dev/null 2> "$TMP/html.err"; then
+if "$CMDF" --ansi on --incremental --html "$INPUT" > /dev/null 2> "$TMP/html.err"; then
   printf '%s\n' '--incremental unexpectedly accepted HTML without a title' >&2
   exit 1
 fi
 grep -F -q -- '--incremental --html requires --title' "$TMP/html.err"
 
-if "$CMDF" --incremental --deck --title 'deck title' "$INPUT" > /dev/null 2> "$TMP/deck.err"; then
+if "$CMDF" --ansi on --incremental --deck --title 'deck title' "$INPUT" > /dev/null 2> "$TMP/deck.err"; then
   printf '%s\n' '--incremental unexpectedly accepted deck output' >&2
   exit 1
 fi
@@ -57,9 +57,9 @@ run_case() {
     incremental="$TMP/$name.$chunk.incremental"
     baseline_trace="$baseline.trace"
     incremental_trace="$incremental.trace"
-    "$CMDF" --osc8 on "$@" --simulate-chunk "$chunk" \
+    "$CMDF" --ansi on --osc8 on "$@" --simulate-chunk "$chunk" \
       --trace-writes "$baseline_trace" "$INPUT" > "$baseline"
-    "$CMDF" --incremental --osc8 on "$@" --simulate-chunk "$chunk" \
+    "$CMDF" --ansi on --incremental --osc8 on "$@" --simulate-chunk "$chunk" \
       --trace-writes "$incremental_trace" "$INPUT" > "$incremental"
     diff -u "$expected" "$baseline"
     cmp "$baseline" "$incremental"
@@ -86,9 +86,9 @@ run_html_case() {
   for chunk in 1 3 7 4096; do
     baseline="$TMP/$name.$chunk.baseline"
     incremental="$TMP/$name.$chunk.incremental"
-    "$CMDF" --html --title 'libmdf Deck Mode' --simulate-chunk "$chunk" \
+    "$CMDF" --ansi on --html --title 'libmdf Deck Mode' --simulate-chunk "$chunk" \
       "$@" "$INPUT" > "$baseline"
-    "$CMDF" --incremental --html --title 'libmdf Deck Mode' --simulate-chunk "$chunk" \
+    "$CMDF" --ansi on --incremental --html --title 'libmdf Deck Mode' --simulate-chunk "$chunk" \
       "$@" "$INPUT" > "$incremental"
     diff -u "$expected" "$baseline"
     cmp "$baseline" "$incremental"
@@ -111,9 +111,9 @@ run_boundary_case() {
   incremental_trace="$incremental.trace"
 
   printf '%b' "$input" > "$TMP/$name.md"
-  "$CMDF" --boring "$@" --simulate-chunk 1 --trace-writes "$baseline_trace" \
+  "$CMDF" --ansi on --boring "$@" --simulate-chunk 1 --trace-writes "$baseline_trace" \
     "$TMP/$name.md" > "$baseline"
-  "$CMDF" --incremental --boring "$@" --simulate-chunk 1 \
+  "$CMDF" --ansi on --incremental --boring "$@" --simulate-chunk 1 \
     --trace-writes "$incremental_trace" "$TMP/$name.md" > "$incremental"
   printf '%b' "$expected" > "$TMP/$name.expected"
   cmp "$TMP/$name.expected" "$baseline"
@@ -141,9 +141,9 @@ run_source_boundary_case() {
   whole_trace="$whole.trace"
 
   printf '%b' "$input" > "$TMP/$name.md"
-  "$CMDF" --boring "$@" --simulate-chunk 1 --trace-writes "$one_trace" \
+  "$CMDF" --ansi on --boring "$@" --simulate-chunk 1 --trace-writes "$one_trace" \
     "$TMP/$name.md" > "$one"
-  "$CMDF" --boring "$@" --simulate-chunk 4096 --trace-writes "$whole_trace" \
+  "$CMDF" --ansi on --boring "$@" --simulate-chunk 4096 --trace-writes "$whole_trace" \
     "$TMP/$name.md" > "$whole"
   cmp "$one" "$whole"
   cmp "$one_trace" "$whole_trace"

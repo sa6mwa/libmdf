@@ -43,19 +43,35 @@ typedef enum mdf_pager_format {
 /**
  * Output renderer selection.
  *
- * MDF_FORMAT_ANSI emits terminal-oriented styled text. MDF_FORMAT_HTML emits a
- * complete HTML document. MDF_FORMAT_HTML_DECK emits a standalone browser slide
+ * MDF_FORMAT_ANSI emits wrapped UTF-8 text, with terminal escapes controlled
+ * by mdf_options.ansi_mode. MDF_FORMAT_HTML emits a complete HTML document.
+ * MDF_FORMAT_HTML_DECK emits a standalone browser slide
  * deck using HTML slide bodies. libmdf-specific chart fences are supported by
  * all renderers and use the active theme in every format.
  */
 typedef enum mdf_format {
-    /** Styled terminal-oriented ANSI output. */
+    /** Wrapped UTF-8 text, optionally styled with terminal escape sequences. */
     MDF_FORMAT_ANSI = 0,
     /** Complete standalone HTML document output. */
     MDF_FORMAT_HTML = 1,
     /** Complete standalone HTML slide-deck output. */
     MDF_FORMAT_HTML_DECK = 2
 } mdf_format;
+
+/**
+ * Escape-sequence policy for MDF_FORMAT_ANSI only; HTML/deck are unaffected.
+ * AUTO is resolved once at renderer creation using output_fd, independently
+ * of width and boring. OFF preserves Unicode layout and chart/table shapes;
+ * it does not restrict output to 7-bit ASCII.
+ */
+typedef enum mdf_ansi_mode {
+    /** Default: ON for a terminal output_fd, otherwise OFF (including unknown sinks). */
+    MDF_ANSI_AUTO = 0,
+    /** Allow terminal styling and configured OSC8 even for non-terminal sinks. */
+    MDF_ANSI_ON = 1,
+    /** No colors, SGR resets, OSC8, or input terminal escapes, including in code/manual tokens. */
+    MDF_ANSI_OFF = 2
+} mdf_ansi_mode;
 
 /** HTML slide deck transition behavior. */
 typedef enum mdf_deck_transition {
@@ -200,14 +216,16 @@ typedef enum mdf_html_font_source {
  *
  * Call mdf_options_init before setting fields. Chart fences use these options
  * like the rest of the renderer: ANSI charts honor width, margins, boring,
- * osc8, theme_name, write_trace, allocator, memory, and emission_buffer. HTML
- * charts honor theme_name, boring, html_content_width_ch, and html_font. HTML
- * deck mode also honors deck_transition, slide_numbers, and
+ * ansi_mode, output_fd, osc8, theme_name, write_trace, allocator, memory, and
+ * emission_buffer. HTML charts honor theme_name, boring, html_content_width_ch,
+ * and html_font. HTML deck mode also honors deck_transition, slide_numbers, and
  * deck_center_front_text. Deck slide bodies are vertically centered by default.
  */
 typedef struct mdf_options {
     /**
-     * ANSI wrap width. Effective content width after margins must be at least 3.
+     * ANSI wrap width. Default zero (or a negative value) selects terminal
+     * width for a terminal output_fd, otherwise 80. This is independent of
+     * ansi_mode. Content width after margins must be at least 3.
      * Horizontal/vertical/tile charts fit to this width after margins.
      */
     int width;
@@ -215,9 +233,18 @@ typedef struct mdf_options {
     int margin_left;
     /** ANSI-only right margin; reduces available text and chart width; mutable through set_geometry. */
     int margin_right;
-    /** Disable styling. Charts still render shapes and calculated percentages. */
+    /** Disable decoration independently of ansi_mode; may still emit ANSI resets/OSC8 unless OFF. Charts retain shapes. */
     int boring;
-    /** Enable OSC8 hyperlinks for ANSI link output. */
+    /** ANSI escape policy; default AUTO. Independent of boring; ignored by HTML/deck. */
+    mdf_ansi_mode ansi_mode;
+    /**
+     * Borrowed destination fd for ANSI terminal/width detection at creation.
+     * Default -1 means an unknown/non-terminal callback or string sink.
+     * This does not write to or own the fd; the sink still receives every write.
+     * Recreate the renderer when changing destination type.
+     */
+    int output_fd;
+    /** Enable OSC8 hyperlinks for ANSI links; default zero. OFF (including AUTO on non-terminals) overrides this. */
     int osc8;
     /**
      * Built-in theme name. NULL selects the default theme and allows deck front
@@ -444,8 +471,8 @@ struct mdf {
      */
     mdf_status (*set_width)(mdf *self, int width);
     /**
-     * Close terminal styling through the bound sink, then discard the active
-     * renderer and incremental-parser session. See mdf_reset. This may not
+     * Close enabled terminal styling through the bound sink, then discard the
+     * active renderer and incremental-parser session. See mdf_reset. This may not
      * interrupt an active output operation, including callbacks invoked by
      * synchronous, incremental, reset, and manual-token rendering calls.
      */
@@ -469,14 +496,20 @@ struct mdf {
 /**
  * Initialize an options record to stable defaults. Call this before setting
  * fields in a record passed to mdf_create; passing NULL to mdf_create selects
- * the same defaults. NULL is accepted as a no-op.
+ * the same defaults. ANSI defaults are AUTO, output_fd=-1, width=0, boring=0,
+ * and osc8=0: unknown sinks produce escape-free UTF-8 at width 80.
+ * NULL is accepted as a no-op. A merely zeroed record has output_fd=0 and is
+ * not equivalent to these defaults; use this initializer.
  */
 void mdf_options_init(mdf_options *opts);
 /**
  * Create an ANSI, HTML, or HTML deck renderer. opts may be NULL for defaults;
  * out must be non-NULL and is set to NULL on failure. On success, the caller
  * owns *out and must release it through its destroy method. Bind an output
- * sink through mdf_set_sink before using receiver rendering methods.
+ * sink through mdf_set_sink before using receiver rendering methods. ANSI
+ * escape policy and automatic width are resolved here, using opts->output_fd,
+ * not the later sink binding. OFF strips input terminal escapes before parsing
+ * and on manual-token output. Invalid ansi_mode values return MDF_ERROR_INVALID.
  */
 mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
 /**
@@ -487,6 +520,8 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out);
  * rendering state even when that close fails, and then binds the new sink;
  * callers replay their own source to render on the new sink. Rebinding the
  * identical callback and userdata leaves the current rendering state intact.
+ * This does not redetect ANSI policy or width; recreate the renderer when the
+ * destination type changes. Escape-free ANSI renderers need no terminal cleanup.
  * The explicit-sink
  * free functions below borrow their sink only for their call and never replace
  * this receiver binding. A binding cannot be changed while an active output
@@ -534,8 +569,9 @@ mdf_status mdf_set_geometry(mdf *renderer, int width, int margin_left, int margi
 /**
  * Close ANSI terminal state through the bound sink, then discard an unfinished
  * manual-token or incremental document without emitting EOF closure. ANSI
- * reset emits one exact sink write that closes OSC8 links and resets SGR
- * attributes. Without a bound sink it only discards state. It retains renderer
+ * reset with escapes enabled emits one exact sink write that closes OSC8 links
+ * and resets SGR attributes. OFF (including AUTO resolved to OFF) emits no
+ * cleanup bytes. Without a bound sink it only discards state. It retains renderer
  * configuration such as width and an explicit HTML title. No Markdown input is
  * retained for replay; callers own and resend source if they need reflow. A
  * sink failure returns MDF_ERROR_IO after state has been discarded. It cannot
@@ -679,6 +715,9 @@ int mdf_terminal_width(int fd, int fallback);
  * except write_trace, which is rejected because pager terminal writes cannot
  * participate in renderer emission tracing;
  * the pager always uses the current terminal width for its Markdown view.
+ * MDF_ANSI_AUTO enables styling here because the pager is interactive, even
+ * though its internal rendering sink is a callback. MDF_ANSI_OFF suppresses
+ * escapes in rendered Markdown; pager navigation still uses terminal controls.
  */
 mdf_status mdf_pager_file(const char *path,
                           const mdf_options *render_options,

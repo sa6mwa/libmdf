@@ -2583,7 +2583,9 @@ int main(int argc, char **argv)
         trace_args[2] = "80";
         trace_args[3] = "-S";
         trace_args[4] = "1";
-        trace_args[5] = NULL;
+        trace_args[5] = "--ansi";
+        trace_args[6] = "on";
+        trace_args[7] = NULL;
         unlink(input_path);
         if (make_input_file(input_path, sizeof(input_path)) != 0) {
             fprintf(stderr, "make input: %s\n", strerror(errno));

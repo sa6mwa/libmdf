@@ -1,6 +1,7 @@
 local mdf = require("libmdf")
 
-local opts = {}
+-- Match the styled ANSI workload measured by the C harness and released baseline.
+local opts = { ansi_mode = "on" }
 local input
 local repeat_count = 1
 local i = 1

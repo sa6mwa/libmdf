@@ -60,9 +60,9 @@ timeout 5 "$INCREMENTAL" --ansi --boring -w 8 --margin-left 0 --margin-right 0 "
 
 # cmdf exercises both source drivers.  Their output must match the library
 # golden, and the ANSI sink-write trace must remain identical.
-timeout 5 "$CMDF" --boring -w 8 --simulate-chunk 1 --trace-writes "$TMP/cmdf.trace" \
+timeout 5 "$CMDF" --ansi on --boring -w 8 --simulate-chunk 1 --trace-writes "$TMP/cmdf.trace" \
   "$INPUT" > "$TMP/cmdf.out"
-timeout 5 "$CMDF" --incremental --boring -w 8 --simulate-chunk 1 \
+timeout 5 "$CMDF" --ansi on --incremental --boring -w 8 --simulate-chunk 1 \
   --trace-writes "$TMP/cmdf.incremental.trace" "$INPUT" > "$TMP/cmdf.incremental.out"
 assert_golden "$TMP/cmdf.out"
 cmp "$TMP/cmdf.out" "$TMP/cmdf.incremental.out"

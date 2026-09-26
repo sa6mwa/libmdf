@@ -234,7 +234,7 @@ int ansi_handle_pending_quote_block_start(mdf_impl *impl, mdf_sink *sink, const 
             if (ansi_inline_flush_streamed_emphasis_closers(impl, sink) != 0) return -1;
             return ansi_inline_emit_streamed_emphasis_char(impl, sink, ' ') == 0 ? 1 : -1;
         }
-        if (impl->quote_text_open && !impl->opts.boring) {
+        if (impl->quote_text_open && MDF_ANSI_STYLED(impl)) {
             impl->quote_text_open = 0;
             if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         } else {

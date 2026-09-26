@@ -225,13 +225,28 @@ success and nonzero on write failure.
 
 Important options:
 
-- `width`: ANSI wrap width. Default is `80`; `cmdf` uses terminal width for
-  ANSI output unless `--width` is set. Effective ANSI content width after
+- `width`: ANSI wrap width. Default `0` selects the width of a terminal
+  `output_fd`, or `80` for non-terminal/unknown destinations. A positive value
+  overrides detection. Effective ANSI content width after
   margins must be at least 3 columns.
 - `margin_left`, `margin_right`: ANSI-only margins. Left margin spaces are
   emitted lazily only on non-empty lines. Right margin reduces available wrap
   width.
-- `boring`: disable ANSI styling.
+- `ansi_mode`: `MDF_ANSI_AUTO` (default), `MDF_ANSI_ON`, or `MDF_ANSI_OFF`.
+  AUTO permits escapes only when `output_fd` identifies a terminal. OFF emits
+  UTF-8 text with no escape sequences, including no colors, resets, or OSC8;
+  input escape sequences are stripped before parsing, including in code blocks.
+  ON explicitly permits escapes for any sink. This option applies only to the
+  ANSI renderer; HTML and decks retain their normal styling.
+- `output_fd`: borrowed destination fd for terminal and width detection at
+  renderer creation; default `-1` means unknown/non-terminal. The sink callback
+  still receives all output; libmdf never writes to or owns this descriptor.
+  Set it to the actual destination (for example `fileno(stdout)` for a stdout
+  sink), or select ON/OFF explicitly. Recreate the renderer when destination
+  type changes. String output and callback sinks without a descriptor default
+  to escape-free output at width 80.
+- `boring`: disable decoration independently of the escape policy. Boring
+  terminal output may still use OSC8; combine it with OFF for no escapes.
 - `osc8`: enable OSC8 hyperlink output for ANSI.
 - `theme_name`: theme name. `default` is used when unset.
 - `html_content_width_ch`: HTML document content width in `ch`. Default is
@@ -336,8 +351,9 @@ latest geometry.
 
 Neither setter reflows a completed sink write, so call
 `renderer->reset` and replay caller-owned source for a complete reflow. Reset
-and sink replacement close ANSI terminal state before discarding parser state;
-reset and sink replacement are rejected while a synchronous `render` call is
+and sink replacement close enabled ANSI terminal state before discarding
+parser state; escape-free renderers discard state without terminal cleanup.
+Reset and sink replacement are rejected while a synchronous `render` call is
 active. A source callback may change geometry for later output. Sink and trace
 callbacks cannot change geometry, reset, or move a live render to a different
 sink. libmdf never retains input for replay. If terminal cleanup on the old
@@ -352,9 +368,8 @@ title before the first feed because automatic title detection is a one-shot
 source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `4`. `set_geometry` consumes one
-receiver reserve slot and adds an exported function without changing the
-receiver's size or any existing member offset, so this addition retains ABI 4.
+The shared library uses SONAME ABI version `5`, advanced from released ABI 4
+because the new ANSI destination/policy fields change the public options layout.
 Lua facade and `cmdf.lua` changes do not themselves require a C ABI bump.
 
 For HTML, `mdf_set_html_title(renderer, title)` can set an optional document
@@ -405,8 +420,10 @@ numeric value. Percentages are calculated from the sum of the values and are
 not supplied in the input.
 
 Chart output is theme-aware in both ANSI and HTML. Labels, values, percentages,
-bars, and tile segments use colors from the active theme. ANSI chart rows are
-emitted through the same decision-emission surface as other ANSI output, and
+bars, and tile segments use colors from the active theme when styling is enabled.
+Escape-free ANSI charts retain their Unicode shapes and calculated values.
+ANSI chart rows are emitted through the same decision-emission surface as other
+ANSI output, and
 HTML preserves the active theme colors by consuming the styled ANSI emissions.
 
 Supported chart types:
@@ -492,6 +509,14 @@ alignment.
 
 ## cmdf
 
+`cmdf` detects its actual output destination. Terminal output remains themed;
+pipes and files default to escape-free UTF-8 wrapped at 80 columns. `--width`
+overrides wrapping, `--ascii` (or `--ansi off`) forces no escapes, and `--ansi on`
+explicitly enables terminal sequences for a pipe/file. `--osc8 on` cannot
+override OFF. `--boring` remains independent. These policies affect only the
+ANSI renderer. The pager retains interactive terminal behavior and does not
+inherit the non-terminal default from its internal callback sinks.
+
 `cmdf` renders Markdown from a file or stdin and writes ANSI or HTML to stdout
 or `--output`. With `--pager`, it instead opens a named regular file in an
 interactive terminal pager: `.md` files render as Markdown and every other
@@ -500,7 +525,7 @@ file is shown as ordinary text.
 ```sh
 cmdf README.md
 cmdf --html README.md -o README.html
-cmdf README.md -o README.html
+cmdf README.md -o README.txt
 cmdf -b -w 80 --margin-left 2 --margin-right 2 README.md
 cmdf --pager README.md
 cmdf --pager --incremental README.md
@@ -515,6 +540,8 @@ Flags:
 -V, --version
     --html
     --deck
+    --ascii                 Escape-free UTF-8 output (ANSI renderer only)
+    --ansi auto|on|off       Escape policy; default auto
 -b, --boring
 -p, --pager
 -o, --output PATH
@@ -651,6 +678,30 @@ cmdf --deck --slide-numbers -x fade -o deck.html testdata/deck-corpus/comprehens
 
 Lua bindings currently target Lua 5.5 only.
 
+All Lua renderers accept `ansi_mode = "auto" | "on" | "off"` and
+`output_fd`, including string rendering, callback streaming, incremental
+documents, and manual tokens. The default `"auto"` treats an unknown sink as
+non-terminal: escape-free UTF-8 at width 80. Lua cannot infer the destination
+of a writer callback. Set `output_fd = mdf.file_descriptor(output_file)` when
+the callback writes to an open Lua file, including `io.stdout`. The descriptor
+is borrowed for detection; output still goes through the writer callback.
+
+`"off"` removes all terminal escapes, including input sequences in code and
+manual tokens, color, resets, and OSC8. Unicode text, table borders, and chart
+shapes remain available; the CLI name `--ascii` does not mean 7-bit ASCII.
+`"on"` permits themed output even for strings or files. `boring = true`
+reduces decoration independently and can still emit resets or OSC8 with
+escapes enabled; combine it with `"off"` for escape-free boring output.
+`osc8 = true` cannot override `"off"`.
+
+Automatic ANSI policy and width resolve once when the renderer is created.
+Binding or replacing a writer does not detect its destination again; recreate
+the renderer when destination type changes. A positive `width` overrides
+detection independently of escape policy, so `"off"` can still use a terminal's
+width. HTML and deck rendering retain their existing behavior. The interactive
+pager enables styling in auto mode and always uses terminal controls for
+navigation, even when its Markdown renderer uses `"off"`.
+
 Local tests and benchmarks build a pinned Lua 5.5.1 interpreter from the
 [official Lua source archive](https://www.lua.org/ftp/) using Bootlin. Its
 private loader and RPATH resolve both libc and the installed development SDK.
@@ -665,7 +716,7 @@ its build files remain under `build/` and are not shipped.
 local mdf = require("libmdf")
 
 local out = mdf.render("# hello\n\nworld\n", {
-  boring = true,
+  ansi_mode = "off",
   width = 80,
 })
 io.write(out)
@@ -685,7 +736,7 @@ mdf.render_stream(function(cap)
   return chunk
 end, function(chunk)
   io.write(chunk)
-end, { boring = true })
+end, { output_fd = mdf.file_descriptor(io.stdout) })
 ```
 
 The reader receives a maximum byte count and must return a string no longer
@@ -709,6 +760,7 @@ form: its callbacks are borrowed for that call. For streaming receiver methods,
 bind one callback once, then change width, reset, or replace the callback on
 the object itself. `reset` closes ANSI state and discards unfinished parser
 state even when the terminal callback fails; replay remains the caller's job.
+When escapes are disabled, reset and sink replacement emit no terminal cleanup.
 A `render_stream` reader may change geometry for later decisions, but `reset` and
 sink replacement are rejected until
 that synchronous render returns. This rejection also applies while terminal
@@ -797,8 +849,10 @@ format = "ansi" | "html" | "deck" | "html_deck" (rendering)
 html = true
 deck = true
 boring = true
+ansi_mode = "auto" | "on" | "off" (default "auto"; ANSI renderer only)
+output_fd = FD (default -1; e.g. mdf.file_descriptor(io.stdout))
 osc8 = true | false
-width = N
+width = N (default 0; terminal destination width or 80, positive overrides)
 margin_left = N
 margin_right = N
 theme = NAME
@@ -839,6 +893,13 @@ reports whether two non-empty paths name the same existing object or the same
 absent destination; `mdf.path_aliases_stdout(path)` reports whether a path
 names the process's current stdout destination. These helpers let CLI wrappers
 reject destructive dump aliases before creating a renderer.
+`mdf.path_relative_to(from_dir, target_path)` returns a URI-escaped relative
+path for a local target, resolving relative inputs against the current working
+directory without requiring files to exist or resolving symlinks.
+`mdf.file_descriptor(file)` returns an open Lua file's borrowed POSIX descriptor
+(or -1 when unavailable). It neither writes nor closes the file and rejects
+closed files and non-file values. Keep the file open through renderer creation
+for reliable detection; the renderer does not retain the Lua file object.
 
 The generated `cmdf.lua` shipped in CLI archives uses the streaming Lua API and
 the libmdf-built-in JetBrains Mono faces for HTML and deck parity with `cmdf`.
@@ -857,6 +918,12 @@ callback previously supplied to `set_sink`. After `finish_document`, call
 `begin_document` before feeding another incremental document. Bound sink and
 optional `write_trace` callbacks are refreshed to the Lua state making each
 call, so handles returned from collected coroutines remain valid.
+
+C allocator hooks, reusable workspace limits, caller-supplied emission memory,
+and raw C source/sink structs are C embedding surfaces rather than Lua options.
+Lua readers, writers, and traces map to their public C callbacks; native memory
+is managed by the binding. Private CLI helpers such as output truncation are
+not facade APIs.
 
 ## Markdown And HTML Safety
 
@@ -931,6 +998,8 @@ be run from another working directory while testing local Lua CLI UX.
 `make benchmark` measures direct C libmdf API and Lua binding ANSI/HTML paths
 against `testdata/code-review-is-a-dead-end.md`. Pass extra options with
 `BENCH_ARGS`, for example `make benchmark BENCH_ARGS="--rounds 30"`.
+Both C and Lua ANSI benchmarks explicitly enable escapes to match the styled
+workload in the released reference, independently of destination defaults.
 `make bench-check` compares those medians with
 `testdata/benchmarks/libmdf-baseline.json` and fails if any path is more than
 5% slower than baseline. The checked-in reference is the released `v0.10.0`
@@ -960,15 +1029,21 @@ prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks
 matrix, release matrix builds, package generation, Lua release artifact
 generation, source-archive reconstruction, checksum generation, package
 verification, and artifact privacy/relocatability checks. `make lifecycle-version-contract` is the
-focused pre-clean check for tag/version behavior; `make release` is the only
-standard release target that invokes it.
+focused pre-clean check for tag/version behavior; ordinary tests do not mutate
+tags, and `make release` is the only standard release target that invokes it.
+The release matrix runs the native x86_64 Linux release tests before packaging;
+cross targets are built and checked through their extracted artifacts.
 
 Release artifacts are selected from the generated checksum manifest, not from a
 `dist/` glob.
 
-Darwin release builds use osxcross by default. Override the toolchain root with
-`OSXCROSS_ROOT` and the host prefix with `CPKT_OSXCROSS_HOST`; when unset they
-default to `$HOME/.local/cross/osxcross` and `arm64-apple-darwin25`. Package
+Darwin release builds use osxcross by default. The lifecycle resolver selects
+the newest complete `arm64-apple-darwin25.x` collection and reads its SDK from
+the selected collection's `osxcross-conf`. Override the toolchain root with
+`OSXCROSS_ROOT` (default `$HOME/.local/cross/osxcross`) or pin an exact installed
+prefix with `CPKT_OSXCROSS_HOST`. No prefix override is needed for ordinary
+builds. The resolver also checks the lifecycle-provisioned host MIG tools.
+Package
 verification discovers target tools from explicit overrides, CMake cache
 entries, compiler siblings, osxcross target-prefixed tools, and `PATH` last.
 Darwin configure, build, and package commands prepend the osxcross `bin`

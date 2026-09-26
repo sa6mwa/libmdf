@@ -15,7 +15,7 @@ int main(void)
     opts.deck_center_front_text = 1;
     sink.userdata = NULL;
     sink.write = NULL;
-    if (opts.width != 80) {
+    if (opts.width != 0 || opts.ansi_mode != MDF_ANSI_AUTO || opts.output_fd != -1) {
         return 1;
     }
     if (format != MDF_FORMAT_HTML_DECK ||

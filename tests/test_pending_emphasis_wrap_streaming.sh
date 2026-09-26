@@ -27,9 +27,9 @@ mkdir -p "$TMP"
 cmp "$EXPECTED" "$TMP/libmdf.out"
 "$INCREMENTAL" --ansi --boring -w 12 --margin-left 0 --margin-right 0 "$INPUT"
 
-"$CMDF" --boring -w 12 --simulate-chunk 1 --trace-writes "$TMP/cmdf.trace" \
+"$CMDF" --ansi on --boring -w 12 --simulate-chunk 1 --trace-writes "$TMP/cmdf.trace" \
   "$INPUT" > "$TMP/cmdf.out"
-"$CMDF" --incremental --boring -w 12 --simulate-chunk 1 \
+"$CMDF" --ansi on --incremental --boring -w 12 --simulate-chunk 1 \
   --trace-writes "$TMP/cmdf.incremental.trace" "$INPUT" > "$TMP/cmdf.incremental.out"
 cmp "$EXPECTED" "$TMP/cmdf.out"
 cmp "$EXPECTED" "$TMP/cmdf.incremental.out"

@@ -2,6 +2,7 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+RESOLVER="$ROOT/scripts/cpkt-toolchains.sh"
 TARGET=${LIBMDF_TARGET_ID:-}
 PRESET=
 CACHE=
@@ -116,7 +117,11 @@ cache_files() {
   if [ -n "$PRESET" ]; then
     return 0
   fi
-  find "$ROOT/build" -name CMakeCache.txt -type f 2>/dev/null | sort
+  for candidate in $(find "$ROOT/build" -name CMakeCache.txt -type f 2>/dev/null | sort); do
+    if [ -z "$TARGET" ] || [ "$(cache_value "$candidate" LIBMDF_TARGET_ID)" = "$TARGET" ]; then
+      printf '%s\n' "$candidate"
+    fi
+  done
 }
 
 compiler_prefix() {
@@ -130,9 +135,6 @@ compiler_prefix() {
 }
 
 host_prefixes() {
-  if [ -n "${CPKT_OSXCROSS_HOST:-}" ]; then
-    printf '%s\n' "$CPKT_OSXCROSS_HOST"
-  fi
   for cache in $(cache_files); do
     compiler=$(cache_value "$cache" CMAKE_C_COMPILER)
     if [ -n "$compiler" ]; then
@@ -140,11 +142,13 @@ host_prefixes() {
     fi
   done
   case "$TARGET" in
-    arm64-apple-darwin)
-      printf '%s\n' arm64-apple-darwin25
-      ;;
     *-apple-darwin)
-      printf '%s\n' "$TARGET" "${TARGET}25"
+      if [ -n "${CPKT_OSXCROSS_HOST:-}" ]; then
+        printf '%s\n' "$CPKT_OSXCROSS_HOST"
+      else
+        "$RESOLVER" discover "$TARGET" 2>/dev/null |
+          sed -n 's/^prefix=//p'
+      fi
       ;;
   esac
 }
@@ -199,17 +203,20 @@ for cache in $(cache_files); do
   compiler=$(cache_value "$cache" CMAKE_C_COMPILER)
   if [ -n "$compiler" ]; then
     dir=$(dirname "$compiler")
-    for prefix in $(host_prefixes); do
-      emit_if_tool "$dir/$prefix-$TOOL" && exit 0
-    done
+    prefix=$(compiler_prefix "$compiler")
+    emit_if_tool "$dir/$prefix-$TOOL" && exit 0
     emit_if_tool "$dir/$TOOL" && exit 0
   fi
 done
 
-OSXCROSS_ROOT=${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}
-for prefix in $(host_prefixes); do
-  emit_if_tool "$OSXCROSS_ROOT/bin/$prefix-$TOOL" && exit 0
-done
+case "$TARGET" in
+  *-apple-darwin)
+    OSXCROSS_ROOT=${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}
+    for prefix in $(host_prefixes); do
+      emit_if_tool "$OSXCROSS_ROOT/bin/$prefix-$TOOL" && exit 0
+    done
+    ;;
+esac
 
 for prefix in $(host_prefixes); do
   if command -v "$prefix-$TOOL" >/dev/null 2>&1; then

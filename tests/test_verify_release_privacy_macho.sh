@@ -7,6 +7,9 @@ BASE="$ROOT/build/test-verify-release-privacy-macho"
 DIST="$BASE/dist"
 TARGET=x86_64-apple-darwin
 HOST=x86_64-apple-darwin25
+# The fake collection is deliberately pinned; it is not an installed SDK.
+CPKT_OSXCROSS_HOST=$HOST
+export CPKT_OSXCROSS_HOST
 PKG="$BASE/pkg/libmdf-$VERSION-$TARGET"
 TOOLS="$BASE/tools"
 ARTIFACT="libmdf-$VERSION-$TARGET.tar.gz"

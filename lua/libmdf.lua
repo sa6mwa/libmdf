@@ -16,12 +16,14 @@ local mdf = {}
 ---@field format? "ansi"|"html"|"deck"|"html_deck" Output format.
 ---@field html? boolean Select HTML output.
 ---@field deck? boolean Select HTML deck output.
----@field boring? boolean Disable ANSI decoration.
----@field osc8? boolean Enable ANSI OSC8 hyperlinks when supported.
----@field width? integer Total ANSI width before margins.
+---@field boring? boolean Disable decoration; ANSI resets/OSC8 may remain unless ansi_mode is off. HTML/deck keep their existing boring behavior.
+---@field osc8? boolean Enable ANSI OSC8 hyperlinks (default false); off policy overrides this even with boring.
+---@field ansi_mode? "auto"|"on"|"off" Default auto: terminal output_fd enables escapes, unknown/non-terminal sinks disable them. Off strips input escapes too, preserving UTF-8; on permits styling for any sink. HTML/deck ignore this policy.
+---@field output_fd? integer Borrowed actual destination fd, e.g. mdf.file_descriptor(io.stdout); default -1. Detection runs once at creation; never written to or closed. Recreate when destination type changes.
+---@field width? integer Total ANSI width before margins; nonpositive/absent detects terminal output_fd width or uses 80, independently of ansi_mode. Positive width overrides detection; at least three content columns must remain.
 ---@field margin_left? integer ANSI columns left of content; may change later through `set_geometry`.
 ---@field margin_right? integer ANSI columns right of content; may change later through `set_geometry`.
----@field theme? string Built-in ANSI theme name.
+---@field theme? string Built-in theme name for ANSI, HTML, and deck; absent selects default.
 ---@field html_content_width_ch? number HTML content width in `ch` units.
 ---@field html_title? string Explicit HTML or deck title.
 ---@field deck_transition? "fade"|"cross"|"hard" Deck slide transition.
@@ -52,7 +54,7 @@ local mdf = {}
 ---@field set_sink fun(self: libmdf.Handle, write: libmdf.Writer): boolean Replaces the persistent sink and discards an unfinished document.
 ---@field set_width fun(self: libmdf.Handle, width: integer): boolean Reflows un-emitted decisions only when width changes; tables follow `set_geometry` rules.
 ---@field set_geometry fun(self: libmdf.Handle, width: integer, margin_left: integer, margin_right: integer): boolean Changes total width and nonnegative ANSI margins; never inserts a new margin after committed text on the current line. Full tables use it at completion, row tables for future rows; ANSI requires at least three content columns.
----@field reset fun(self: libmdf.Handle): boolean Closes ANSI state and discards current parsing state.
+---@field reset fun(self: libmdf.Handle): boolean Closes enabled ANSI state and discards current parsing state; off policy emits no cleanup.
 ---@field set_html_title fun(self: libmdf.Handle, title: string|nil): boolean Sets an HTML/deck title before output begins.
 ---@field write_token fun(self: libmdf.Handle, token: libmdf.Token): boolean Streams one manual token to the bound sink.
 ---@field finish fun(self: libmdf.Handle): boolean Finishes manual-token rendering.
@@ -72,7 +74,7 @@ local mdf = {}
 ---@field set_sink fun(self: libmdf.DocumentStream, write: libmdf.Writer): boolean Replaces the writer and discards an unfinished document.
 ---@field set_width fun(self: libmdf.DocumentStream, width: integer): boolean Reflows un-emitted decisions only when width changes; tables follow `set_geometry` rules.
 ---@field set_geometry fun(self: libmdf.DocumentStream, width: integer, margin_left: integer, margin_right: integer): boolean Changes total width and nonnegative ANSI margins between writes; never inserts a new margin after committed text on the current line. Full tables use it at completion, row tables for future rows; ANSI requires at least three content columns.
----@field reset fun(self: libmdf.DocumentStream): boolean Closes ANSI state and discards current parsing state.
+---@field reset fun(self: libmdf.DocumentStream): boolean Closes enabled ANSI state and discards current parsing state; off policy emits no cleanup.
 ---@field set_html_title fun(self: libmdf.DocumentStream, title: string|nil): boolean Sets an HTML/deck title before output begins.
 ---@field error fun(self: libmdf.DocumentStream): string Returns the latest diagnostic.
 ---@field close fun(self: libmdf.DocumentStream) Releases the native renderer outside active callbacks.
@@ -94,6 +96,8 @@ mdf.version_patch = core.version_patch
 ---Create a renderer handle. Bind one persistent output callback with
 ---`handle:set_sink(write)` before streaming receiver methods. A reader may
 ---change width or margins; sink/trace callbacks cannot mutate geometry or lifecycle state.
+---Options resolve once at creation; binding/replacing a sink does not redetect
+---its terminal status. Unknown sinks default to escape-free UTF-8 at width 80.
 ---@param opts? libmdf.Options
 ---@return libmdf.Handle
 function mdf.new(opts)
@@ -108,6 +112,8 @@ function mdf.create(opts)
 end
 
 ---Render a complete string and return a materialized string.
+---Defaults to escape-free UTF-8 at width 80. Use `ansi_mode = "on"` to retain
+---terminal styling in the returned string, or output_fd for a known destination.
 ---@param markdown string
 ---@param opts? libmdf.Options
 ---@return string
@@ -138,6 +144,8 @@ end
 ---`flush` does not force an unfinished table to emit. Writer calls are
 ---synchronous; `reset`
 ---and `set_sink` may invoke the old writer for ANSI terminal cleanup.
+---With the off policy they emit no cleanup bytes. A new writer does not
+---redetect destination type; recreate the stream to resolve auto again.
 ---A reflow allocation error keeps the previous geometry but requires reset
 ---and caller-owned replay of the failed document. `reset` and `set_sink`
 ---discard state, so callers replay source for a complete reflow. Callbacks run
@@ -150,6 +158,8 @@ function mdf.document_stream(opts, write)
 end
 
 ---Interactively page a named regular file on the controlling terminal.
+---Auto enables ANSI styling here; off affects Markdown rendering only, since
+---pager navigation still requires terminal controls. write_trace is rejected.
 ---@param path string
 ---@param opts? libmdf.Options|{format?: "markdown"|"text"|"text/markdown"}
 ---@return boolean
@@ -178,6 +188,25 @@ end
 ---@return boolean
 function mdf.path_aliases_stdout(path)
   return core.path_aliases_stdout(path)
+end
+
+---Return a URI-escaped relative path from a directory to a local target path.
+---Relative inputs resolve against the working directory; normalization is
+---lexical (no symlink resolution or file existence requirement).
+---@param from_dir string
+---@param target_path string
+---@return string
+function mdf.path_relative_to(from_dir, target_path)
+  return core.path_relative_to(from_dir, target_path)
+end
+
+---Borrow the POSIX descriptor of an open Lua file for output_fd detection.
+---The file stays caller-owned; this helper neither writes nor closes it.
+---Closed files and non-file values raise an error. Returns -1 if unavailable.
+---@param file file*
+---@return integer
+function mdf.file_descriptor(file)
+  return core.file_descriptor(file)
 end
 
 ---Return all built-in theme names.

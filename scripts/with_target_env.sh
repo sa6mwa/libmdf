@@ -13,8 +13,7 @@ target=${target%-release}
 case "$target" in
   *-apple-darwin)
     OSXCROSS_ROOT=${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}
-    CPKT_OSXCROSS_HOST=${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}
-    export OSXCROSS_ROOT CPKT_OSXCROSS_HOST
+    export OSXCROSS_ROOT
     path_tail=$(printf '%s\n' "$PATH" | awk -v drop="$OSXCROSS_ROOT/bin" '
       BEGIN { RS = ":"; ORS = "" }
       $0 != drop {

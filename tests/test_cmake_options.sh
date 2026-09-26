@@ -44,7 +44,7 @@ int main(void)
 {
     mdf_options opts;
     mdf_options_init(&opts);
-    return opts.width > 0 ? 0 : 1;
+    return opts.width == 0 && opts.ansi_mode == MDF_ANSI_AUTO && opts.output_fd == -1 ? 0 : 1;
 }
 
 EOF
@@ -125,7 +125,7 @@ verify_install_tree() {
   test -f "$install/share/doc/libmdf/OFL.txt"
   libdir=$(dirname "$install/$pcdir")
   if test -f "$libdir/libmdf.so"; then
-    test -f "$libdir/libmdf.so.4"
+    test -f "$libdir/libmdf.so.5"
   fi
 
   write_consumer_sources "$consumer/src"

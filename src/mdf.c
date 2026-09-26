@@ -55,6 +55,8 @@ static void mdf_impl_clear_auto_html_title(mdf_impl *impl)
 
 static void mdf_impl_reset_render_state(mdf_impl *impl)
 {
+    memset(&impl->plain_tokens, 0, sizeof(impl->plain_tokens));
+    impl->plain_token_input_len = 0;
     mdf_impl_clear_auto_html_title(impl);
     mdf_impl_reset_emit_buffer(impl);
     MDF_ZERO_IMPL_SPAN(impl, in_paragraph, html_footer_needs_newline);
@@ -2479,6 +2481,7 @@ static void mdf_impl_release_heap_state(mdf_impl *impl)
     mdf_allocator *allocator;
 
     allocator = &impl->allocator;
+    mdf_free_mem(allocator, impl->plain_token_input, impl->plain_token_input_cap);
     mdf_render_release_state(impl);
     mdf_free_mem(allocator, impl->inline_text, impl->inline_text_cap);
     mdf_free_mem(allocator, impl->inline_url, impl->inline_url_cap);
@@ -2518,18 +2521,13 @@ static mdf_allocator mdf_string_allocator(const mdf *self)
 
 static void mdf_options_resolve(const mdf_options *opts, mdf_options *resolved)
 {
-    int default_width;
     double default_html_content_width_ch;
 
     mdf_options_init(resolved);
-    default_width = resolved->width;
     default_html_content_width_ch = resolved->html_content_width_ch;
     if (opts != NULL) {
         *resolved = *opts;
         mdf_allocator_prepare(&resolved->allocator);
-    }
-    if (resolved->width <= 0) {
-        resolved->width = default_width;
     }
     if (resolved->html_content_width_ch <= 0.0) {
         resolved->html_content_width_ch = default_html_content_width_ch;
@@ -2542,7 +2540,7 @@ void mdf_options_init(mdf_options *opts)
         return;
     }
     memset(opts, 0, sizeof(*opts));
-    opts->width = 80;
+    opts->output_fd = -1;
     opts->theme_name = NULL;
     opts->html_content_width_ch = 96.0;
     opts->deck_transition = MDF_DECK_TRANSITION_FADE;
@@ -2566,6 +2564,7 @@ mdf_status mdf_parser_create(const mdf_options *opts, mdf_parser **out)
         return MDF_ERROR_INVALID;
     }
     mdf_options_resolve(opts, &defaults);
+    if (defaults.width <= 0) defaults.width = 80;
     theme = mdf_theme_resolve(defaults.theme_name);
     if (theme == NULL) {
         return MDF_ERROR_INVALID;
@@ -2662,6 +2661,24 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     }
     theme_name_explicit = opts != NULL && opts->theme_name != NULL;
     mdf_options_resolve(opts, &defaults);
+    if (defaults.ansi_mode != MDF_ANSI_AUTO && defaults.ansi_mode != MDF_ANSI_ON &&
+        defaults.ansi_mode != MDF_ANSI_OFF) {
+        return MDF_ERROR_INVALID;
+    }
+    if (format == MDF_FORMAT_ANSI) {
+        int terminal;
+
+        terminal = defaults.output_fd >= 0 && isatty(defaults.output_fd);
+        if (defaults.ansi_mode == MDF_ANSI_AUTO) {
+            defaults.ansi_mode = terminal ? MDF_ANSI_ON : MDF_ANSI_OFF;
+        }
+        if (defaults.ansi_mode == MDF_ANSI_OFF) defaults.osc8 = 0;
+        if (defaults.width <= 0) {
+            defaults.width = terminal ? mdf_terminal_width(defaults.output_fd, 80) : 80;
+        }
+    } else if (defaults.width <= 0) {
+        defaults.width = 80;
+    }
     if (defaults.margin_left < 0 || defaults.margin_right < 0) {
         return MDF_ERROR_INVALID;
     }
@@ -3139,7 +3156,7 @@ mdf_status mdf_reset(mdf *renderer)
     }
     impl->render_active = 1;
     st = MDF_OK;
-    if (impl->format == MDF_FORMAT_ANSI && impl->sink_bound) {
+    if (impl->format == MDF_FORMAT_ANSI && impl->opts.ansi_mode != MDF_ANSI_OFF && impl->sink_bound) {
         if (mdf_emit_buffer_reset(impl) != 0 ||
             (impl->opts.osc8 && mdf_emit_buffer_append(impl, "\033]8;;\033\\", 7) != 0) ||
             mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) {
@@ -3642,7 +3659,7 @@ int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)
         return -1;
     }
     if (len == 0) {
-        return mdf_write_all(sink, src, len);
+        return 0;
     }
     mdf_impl_ensure_emit_buffer_initialized(impl);
     if (impl->emit_max_cap > 0 && len > impl->emit_max_cap) {
@@ -3810,4 +3827,105 @@ int mdf_emit_buffer_commit(mdf_impl *impl, mdf_sink *sink)
     rc = mdf_emit_all(impl, sink, impl->emit_buf, len);
     impl->emit_len = 0;
     return rc;
+}
+
+/* Input normalization runs before Markdown parsing. Runs of visible bytes are
+ * passed directly to the parser; only an undecided UTF-8 C2 lead is retained.
+ * Modes: text=0, ESC=1, CSI=2, OSC=3, control string=4, ESC intermediate=5. */
+static void mdf_plain_start_control(mdf_plain_filter *state, unsigned char byte)
+{
+    if (byte == 0x1b) state->mode = 1;
+    else if (byte == 0x9b) state->mode = 2;
+    else if (byte == 0x9d) state->mode = 3;
+    else if (byte == 0x90 || byte == 0x98 || byte == 0x9e || byte == 0x9f) state->mode = 4;
+    state->string_escape = 0;
+}
+
+mdf_status mdf_plain_filter_feed(mdf_plain_filter *state, const char *data, size_t len,
+                                mdf_plain_consumer consume, void *userdata)
+{
+    size_t i;
+    size_t run;
+    unsigned char byte;
+    int visible;
+    mdf_status st;
+
+    run = 0;
+    for (i = 0; i < len; i++) {
+        byte = (unsigned char)data[i];
+        visible = 0;
+        if (state->mode != 0 && (byte == 0x18 || byte == 0x1a)) {
+            /* CAN and SUB cancel any pending escape or control string. */
+            memset(state, 0, sizeof(*state));
+        } else if (state->mode == 3 || state->mode == 4) {
+            if ((byte == 0x9c && (state->utf8_left == 0 || state->pending_c2)) ||
+                (state->string_escape && byte == '\\') || (state->mode == 3 && byte == 7)) {
+                state->mode = 0;
+                state->string_escape = 0;
+            } else state->string_escape = byte == 0x1b;
+            state->pending_c2 = byte == 0xc2;
+            if (state->utf8_left > 0 && byte >= 0x80 && byte <= 0xbf) state->utf8_left--;
+            else if (byte >= 0xc2 && byte <= 0xdf) state->utf8_left = 1;
+            else if (byte >= 0xe0 && byte <= 0xef) state->utf8_left = 2;
+            else if (byte >= 0xf0 && byte <= 0xf4) state->utf8_left = 3;
+            else state->utf8_left = 0;
+            if (state->mode == 0) state->pending_c2 = state->utf8_left = 0;
+        } else if (state->mode != 0) {
+            if (byte == '\n' || byte == '\r') {
+                state->mode = 0;
+                visible = 1;
+            } else if (byte == 0x1b) state->mode = 1;
+            else if (state->mode == 2) {
+                if (byte >= 0x40 && byte <= 0x7e) state->mode = 0;
+            } else if (state->mode == 1 && byte == '[') state->mode = 2;
+            else if (state->mode == 1 && byte == ']') state->mode = 3;
+            else if (state->mode == 1 && (byte == 'P' || byte == 'X' || byte == '^' || byte == '_')) state->mode = 4;
+            else if (byte >= 0x20 && byte <= 0x2f) state->mode = 5;
+            else state->mode = 0;
+        } else {
+            if (state->pending_c2) {
+                state->pending_c2 = 0;
+                if (byte >= 0x80 && byte <= 0x9f) {
+                    mdf_plain_start_control(state, byte);
+                    run = i + 1;
+                    continue;
+                }
+                st = consume(userdata, "\302", 1);
+                if (st != MDF_OK) return st;
+                state->utf8_left = byte >= 0xa0 && byte <= 0xbf ? 1 : 0;
+            }
+            if (state->utf8_left > 0 && byte >= 0x80 && byte <= 0xbf) {
+                state->utf8_left--;
+                visible = 1;
+            } else {
+                state->utf8_left = 0;
+                if (byte == 0x1b || (byte >= 0x80 && byte <= 0x9f)) {
+                    mdf_plain_start_control(state, byte);
+                } else if (byte == 0xc2) state->pending_c2 = 1;
+                else {
+                    visible = byte != 7 && byte != 0x18 && byte != 0x1a;
+                    if (byte >= 0xc3 && byte <= 0xdf) state->utf8_left = 1;
+                    else if (byte >= 0xe0 && byte <= 0xef) state->utf8_left = 2;
+                    else if (byte >= 0xf0 && byte <= 0xf4) state->utf8_left = 3;
+                }
+            }
+        }
+        if (!visible) {
+            if (i > run) {
+                st = consume(userdata, data + run, i - run);
+                if (st != MDF_OK) return st;
+            }
+            run = i + 1;
+        }
+    }
+    return len > run ? consume(userdata, data + run, len - run) : MDF_OK;
+}
+
+mdf_status mdf_plain_filter_finish(mdf_plain_filter *state, mdf_plain_consumer consume, void *userdata)
+{
+    int pending_c2;
+
+    pending_c2 = state->mode == 0 && state->pending_c2;
+    memset(state, 0, sizeof(*state));
+    return pending_c2 ? consume(userdata, "\302", 1) : MDF_OK;
 }

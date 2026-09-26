@@ -632,6 +632,7 @@ static int test_stream_trace_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, plain_markdown, 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "plain one-byte stream render succeeds");
@@ -643,6 +644,7 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, plain_markdown, sizeof(plain_markdown), &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "plain full-chunk stream render succeeds");
@@ -654,6 +656,7 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = render_capture(MDF_FORMAT_ANSI, &opts, heading_markdown, 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled heading one-byte stream render succeeds");
     fails += expect_trace_matches_writes(&cap, "styled heading one-byte stream writes match traces");
@@ -664,6 +667,7 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = render_capture(MDF_FORMAT_ANSI, &opts, heading_markdown, sizeof(heading_markdown), &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled heading full-chunk stream render succeeds");
     fails += expect_trace_matches_writes(&cap, "styled heading full-chunk stream writes match traces");
@@ -674,6 +678,7 @@ static int test_stream_trace_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 34;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
@@ -695,6 +700,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
         opts.write_trace.emit = capture_trace;
@@ -741,6 +747,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 12;
         opts.write_trace.userdata = &cap;
@@ -784,6 +791,7 @@ static int test_stream_trace_contract(void)
 
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen("Hello "), &baseline);
         fails += expect(st == MDF_OK && baseline.failed == 0,
@@ -791,6 +799,7 @@ static int test_stream_trace_contract(void)
         fails += expect_trace_matches_writes(&baseline,
                                              "baseline word-boundary writes match traces");
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = incremental_capture(&opts, markdown, strlen("Hello "), &cap);
         fails += expect(st == MDF_OK && cap.failed == 0,
@@ -808,6 +817,7 @@ static int test_stream_trace_contract(void)
 
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &baseline);
         fails += expect(st == MDF_OK && baseline.failed == 0,
@@ -815,6 +825,7 @@ static int test_stream_trace_contract(void)
         fails += expect_trace_matches_writes(&baseline,
                                              "baseline unresolved inline writes match traces");
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = incremental_capture(&opts, markdown, 1, &cap);
         fails += expect(st == MDF_OK && cap.failed == 0,
@@ -833,6 +844,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
         opts.write_trace.emit = capture_trace;
@@ -873,6 +885,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
         opts.write_trace.emit = capture_trace;
@@ -908,6 +921,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 12;
         opts.write_trace.userdata = &cap;
@@ -948,6 +962,7 @@ static int test_stream_trace_contract(void)
 
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
         fails += expect(st == MDF_OK && baseline.failed == 0,
@@ -957,6 +972,7 @@ static int test_stream_trace_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
         opts.write_trace.emit = capture_trace;
@@ -993,6 +1009,7 @@ static int test_stream_trace_contract(void)
 
         memset(&one_byte, 0, sizeof(one_byte));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &one_byte);
         fails += expect(st == MDF_OK && one_byte.failed == 0,
@@ -1003,6 +1020,7 @@ static int test_stream_trace_contract(void)
                                       "one-byte deferred quote matches Go structure");
         memset(&whole, 0, sizeof(whole));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &whole);
         fails += expect(st == MDF_OK && whole.failed == 0,
@@ -1020,6 +1038,7 @@ static int test_stream_trace_contract(void)
 
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
         fails += expect(st == MDF_OK && baseline.failed == 0,
@@ -1027,6 +1046,7 @@ static int test_stream_trace_contract(void)
         fails += expect_trace_matches_writes(&baseline,
                                              "baseline trailing inline whitespace EOF writes match traces");
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = incremental_capture(&opts, markdown, strlen(markdown), &cap);
         fails += expect(st == MDF_OK && cap.failed == 0,
@@ -1046,6 +1066,7 @@ static int test_stream_trace_contract(void)
 
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &baseline);
         fails += expect(st == MDF_OK && baseline.failed == 0,
@@ -1053,6 +1074,7 @@ static int test_stream_trace_contract(void)
         fails += expect_trace_matches_writes(&baseline,
                                              "baseline trailing inline whitespace newline writes match traces");
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = incremental_capture(&opts, markdown, strlen("hello_ "), &cap);
         fails += expect(st == MDF_OK && cap.failed == 0,
@@ -1073,6 +1095,7 @@ static int test_stream_trace_contract(void)
 
         memset(&one_byte, 0, sizeof(one_byte));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 5;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &one_byte);
@@ -1082,6 +1105,7 @@ static int test_stream_trace_contract(void)
                                              "one-byte deferred list writes match traces");
         memset(&whole, 0, sizeof(whole));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 5;
         st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, strlen(markdown), &whole);
@@ -1118,6 +1142,7 @@ static int test_margin_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 24;
     opts.margin_left = 3;
     opts.margin_right = 2;
@@ -1130,6 +1155,7 @@ static int test_margin_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 28;
     opts.margin_left = 2;
     opts.margin_right = 3;
@@ -1147,6 +1173,7 @@ static int test_margin_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 37;
     opts.margin_left = 10;
     opts.margin_right = 10;
@@ -1178,6 +1205,7 @@ static int test_margin_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 6;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
@@ -1222,6 +1250,7 @@ static int test_table_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 40;
     opts.margin_left = 2;
     opts.margin_right = 2;
@@ -1234,6 +1263,7 @@ static int test_table_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 40;
     opts.margin_left = 2;
     opts.margin_right = 2;
@@ -1267,6 +1297,7 @@ static int test_table_contract(void)
             }
             source[source_len] = '\0';
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.table_buffer_mode = MDF_TABLE_BUFFER_FULL;
             st = render_capture(MDF_FORMAT_ANSI, &opts, source, 4096, &cap);
@@ -1311,6 +1342,7 @@ static int test_chart_trace_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 60;
     opts.margin_left = 4;
     opts.margin_right = 3;
@@ -1347,6 +1379,7 @@ static int test_runtime_width_autolink_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     opts.write_trace.userdata = &cap;
@@ -1398,6 +1431,7 @@ static int test_fallback_link_punctuation_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
@@ -1428,6 +1462,7 @@ static int test_autolink_punctuation_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 1, &cap);
@@ -1462,6 +1497,7 @@ static int test_runtime_width_autolink_margin_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     opts.margin_left = 2;
@@ -1524,6 +1560,7 @@ static int test_runtime_width_quoted_list_autolink_contract(void)
         memset(&cap, 0, sizeof(cap));
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = boring;
         opts.osc8 = 0;
         opts.width = 20;
@@ -1558,6 +1595,7 @@ static int test_runtime_width_quoted_list_autolink_contract(void)
         }
 
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = boring;
         opts.osc8 = 0;
         opts.width = 21;
@@ -1599,6 +1637,7 @@ static int test_runtime_width_autolink_noop_contract(void)
     memset(&cap, 0, sizeof(cap));
     memset(&baseline, 0, sizeof(baseline));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 26;
     opts.margin_left = 1;
     opts.osc8 = 0;
@@ -1633,6 +1672,7 @@ static int test_runtime_width_autolink_noop_contract(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 26;
     opts.margin_left = 1;
     opts.osc8 = 0;
@@ -1663,6 +1703,7 @@ static int test_runtime_width_link_tail_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     opts.write_trace.userdata = &cap;
@@ -1691,6 +1732,7 @@ static int test_runtime_width_link_tail_contract(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 60;
     st = render_capture(MDF_FORMAT_ANSI, &opts, complete, strlen(complete), &baseline);
@@ -1721,6 +1763,7 @@ static int test_runtime_width_code_margin_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 8;
     opts.margin_left = 2;
@@ -1750,6 +1793,7 @@ static int test_runtime_width_code_margin_contract(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 8;
     opts.margin_left = 2;
@@ -1783,6 +1827,7 @@ static int test_runtime_width_list_prefix_progress_contract(void)
     memset(&cap, 0, sizeof(cap));
     memset(&baseline, 0, sizeof(baseline));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 80;
     opts.write_trace.userdata = &cap;
     opts.write_trace.emit = capture_trace;
@@ -1819,6 +1864,7 @@ static int test_runtime_width_list_prefix_progress_contract(void)
 
     inst = NULL;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 80;
     opts.write_trace.userdata = &baseline;
     opts.write_trace.emit = capture_trace;
@@ -1868,6 +1914,7 @@ static int test_html_link_safety_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = render_capture(MDF_FORMAT_HTML, &opts, markdown, 3, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "html link safety corpus render succeeds");
     fails += expect_not_contains(cap.out, "href=\"javascript:", "html rejects javascript hrefs");
@@ -1892,6 +1939,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo_bar*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested underscore render succeeds");
@@ -1900,6 +1948,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo*bar_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested star render succeeds");
@@ -1908,6 +1957,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo \\_bar_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped nested delimiter render succeeds");
@@ -1916,6 +1966,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_)*\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped delimiter in pending emphasis render succeeds");
@@ -1925,6 +1976,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_)*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi chunked escaped delimiter in pending emphasis render succeeds");
@@ -1934,6 +1986,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*\\_foo*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped leading underscore render succeeds");
@@ -1943,6 +1996,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*a\\_*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped trailing underscore render succeeds");
@@ -1952,6 +2006,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo_bar_baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword underscore render succeeds");
@@ -1960,6 +2015,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*a b_c_d b*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi spaced intraword underscore render succeeds");
@@ -1969,6 +2025,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo___bar___baz*\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword underscore run render succeeds");
@@ -1977,6 +2034,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi intraword nested underscore render succeeds");
@@ -1986,6 +2044,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi unmatched nested underscore across words render succeeds");
@@ -1995,6 +2054,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _ bar_*\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nonflanking nested underscore render succeeds");
@@ -2003,6 +2063,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo * bar*_\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nonflanking nested star render succeeds");
@@ -2011,6 +2072,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi pending nested underscore eof render succeeds");
@@ -2019,6 +2081,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo *\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi pending nested star eof render succeeds");
@@ -2027,6 +2090,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested underscore after space render succeeds");
@@ -2036,6 +2100,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar__ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested underscore close render succeeds");
@@ -2045,6 +2110,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo __bar___ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested strong underscore close render succeeds");
@@ -2054,6 +2120,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo *bar** baz_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested star close render succeeds");
@@ -2063,6 +2130,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo **bar*** baz_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer nested strong star close render succeeds");
@@ -2072,6 +2140,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar \\* baz_* qux\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped star inside nested emphasis render succeeds");
@@ -2081,6 +2150,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar \\[baz\\]_ qux*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped brackets inside nested emphasis render succeeds");
@@ -2090,6 +2160,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_*(_\\*__ ]\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed nested close render succeeds");
@@ -2098,6 +2169,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "(_*_)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2109,6 +2181,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "(_*_)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
                     "styled ansi parenthesized nested emphasis render succeeds");
@@ -2129,6 +2202,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 7;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
@@ -2139,6 +2213,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_ baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis inside strong render succeeds");
@@ -2148,6 +2223,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo *bar* baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-delimiter nested emphasis render succeeds");
@@ -2158,6 +2234,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo*bar* baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi adjacent same-delimiter nested emphasis render succeeds");
@@ -2166,6 +2243,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis render succeeds");
@@ -2174,6 +2252,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo **bar** baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi longer same-marker nested run render succeeds");
@@ -2182,6 +2261,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo * bar* baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi whitespace same-marker nested span render succeeds");
@@ -2190,6 +2270,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\nX\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis followed by text render succeeds");
@@ -2198,6 +2279,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo *bar* baz*\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested emphasis full chunk render succeeds");
@@ -2206,6 +2288,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_foo _bar_ baz_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested underscore render succeeds");
@@ -2214,6 +2297,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo **bar** baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-marker nested strong render succeeds");
@@ -2222,6 +2306,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI,
                         &opts,
@@ -2240,6 +2325,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo *bar* baz**\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi same-delimiter nested emphasis full chunk render succeeds");
@@ -2249,6 +2335,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo*bar* baz**\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi adjacent same-delimiter nested emphasis full chunk render succeeds");
@@ -2257,6 +2344,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "***foo _bar_ baz***\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple outer nested emphasis render succeeds");
@@ -2267,6 +2355,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "***foo _bar_ baz***\n", 64, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple outer nested emphasis full chunk render succeeds");
@@ -2276,6 +2365,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_ baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested emphasis space continuation render succeeds");
@@ -2289,6 +2379,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _bar_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi same-kind nested emphasis render succeeds");
@@ -2299,6 +2390,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "# *foo _bar_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi heading same-kind nested emphasis render succeeds");
@@ -2312,6 +2404,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _bar_, baz**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested emphasis punctuation continuation render succeeds");
@@ -2322,6 +2415,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _[bar](https://e)_ baz*\n", 1, &cap);
@@ -2332,6 +2426,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*foo _[bar](https://e)_ baz*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi link inside nested emphasis render succeeds");
@@ -2341,6 +2436,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "*[x](u)*\n", 1, &cap);
@@ -2350,6 +2446,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_[x](u)_\n", 1, &cap);
@@ -2359,6 +2456,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**[x](u)**\n", 1, &cap);
@@ -2368,6 +2466,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "# *[x](https://e) y*\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi heading emphasized link render succeeds");
@@ -2378,6 +2477,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "**foo _[bar](https://e) baz_ qux**\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "styled ansi nested link resumes inner emphasis render succeeds");
@@ -2387,6 +2487,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[`link`](http://link.example) [*em*](http://link.example) [**strong**](http://link.example)\n",
@@ -2403,6 +2504,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[`code` and *em*](http://link.example)\n", 1, &cap);
@@ -2414,6 +2516,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[plain `code` and *em*](http://link.example)\n", 1, &cap);
@@ -2425,6 +2528,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[plain *em* tail](http://link.example)\n", 1, &cap);
@@ -2437,6 +2541,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[foo_bar_baz](http://link.example) [escaped \\*stars\\*](http://link.example)\n", 1, &cap);
@@ -2447,6 +2552,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.osc8 = 0;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
@@ -2460,6 +2566,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo\\* literal](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi escaped emphasis closer link label render succeeds");
@@ -2468,6 +2575,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[x *foo `*` bar* y](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi emphasis around code-span delimiter link label render succeeds");
@@ -2477,6 +2585,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[***both***](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple-emphasis link label render succeeds");
@@ -2486,6 +2595,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[***foo**](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2497,6 +2607,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[*foo**](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2508,6 +2619,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[`a  b`](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2519,6 +2631,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[*a **b** c*](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2530,6 +2643,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 100;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "[https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n",
@@ -2543,6 +2657,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 20;
     st = render_capture(MDF_FORMAT_ANSI, &opts,
                         "# [https://pkt.systems/centaur.md](https://pkt.systems/centaur.md)\n",
@@ -2557,6 +2672,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 5;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[https://x](u)\n", 1, &cap);
@@ -2573,6 +2689,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 5;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "https://x\n", 1, &cap);
@@ -2589,6 +2706,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 5;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "ftp://x git://x\n", 1, &cap);
@@ -2607,6 +2725,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 5;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "foo:/barbaz\n", 1, &cap);
@@ -2619,6 +2738,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 4;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "foo:/", 1, &cap);
@@ -2631,6 +2751,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 80;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "note:longword\n", 1, &cap);
@@ -2647,6 +2768,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.osc8 = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[a **b *c* d** e](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi nested emphasis link label render succeeds");
@@ -2657,6 +2779,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[` foo `](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi padded code link label render succeeds");
@@ -2666,6 +2789,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo```](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi malformed code link label render succeeds");
@@ -2674,6 +2798,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[``foo``bar``](http://link.example)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi internal code closer link label render succeeds");
@@ -2683,6 +2808,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "_***both***_\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "ansi triple nested emphasis render succeeds");
@@ -2693,6 +2819,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "[****foo****](https://x)\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2704,6 +2831,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     capture_free(&cap);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 40;
     opts.margin_left = 10;
     opts.osc8 = 0;
@@ -2741,6 +2869,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             memset(source + sizeof(prefix) - 1, 'x', label_len);
             memcpy(source + sizeof(prefix) - 1 + label_len, suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
             fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2770,6 +2899,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             memset(source + sizeof(prefix) - 1, 'x', label_len);
             memcpy(source + sizeof(prefix) - 1 + label_len, suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.osc8 = 0;
             opts.width = 10000;
             st = render_capture(MDF_FORMAT_ANSI, &opts, source, 1, &cap);
@@ -2783,6 +2913,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 40;
     st = render_capture(MDF_FORMAT_ANSI, &opts, "([this label](./x))\n", 1, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0,
@@ -2815,6 +2946,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
                         "nested styled link-label emission buffer allocates");
         if (emission_buffer != NULL) {
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.osc8 = 0;
             opts.emission_buffer.data = emission_buffer;
             opts.emission_buffer.cap = 512;
@@ -2850,6 +2982,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             memset(source + 2 + delimiters, '*', delimiters);
             memcpy(source + 2 + delimiters + delimiters, suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 0;
             started = clock();
@@ -2889,6 +3022,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             }
             memcpy(source + offset, suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             started = clock();
             st = render_count(MDF_FORMAT_ANSI, &opts, source, source_len, &count);
@@ -2921,6 +3055,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             }
             memcpy(source + 1 + repeats * (sizeof(unit) - 1), suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 80;
             st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
@@ -2949,6 +3084,7 @@ static int test_ansi_nested_emphasis_edge_contract(void)
             memset(source + 1, '`', backticks);
             memcpy(source + 1 + backticks, suffix, sizeof(suffix));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 80;
             st = render_capture(MDF_FORMAT_ANSI, &opts, source, source_len, &cap);
@@ -2976,6 +3112,7 @@ static int test_html_blockquote_nested_emphasis_contract(void)
 
     fails = 0;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = render_capture(MDF_FORMAT_HTML, &opts, markdown, 3, &cap);
     fails += expect(st == MDF_OK && cap.failed == 0, "html quoted nested emphasis render succeeds");
     fails += expect_contains(cap.out, "class=\"mdf-content\"", "html quoted line has content wrapper");
@@ -3010,6 +3147,7 @@ static int test_runtime_geometry_stream_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 12;
     opts.boring = 1;
     opts.write_trace.userdata = &cap;
@@ -3085,6 +3223,7 @@ static int test_runtime_geometry_pending_contract(void)
         memset(&cap, 0, sizeof(cap));
         memset(&baseline, 0, sizeof(baseline));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
@@ -3107,6 +3246,7 @@ static int test_runtime_geometry_pending_contract(void)
                                              "pending geometry sink writes match traces");
         if (inst != NULL) inst->destroy(inst);
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 12;
         opts.margin_left = 2;
         opts.margin_right = 2;
@@ -3137,6 +3277,7 @@ static int test_runtime_geometry_midline_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 20;
     opts.boring = 1;
     opts.write_trace.userdata = &cap;
@@ -3179,6 +3320,7 @@ static int test_runtime_geometry_zero_margin_after_newline_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 20;
     opts.boring = 1;
     opts.write_trace.userdata = &cap;
@@ -3250,6 +3392,7 @@ static int test_runtime_geometry_margin_transition_matrix(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.margin_left = cases[i].initial_left;
         opts.boring = 1;
@@ -3337,6 +3480,7 @@ static int test_runtime_geometry_repeated_midline_updates(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
@@ -3407,6 +3551,7 @@ static int test_runtime_geometry_midline_pending_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.boring = 1;
         opts.write_trace.userdata = &cap;
@@ -3457,6 +3602,7 @@ static int test_runtime_geometry_quoted_list_contract(void)
         inst = NULL;
         memset(&cap, 0, sizeof(cap));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 30;
         opts.margin_left = old_margins[i];
         opts.boring = 1;
@@ -3505,6 +3651,7 @@ static int test_runtime_geometry_row_table_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 16;
     opts.boring = 1;
     opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
@@ -3568,6 +3715,7 @@ static int test_runtime_geometry_row_table_word_width_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 20;
     opts.boring = 1;
     opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
@@ -3618,6 +3766,7 @@ static int test_runtime_geometry_row_table_wide_glyph_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 30;
     opts.boring = 1;
     opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
@@ -3670,6 +3819,7 @@ static int test_runtime_geometry_full_table_contract(void)
     memset(&cap, 0, sizeof(cap));
     memset(&baseline, 0, sizeof(baseline));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 80;
     opts.boring = 1;
     opts.table_buffer_mode = MDF_TABLE_BUFFER_FULL;
@@ -3698,6 +3848,7 @@ static int test_runtime_geometry_full_table_contract(void)
     if (inst != NULL) inst->destroy(inst);
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 22;
     opts.margin_left = 2;
     opts.margin_right = 2;
@@ -3729,6 +3880,7 @@ static int test_runtime_geometry_headerless_row_table_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 12;
     opts.boring = 1;
     opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
@@ -3776,6 +3928,7 @@ static int test_runtime_geometry_next_document_contract(void)
     inst = NULL;
     memset(&cap, 0, sizeof(cap));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 12;
     opts.boring = 1;
     opts.write_trace.userdata = &cap;
@@ -3803,6 +3956,47 @@ static int test_runtime_geometry_next_document_contract(void)
     return fails;
 }
 
+static int test_unicode_width_stream_contract(void)
+{
+    static const char *const inputs[] = {
+        "abc d\n", "aµb c\n", "a˿b c\n", "àbc d\n",
+        "aͯbc d\n", "aͰb c\n", "a界 b\n"
+    };
+    static const char *const outputs[] = {
+        "abc\nd\n", "aµb\nc\n", "a˿b\nc\n", "àbc\nd\n",
+        "aͯbc\nd\n", "aͰb\nc\n", "a界\nb\n"
+    };
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    size_t i;
+    int mode;
+    int fails;
+
+    fails = 0;
+    for (mode = 0; mode < 2; mode++) {
+        mdf_options_init(&opts);
+        opts.width = 3;
+        opts.boring = 1;
+        opts.ansi_mode = mode == 0 ? MDF_ANSI_ON : MDF_ANSI_OFF;
+        for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+            st = render_capture(MDF_FORMAT_ANSI, &opts, inputs[i], 4096, &whole);
+            fails += expect(st == MDF_OK && whole.out != NULL && strcmp(whole.out, outputs[i]) == 0,
+                            "ASCII, Latin, combining-boundary and wide glyphs wrap by display width");
+            fails += expect_trace_matches_writes(&whole, "Unicode width sink writes match traces");
+            st = render_capture(MDF_FORMAT_ANSI, &opts, inputs[i], 1, &split);
+            fails += expect(st == MDF_OK && split.out != NULL && strcmp(split.out, outputs[i]) == 0,
+                            "fragmented Unicode width preserves visible output");
+            fails += expect_trace_matches_writes(&split, "fragmented Unicode width sink writes match traces");
+            fails += expect_capture_writes_equal(&split, &whole, "Unicode width preserves each decision across chunks");
+            capture_free(&whole);
+            capture_free(&split);
+        }
+    }
+    return fails;
+}
+
 int main(int argc, char **argv)
 {
     int fails;
@@ -3815,6 +4009,7 @@ int main(int argc, char **argv)
     }
     fails = 0;
     fails += test_stream_trace_contract();
+    fails += test_unicode_width_stream_contract();
     fails += test_margin_contract();
     fails += test_table_contract();
     fails += test_chart_trace_contract();

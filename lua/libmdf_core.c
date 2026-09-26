@@ -4,6 +4,7 @@
 #include <libmdf/mdf.h>
 
 #include <ctype.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -57,6 +58,39 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_VALUE_TRACE 4
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
+
+/* Borrow the descriptor from a live Lua file; never close or retain the file.
+ * Deferred truncation below remains private to cmdf.lua. */
+static FILE *lua_mdf_output_file(lua_State *L)
+{
+    luaL_Stream *stream;
+
+    stream = (luaL_Stream *)luaL_checkudata(L, 1, LUA_FILEHANDLE);
+    luaL_argcheck(L, stream->f != NULL && stream->closef != NULL, 1, "file is closed");
+    return stream->f;
+}
+
+static int lua_mdf_file_descriptor(lua_State *L)
+{
+    lua_pushinteger(L, fileno(lua_mdf_output_file(L)));
+    return 1;
+}
+
+static int lua_mdf_truncate_output(lua_State *L)
+{
+    FILE *file;
+    struct stat info;
+    int fd;
+
+    file = lua_mdf_output_file(L);
+    fd = fileno(file);
+    if (fstat(fd, &info) != 0 ||
+        (S_ISREG(info.st_mode) && (fflush(file) != 0 || ftruncate(fd, 0) != 0))) {
+        return luaL_error(L, "cmdf.lua: prepare output: %s", strerror(errno));
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
 
 static int lua_mdf_check_int_arg(lua_State *L, int index)
 {
@@ -355,6 +389,19 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     if (lua_mdf_get_boolean_field(L, index, "boring")) {
         opts->boring = 1;
     }
+    lua_getfield(L, index, "ansi_mode");
+    if (!lua_isnil(L, -1)) {
+        const char *mode;
+        mode = luaL_checkstring(L, -1);
+        if (strcmp(mode, "auto") == 0) opts->ansi_mode = MDF_ANSI_AUTO;
+        else if (strcmp(mode, "on") == 0) opts->ansi_mode = MDF_ANSI_ON;
+        else if (strcmp(mode, "off") == 0) opts->ansi_mode = MDF_ANSI_OFF;
+        else luaL_error(L, "ansi_mode must be auto, on, or off");
+    }
+    lua_pop(L, 1);
+    lua_getfield(L, index, "output_fd");
+    if (!lua_isnil(L, -1)) opts->output_fd = lua_mdf_check_option_int(L, -1, "output_fd");
+    lua_pop(L, 1);
     lua_getfield(L, index, "osc8");
     if (!lua_isnil(L, -1)) {
         opts->osc8 = lua_toboolean(L, -1);
@@ -1770,6 +1817,8 @@ static int lua_mdf_pager(lua_State *L)
 }
 
 static const luaL_Reg lua_mdf_funcs[] = {
+    {"file_descriptor", lua_mdf_file_descriptor},
+    {"_truncate_output", lua_mdf_truncate_output},
     {"new", lua_mdf_new},
     {"create", lua_mdf_new},
     {"document_stream", lua_mdf_document_stream_new},

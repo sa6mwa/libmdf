@@ -539,7 +539,7 @@ static int ansi_write_styled_split_word_full_width(mdf_impl *impl, mdf_sink *sin
         return ansi_write_direct_visible(impl, sink, src, len);
     }
     off = 0;
-    need_style = style != NULL && style[0] != '\0' && !impl->opts.boring;
+    need_style = style != NULL && style[0] != '\0' && MDF_ANSI_STYLED(impl);
     chunk_cols = 0;
     while (off < len) {
         unsigned long cp;
@@ -552,9 +552,9 @@ static int ansi_write_styled_split_word_full_width(mdf_impl *impl, mdf_sink *sin
         }
         cols = (int)utf8_display_width(cp);
         if (chunk_cols > 0 && chunk_cols + cols > limit) {
-            if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+            if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
             if (ansi_emit_newline(impl, sink) != 0) return -1;
-            need_style = style != NULL && style[0] != '\0' && !impl->opts.boring;
+            need_style = style != NULL && style[0] != '\0' && MDF_ANSI_STYLED(impl);
             chunk_cols = 0;
         }
         if (need_style) {
@@ -579,7 +579,7 @@ static int ansi_write_styled_split_word_reset_suffix(mdf_impl *impl, mdf_sink *s
     if (ansi_write_styled_split_word_full_width(impl, sink, style, text, text_len) != 0) {
         return -1;
     }
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) {
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) {
         return -1;
     }
     if (suffix_len == 0) {
@@ -762,7 +762,7 @@ static int ansi_sim_emit_styled_visible_chunk(mdf_impl *impl, mdf_sink *sink,
         return -1;
     }
     reset_styles = (impl->ansi_pending_style_reset || impl->quote_text_open) &&
-                   !impl->opts.boring;
+                   MDF_ANSI_STYLED(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         (reset_styles && mdf_emit_buffer_append_cstr(impl, "\033[0m") != 0) ||
         ansi_sim_style_append(impl, style) != 0 ||
@@ -1466,7 +1466,7 @@ static int ansi_flush_pending_exact_fallback(mdf_impl *impl, mdf_sink *sink, cha
         return 0;
     }
     url_style = "";
-    if (!impl->opts.boring && next_char != '.') {
+    if (MDF_ANSI_STYLED(impl) && next_char != '.') {
         url_style = mdf_theme_link_url(impl);
     }
     content_limit = ansi_content_limit(impl);
@@ -1549,7 +1549,7 @@ static int ansi_emit_pending_exact_fallback_with_period(mdf_impl *impl, mdf_sink
         return 0;
     }
     if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
-    url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
+    url_style = !MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
         (url_style[0] != '\0' && mdf_emit_buffer_append_cstr(impl, url_style) != 0) ||
@@ -1583,7 +1583,7 @@ static int ansi_emit_pending_exact_fallback_with_close(mdf_impl *impl, mdf_sink 
         return 0;
     }
     if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
-    url_style = impl->opts.boring ? "" : mdf_theme_link_url(impl);
+    url_style = !MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_url(impl);
     if (mdf_emit_buffer_reset(impl) != 0 ||
         mdf_emit_buffer_append(impl, "(", 1) != 0 ||
         (url_style[0] != '\0' && mdf_emit_buffer_append_cstr(impl, url_style) != 0) ||
@@ -1882,7 +1882,15 @@ static int unicode_is_wide(unsigned long cp)
 
 size_t utf8_display_width(unsigned long cp)
 {
-    if (cp == 0 || cp < 0x20 || (cp >= 0x7f && cp < 0xa0) || unicode_is_combining(cp)) {
+    if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0)) {
+        return 0;
+    }
+    /* Printable ASCII and Latin characters precede every combining/wide
+     * range. Avoid traversing those predicates for ordinary text. */
+    if (cp < 0x0300) {
+        return 1;
+    }
+    if (unicode_is_combining(cp)) {
         return 0;
     }
     if (unicode_is_wide(cp)) {
@@ -1977,7 +1985,7 @@ int ansi_emit_pending_style_reset(mdf_impl *impl, mdf_sink *sink)
     }
     impl->ansi_pending_style_reset = 0;
     impl->quote_text_open = 0;
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         return 0;
     }
     return mdf_emit_cstr(impl, sink, "\033[0m");
@@ -1987,7 +1995,7 @@ static int ansi_quote_text_active(const mdf_impl *impl)
 {
     const char *style;
 
-    if (impl->opts.boring || impl->in_pre || impl->heading_open) {
+    if (!MDF_ANSI_STYLED(impl) || impl->in_pre || impl->heading_open) {
         return 0;
     }
     if (!(impl->quote_open || impl->quote_wrap_active || impl->quote_depth > 0)) {
@@ -2014,7 +2022,7 @@ static int ansi_close_quote_text(mdf_impl *impl, mdf_sink *sink)
         return 0;
     }
     impl->quote_text_open = 0;
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         return 0;
     }
     return mdf_emit_cstr(impl, sink, "\033[0m");
@@ -2026,7 +2034,7 @@ int ansi_emit_quote_marker(mdf_impl *impl, mdf_sink *sink, int trailing_space)
 
     if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
     if (ansi_close_quote_text(impl, sink) != 0) return -1;
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, trailing_space ? "> " : ">") != 0) return -1;
         return 0;
     }
@@ -2053,12 +2061,12 @@ static int ansi_emit_newline(mdf_impl *impl, mdf_sink *sink)
     if (ansi_suspend_osc8_link_for_newline(impl, sink) != 0) return -1;
     if (ansi_close_quote_text(impl, sink) != 0) return -1;
     ansi_reset_line_output_state(impl);
-    if (impl->ansi_active_inline_style != NULL && !impl->opts.boring) {
+    if (impl->ansi_active_inline_style != NULL && MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         impl->ansi_pending_inline_style = impl->ansi_active_inline_style;
     }
     if (ansi_emit_pending_style_reset(impl, sink) != 0) return -1;
-    if (impl->heading_open && !impl->heading_style_suspended && !impl->opts.boring) {
+    if (impl->heading_open && !impl->heading_style_suspended && MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     }
     if (ansi_emit_raw_newline(impl, sink) != 0) {
@@ -2081,10 +2089,10 @@ static int ansi_emit_newline(mdf_impl *impl, mdf_sink *sink)
             char buf[256];
             size_t off;
 
-            unit = impl->opts.boring ? "> " : "\033[90m>\033[0m ";
-            unit_len = impl->opts.boring ? 2 : 11;
+            unit = !MDF_ANSI_STYLED(impl) ? "> " : "\033[90m>\033[0m ";
+            unit_len = !MDF_ANSI_STYLED(impl) ? 2 : 11;
             off = 0;
-            if (!impl->opts.boring && strcmp(mdf_theme_quote(impl), "\033[90m") != 0) {
+            if (MDF_ANSI_STYLED(impl) && strcmp(mdf_theme_quote(impl), "\033[90m") != 0) {
                 if (quote_prefix_indent > 0 &&
                     ansi_write_spaces(impl, sink, (size_t)quote_prefix_indent) != 0) return -1;
                 for (i = 0; i < quote_depth; i++) {
@@ -2129,7 +2137,7 @@ static int ansi_emit_newline(mdf_impl *impl, mdf_sink *sink)
         if (heading_indent > 0) {
             if (ansi_write_spaces(impl, sink, (size_t)heading_indent) != 0) return -1;
         }
-        impl->heading_style_pending_prefix = impl->opts.boring ? 0 : 1;
+        impl->heading_style_pending_prefix = !MDF_ANSI_STYLED(impl) ? 0 : 1;
         impl->heading_style_suspended = 0;
     }
     return 0;
@@ -2140,7 +2148,7 @@ int ansi_emit_plain_newline(mdf_impl *impl, mdf_sink *sink)
     if (ansi_suspend_osc8_link_for_newline(impl, sink) != 0) return -1;
     if (ansi_close_quote_text(impl, sink) != 0) return -1;
     ansi_reset_line_output_state(impl);
-    if (impl->ansi_active_inline_style != NULL && !impl->opts.boring) {
+    if (impl->ansi_active_inline_style != NULL && MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         impl->ansi_pending_inline_style = impl->ansi_active_inline_style;
     }
@@ -2158,7 +2166,7 @@ int ansi_emit_quote_newline(mdf_impl *impl, mdf_sink *sink)
     if (ansi_suspend_osc8_link_for_newline(impl, sink) != 0) return -1;
     if (ansi_close_quote_text(impl, sink) != 0) return -1;
     ansi_reset_line_output_state(impl);
-    if (impl->ansi_active_inline_style != NULL && !impl->opts.boring) {
+    if (impl->ansi_active_inline_style != NULL && MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         impl->ansi_pending_inline_style = impl->ansi_active_inline_style;
     }
@@ -2182,11 +2190,11 @@ int ansi_emit_quote_newline(mdf_impl *impl, mdf_sink *sink)
         size_t off;
         int quote_prefix_emitted;
 
-        unit = impl->opts.boring ? "> " : "\033[90m>\033[0m ";
-        unit_len = impl->opts.boring ? 2 : 11;
+        unit = !MDF_ANSI_STYLED(impl) ? "> " : "\033[90m>\033[0m ";
+        unit_len = !MDF_ANSI_STYLED(impl) ? 2 : 11;
         off = 0;
         quote_prefix_emitted = 0;
-        if (!impl->opts.boring && strcmp(mdf_theme_quote(impl), "\033[90m") != 0) {
+        if (MDF_ANSI_STYLED(impl) && strcmp(mdf_theme_quote(impl), "\033[90m") != 0) {
             if (quote_prefix_indent > 0 &&
                 ansi_write_spaces(impl, sink, (size_t)quote_prefix_indent) != 0) return -1;
             for (i = 0; i < quote_depth; i++) {
@@ -2319,7 +2327,7 @@ int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, siz
     if (src[0] != '\n' && ansi_reopen_osc8_link_if_needed(impl, sink) != 0) {
         return -1;
     }
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         impl->heading_style_pending_prefix = 0;
         impl->ansi_pending_inline_style = NULL;
         impl->ansi_pending_style_reset = 0;
@@ -2327,7 +2335,7 @@ int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, siz
     }
     reset = "";
     reset_len = 0;
-    if (impl->ansi_pending_style_reset && !impl->opts.boring) {
+    if (impl->ansi_pending_style_reset && MDF_ANSI_STYLED(impl)) {
         reset = "\033[0m";
         reset_len = 4;
         impl->quote_text_open = 0;
@@ -2356,8 +2364,8 @@ int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, siz
         quote_text = mdf_theme_quote_text(impl);
         quote_text_len = strlen(quote_text);
     }
-    if ((impl->heading_style_pending_prefix && !impl->opts.boring) ||
-        (impl->ansi_pending_inline_style != NULL && !impl->opts.boring) ||
+    if ((impl->heading_style_pending_prefix && MDF_ANSI_STYLED(impl)) ||
+        (impl->ansi_pending_inline_style != NULL && MDF_ANSI_STYLED(impl)) ||
         reset_len > 0 ||
         quote_text_len > 0) {
         const char *style;
@@ -2365,8 +2373,8 @@ int ansi_emit_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *src, siz
         size_t style_len;
         size_t inline_style_len;
 
-        style = (impl->heading_style_pending_prefix && !impl->opts.boring) ? ansi_heading_style(impl, impl->heading_level) : "";
-        inline_style = (impl->ansi_pending_inline_style != NULL && !impl->opts.boring) ? impl->ansi_pending_inline_style : "";
+        style = (impl->heading_style_pending_prefix && MDF_ANSI_STYLED(impl)) ? ansi_heading_style(impl, impl->heading_level) : "";
+        inline_style = (impl->ansi_pending_inline_style != NULL && MDF_ANSI_STYLED(impl)) ? impl->ansi_pending_inline_style : "";
         style_len = strlen(style);
         inline_style_len = strlen(inline_style);
         if (mdf_emit_buffer_reset(impl) != 0 ||
@@ -2410,21 +2418,21 @@ int ansi_emit_styled_visible_chunk(mdf_impl *impl, mdf_sink *sink, const char *s
     if (len > 0 && src[0] != '\n' && ansi_reopen_osc8_link_if_needed(impl, sink) != 0) {
         return -1;
     }
-    if ((style == NULL || style[0] == '\0' || impl->opts.boring) &&
+    if ((style == NULL || style[0] == '\0' || !MDF_ANSI_STYLED(impl)) &&
         !impl->ansi_pending_style_reset &&
         !impl->quote_text_open) {
         return ansi_emit_visible_chunk(impl, sink, src, len);
     }
     reset = "";
     reset_len = 0;
-    if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
+    if ((impl->ansi_pending_style_reset || impl->quote_text_open) && MDF_ANSI_STYLED(impl)) {
         reset = "\033[0m";
         reset_len = 4;
     }
     if (impl->ansi_pending_inline_style != NULL && style == NULL) {
         style = impl->ansi_pending_inline_style;
     }
-    style_len = (style == NULL || impl->opts.boring) ? 0 : strlen(style);
+    style_len = (style == NULL || !MDF_ANSI_STYLED(impl)) ? 0 : strlen(style);
     if (style_len == 0 && reset_len == 0) {
         return ansi_emit_visible_chunk(impl, sink, src, len);
     }
@@ -2471,7 +2479,7 @@ int ansi_emit_styled_prefix(mdf_impl *impl, mdf_sink *sink, const char *style)
     if (ansi_close_quote_text(impl, sink) != 0) {
         return -1;
     }
-    if (style == NULL || style[0] == '\0' || impl->opts.boring) {
+    if (style == NULL || style[0] == '\0' || !MDF_ANSI_STYLED(impl)) {
         return 0;
     }
     impl->heading_style_pending_prefix = 0;
@@ -2488,9 +2496,9 @@ static int ansi_emit_styled_word_reset_suffix(mdf_impl *impl, mdf_sink *sink, co
     const char *quote_text;
     size_t quote_text_len;
 
-    style_len = (style == NULL || impl->opts.boring) ? 0 : strlen(style);
-    prefix_reset_len = (!impl->opts.boring && style_len > 0 && impl->quote_text_open) ? 4 : 0;
-    reset_len = impl->opts.boring ? 0 : 4;
+    style_len = (style == NULL || !MDF_ANSI_STYLED(impl)) ? 0 : strlen(style);
+    prefix_reset_len = (MDF_ANSI_STYLED(impl) && style_len > 0 && impl->quote_text_open) ? 4 : 0;
+    reset_len = !MDF_ANSI_STYLED(impl) ? 0 : 4;
     quote_text = "";
     quote_text_len = 0;
     if (suffix_len > 0 && suffix[0] != ' ' && reset_len > 0 && ansi_quote_text_active(impl)) {
@@ -2891,7 +2899,7 @@ static int ansi_emit_pending_code_with_punct_on_continuation(mdf_impl *impl, mdf
         }
         emitted_newline = 1;
     }
-    if (saved_reset && !impl->opts.boring) {
+    if (saved_reset && MDF_ANSI_STYLED(impl)) {
         if (ansi_pending_emit_append(impl, "\033[0m", 4) != 0) {
             mdf_impl_mark_oom(impl);
             ansi_pending_emit_clear(impl);
@@ -2965,7 +2973,7 @@ static int ansi_emit_pending_code_with_punct(mdf_impl *impl, mdf_sink *sink, cha
          (impl->ansi_wrap_indent > 0 &&
           impl->ansi_wrap_indent + code_cols_without_leading_space + 1 > impl->opts.width) ||
          code_cols_without_leading_space + 1 > impl->opts.width - 2)) {
-        if (!impl->opts.boring &&
+        if (MDF_ANSI_STYLED(impl) &&
             ansi_pending_code_can_move_to_continuation(impl, code_cols_without_leading_space)) {
             return ansi_emit_pending_code_with_punct_on_continuation(impl, sink, c, code_cols_without_leading_space);
         }
@@ -2978,7 +2986,7 @@ static int ansi_emit_pending_code_with_punct(mdf_impl *impl, mdf_sink *sink, cha
                     memchr(impl->ansi_pending_emit, '\n', impl->ansi_pending_emit_len) != NULL;
     if (replay_chunks) {
         if (ansi_flush_pending_code_emit(impl, sink) != 0) return -1;
-        if (impl->ansi_pending_style_reset && !impl->opts.boring) {
+        if (impl->ansi_pending_style_reset && MDF_ANSI_STYLED(impl)) {
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, "\033[0m", 4) != 0 ||
                 mdf_emit_buffer_append(impl, &c, 1) != 0) {
@@ -2995,7 +3003,7 @@ static int ansi_emit_pending_code_with_punct(mdf_impl *impl, mdf_sink *sink, cha
         impl->ansi_line_has_space = 1;
         return 0;
     }
-    if (impl->ansi_pending_style_reset && !impl->opts.boring) {
+    if (impl->ansi_pending_style_reset && MDF_ANSI_STYLED(impl)) {
         if (ansi_pending_emit_append(impl, "\033[0m", 4) != 0) {
             mdf_impl_mark_oom(impl);
             return -1;
@@ -3036,7 +3044,7 @@ static int ansi_emit_pending_autolink_with_punct(mdf_impl *impl, mdf_sink *sink,
     if (!impl->ansi_pending_autolink_emit_valid) {
         return 0;
     }
-    if (impl->ansi_pending_style_reset && !impl->opts.boring) {
+    if (impl->ansi_pending_style_reset && MDF_ANSI_STYLED(impl)) {
         if (ansi_pending_emit_append_attached(impl, "\033[0m", 4) != 0) {
             mdf_impl_mark_oom(impl);
             return -1;
@@ -3117,7 +3125,7 @@ int ansi_emit_quote_prefix(mdf_impl *impl, mdf_sink *sink, size_t prefix_spaces,
     for (i = 0; i < prefix_spaces; i++) {
         buf[off++] = ' ';
     }
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         memcpy(buf + off, "> ", 2);
         off += 2;
     } else if (strcmp(mdf_theme_quote(impl), "\033[90m") == 0) {
@@ -3149,7 +3157,7 @@ int ansi_emit_quote_prefix_split(mdf_impl *impl, mdf_sink *sink, size_t prefix_s
         if (mdf_emit_cstr(impl, sink, " ") != 0) return -1;
         impl->ansi_col++;
     }
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, ">") != 0) return -1;
     } else if (ansi_emit_quote_marker(impl, sink, 0) != 0) return -1;
     impl->ansi_col++;
@@ -3202,7 +3210,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
         impl->ansi_pending_final_emph_word_suffix = 0;
         impl->ansi_pending_final_emph_base_len = 0;
         impl->ansi_pending_final_emph_base_cols = 0;
-        if (!impl->opts.boring &&
+        if (MDF_ANSI_STYLED(impl) &&
             impl->ansi_active_inline_style != final_emph_style &&
             impl->ansi_pending_inline_style != final_emph_style) {
             impl->ansi_pending_attached_style = final_emph_style;
@@ -3236,7 +3244,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
             !can_split_after_space) {
             if (ansi_emit_newline(impl, sink) != 0) return -1;
         } else {
-            if (impl->heading_open && impl->heading_style_suspended && !impl->opts.boring) {
+            if (impl->heading_open && impl->heading_style_suspended && MDF_ANSI_STYLED(impl)) {
                 impl->ansi_pending_style_reset = 1;
                 impl->heading_style_pending_prefix = 1;
                 impl->heading_style_suspended = 0;
@@ -3253,7 +3261,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
                 impl->ansi_prev_char = ' ';
                 impl->ansi_line_has_space = 1;
             } else if (impl->ansi_pending_style_reset ||
-                (!impl->opts.boring && impl->ansi_pending_inline_style != NULL)) {
+                (MDF_ANSI_STYLED(impl) && impl->ansi_pending_inline_style != NULL)) {
                 if (ansi_emit_visible_chunk(impl, sink, " ", 1) != 0) return -1;
             } else if (ansi_write_word_byte(impl, sink, ' ') != 0) return -1;
         }
@@ -3262,7 +3270,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
                !prefix_only_line) {
         if (ansi_emit_newline(impl, sink) != 0) return -1;
     }
-    if (impl->heading_open && impl->heading_style_suspended && !impl->opts.boring) {
+    if (impl->heading_open && impl->heading_style_suspended && MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
         impl->heading_style_pending_prefix = 1;
         impl->heading_style_suspended = 0;
@@ -3287,7 +3295,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
             impl->ansi_pending_final_emph_base_len = impl->ansi_word_len;
             impl->ansi_pending_final_emph_base_cols = impl->ansi_word_cols;
         }
-        emit_style = (!impl->opts.boring &&
+        emit_style = (MDF_ANSI_STYLED(impl) &&
                       impl->ansi_active_inline_style == final_emph_style &&
                       impl->ansi_pending_inline_style != final_emph_style) ? "" : final_emph_style;
         total_word_cols = visible_cols(impl->ansi_word, impl->ansi_word_len);
@@ -3320,7 +3328,7 @@ static int ansi_flush_word_reserved(mdf_impl *impl, mdf_sink *sink, size_t trail
             impl->heading_style_suspended = 1;
         }
         final_emph_style = NULL;
-    } else if (impl->ansi_pending_attached_style != NULL && !impl->opts.boring) {
+    } else if (impl->ansi_pending_attached_style != NULL && MDF_ANSI_STYLED(impl)) {
         const char *style;
 
         style = impl->ansi_pending_attached_style;
@@ -3560,12 +3568,12 @@ static int ansi_handle_visible_space(mdf_impl *impl, mdf_sink *sink)
     if (ansi_flush_word(impl, sink) != 0) {
         return -1;
     }
-    if (impl->opts.boring && impl->ansi_pending_style_reset) {
+    if (!MDF_ANSI_STYLED(impl) && impl->ansi_pending_style_reset) {
         impl->ansi_pending_style_reset = 0;
         impl->ansi_pending_attached_style = NULL;
     }
     if (impl->ansi_pending_style_reset) {
-        if (impl->heading_open && impl->heading_style_suspended && !impl->opts.boring) {
+        if (impl->heading_open && impl->heading_style_suspended && MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_space = 1;
             impl->ansi_pending_space_no_split = 0;
             impl->ansi_pending_space_plain = 0;
@@ -3633,7 +3641,7 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
                        impl->ansi_col + (int)total_cols > impl->opts.width) {
                 if (ansi_emit_newline(impl, sink) != 0) return -1;
             }
-            emit_style = (!impl->opts.boring &&
+            emit_style = (MDF_ANSI_STYLED(impl) &&
                           impl->ansi_active_inline_style == style &&
                           impl->ansi_pending_inline_style != style) ? "" : style;
             if (ansi_emit_styled_word_reset_suffix(impl, sink, emit_style,
@@ -3666,7 +3674,7 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
                    impl->ansi_col + (int)total_cols > impl->opts.width) {
             if (ansi_emit_newline(impl, sink) != 0) return -1;
         }
-        emit_style = (!impl->opts.boring &&
+        emit_style = (MDF_ANSI_STYLED(impl) &&
                       impl->ansi_active_inline_style == style &&
                       impl->ansi_pending_inline_style != style) ? "" : style;
         if (impl->opts.width > 0 && total_cols > (size_t)impl->opts.width) {
@@ -3697,7 +3705,7 @@ static int ansi_flush_pending_final_emph_word(mdf_impl *impl, mdf_sink *sink, ch
     impl->ansi_pending_final_emph_word_suffix = 0;
     impl->ansi_pending_final_emph_base_len = 0;
     impl->ansi_pending_final_emph_base_cols = 0;
-    if (!impl->opts.boring &&
+    if (MDF_ANSI_STYLED(impl) &&
         impl->ansi_active_inline_style != style &&
         impl->ansi_pending_inline_style != style) {
         impl->ansi_pending_attached_style = style;
@@ -4007,12 +4015,12 @@ static int ansi_pre_code_prepare_segment(mdf_impl *impl, mdf_sink *sink, const c
         (ansi_pre_code_space_starts_wrap_prefix(impl) ||
          impl->ansi_prev_char == '-' ||
          impl->ansi_prev_char == '#')) {
-        if (impl->code_style_open && !impl->opts.boring) {
+        if (impl->code_style_open && MDF_ANSI_STYLED(impl)) {
             *prefix = ansi_pre_code_reopen_prefix_marker;
             return 0;
         }
     }
-    if (!impl->opts.boring && !impl->code_style_open) {
+    if (MDF_ANSI_STYLED(impl) && !impl->code_style_open) {
         *prefix = mdf_theme_code_block(impl);
         impl->code_style_open = 1;
     }
@@ -4023,7 +4031,7 @@ static int ansi_emit_pre_wrap_newline(mdf_impl *impl, mdf_sink *sink)
 {
     ansi_pre_wrap_state state;
 
-    if (impl->code_style_open && !impl->opts.boring) {
+    if (impl->code_style_open && MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         impl->code_style_open = 0;
     }
@@ -4050,7 +4058,7 @@ static int ansi_emit_pre_wrap_newline(mdf_impl *impl, mdf_sink *sink)
 
 static int ansi_emit_inline_code_wrap_newline(mdf_impl *impl, mdf_sink *sink)
 {
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     }
     if (ansi_emit_newline(impl, sink) != 0) {
@@ -4061,7 +4069,7 @@ static int ansi_emit_inline_code_wrap_newline(mdf_impl *impl, mdf_sink *sink)
 
 static const char *ansi_inline_code_style_prefix(mdf_impl *impl, int *style_open)
 {
-    if (!*style_open && !impl->opts.boring) {
+    if (!*style_open && MDF_ANSI_STYLED(impl)) {
         *style_open = 1;
         return mdf_theme_code_inline(impl);
     }
@@ -4113,7 +4121,7 @@ static int ansi_write_inline_code_wrapped(mdf_impl *impl, mdf_sink *sink, const 
                                                 text,
                                                 len,
                                                 limit) != 0) return -1;
-        if (style_open && !impl->opts.boring) {
+        if (style_open && MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
         }
         return 0;
@@ -4170,7 +4178,7 @@ static int ansi_write_inline_code_wrapped(mdf_impl *impl, mdf_sink *sink, const 
                                                        len - seg_start,
                                                        limit) != 0) return -1;
     }
-    if (style_open && !impl->opts.boring) {
+    if (style_open && MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
     }
     return 0;
@@ -4467,7 +4475,7 @@ static int ansi_write_preformatted_code(mdf_impl *impl, mdf_sink *sink, const ch
         while (marker < len && text[marker] == ' ') {
             marker++;
         }
-        if (!impl->opts.boring &&
+        if (MDF_ANSI_STYLED(impl) &&
             marker + 1 < len &&
             (text[marker] == '-' || text[marker] == '#') &&
             text[marker + 1] == ' ') {
@@ -4634,7 +4642,7 @@ int ansi_inline_flush_literal(mdf_impl *impl, mdf_sink *sink)
         if (impl->inline_emph_streaming) {
             if (ansi_inline_flush_unmatched_nested_emphasis(impl, sink) != 0) return -1;
             if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 1) != 0) return -1;
-            if (!impl->opts.boring) {
+            if (MDF_ANSI_STYLED(impl)) {
                 impl->ansi_pending_style_reset = 1;
             }
             ansi_inline_clear_emphasis_state(impl);
@@ -4944,7 +4952,7 @@ static int ansi_capture_autolink_reflow(mdf_impl *impl, mdf_sink *sink,
     limit = ansi_content_limit(impl);
     if (ansi_ensure_left_margin(impl, sink) != 0 ||
         mdf_emit_buffer_reset(impl) != 0 ||
-        (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
+        (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
         ansi_emit_buffer_append_url_fit(impl, text, text_len, limit) != 0 ||
         ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
         mdf_emit_buffer_reset(impl) != 0) {
@@ -4957,7 +4965,7 @@ static int ansi_capture_autolink_reflow(mdf_impl *impl, mdf_sink *sink,
     impl->ansi_pending_inline_style = saved_pending_inline_style != NULL ?
                                       saved_pending_inline_style : saved_active_inline_style;
     impl->ansi_active_inline_style = NULL;
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
     }
     return 0;
@@ -4992,7 +5000,7 @@ int ansi_write_styled_words_inner(mdf_impl *impl, mdf_sink *sink, const char *s,
             reserved_cols += trailing_reserve;
         }
         if (wrote_word && impl->opts.width > 0 && impl->ansi_col > 0 && impl->ansi_col + 1 + (int)reserved_cols > impl->opts.width) {
-            if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+            if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
             if (ansi_emit_newline(impl, sink) != 0) return -1;
             pending_style = style;
         } else if (wrote_word) {
@@ -5002,7 +5010,7 @@ int ansi_write_styled_words_inner(mdf_impl *impl, mdf_sink *sink, const char *s,
             trailing_reserve > 0 &&
             impl->ansi_word_len > 0 &&
             ansi_emphasis_suffix_trailing_only(impl->ansi_word, impl->ansi_word_len) &&
-            !impl->opts.boring &&
+            MDF_ANSI_STYLED(impl) &&
             cols + impl->ansi_word_cols <= (size_t)(impl->opts.width > 0 ? impl->opts.width : (int)(cols + impl->ansi_word_cols))) {
             if (ansi_emit_styled_word_reset_suffix(impl, sink, pending_style,
                     s + start, i - start, impl->ansi_word, impl->ansi_word_len) != 0) return -1;
@@ -5289,7 +5297,7 @@ static int ansi_emit_link_label_input_kind(mdf_impl *impl, mdf_sink *sink,
     if (impl->inline_outer_paren_pending && input.len > 0) {
         ansi_sim_input inputs[2];
 
-        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
+        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && MDF_ANSI_STYLED(impl)) {
             if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         }
         impl->ansi_pending_style_reset = 0;
@@ -5488,7 +5496,7 @@ static int ansi_emit_link_label_input_styled_kind(mdf_impl *impl, mdf_sink *sink
     ansi_sim_style sim_style;
 
     sim_style = ansi_sim_empty_style;
-    if (!impl->opts.boring && style != NULL) {
+    if (MDF_ANSI_STYLED(impl) && style != NULL) {
         sim_style.link_label = style;
         sim_style.reset_styles = reset_styles;
     }
@@ -5561,9 +5569,9 @@ static int ansi_emit_plain_url_link_label(mdf_impl *impl, mdf_sink *sink,
     int emitted_style;
 
     sim_style = ansi_sim_empty_style;
-    if (!impl->opts.boring && style != NULL) sim_style.link_label = style;
+    if (MDF_ANSI_STYLED(impl) && style != NULL) sim_style.link_label = style;
     if (impl->inline_outer_paren_pending) {
-        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && !impl->opts.boring) {
+        if ((impl->ansi_pending_style_reset || impl->quote_text_open) && MDF_ANSI_STYLED(impl)) {
             if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         }
         impl->ansi_pending_style_reset = 0;
@@ -5759,10 +5767,10 @@ static int ansi_emit_link_label(mdf_impl *impl, mdf_sink *sink, const char *text
     link.style = mdf_theme_link_text(impl);
     if (ansi_link_label_plain_url(text, text_len)) {
         return ansi_emit_plain_url_link_label(impl, sink, text, text_len,
-                                              impl->opts.boring ? NULL : &link);
+                                              !MDF_ANSI_STYLED(impl) ? NULL : &link);
     }
     emitted_segment = 0;
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         return ansi_emit_link_label_remainder(impl, sink, text, text_len, NULL, &emitted_segment, 0);
     }
     return ansi_emit_link_label_remainder(impl, sink, text, text_len, &link, &emitted_segment, 0);
@@ -5803,18 +5811,18 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
         if (ansi_begin_osc8_link(impl, sink, "", url, url_len) != 0) return -1;
         if (((prefix_style != NULL && prefix_style[0] != '\0') ||
              (after_link_style != NULL && after_link_style[0] != '\0')) &&
-            !impl->opts.boring) {
+            MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
         }
         if (ansi_emit_link_label(impl, sink, text, text_len, prefix_style) != 0) return -1;
         if (ansi_close_osc8_link(impl, sink) != 0) return -1;
         if (after_link_style != NULL &&
             after_link_style[0] != '\0' &&
-            !impl->opts.boring) {
+            MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
             impl->ansi_pending_inline_style = after_link_style;
             impl->ansi_active_inline_style = NULL;
-        } else if (!impl->opts.boring) {
+        } else if (MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
         }
     } else {
@@ -5834,7 +5842,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
         label_active_inline_style = impl->ansi_active_inline_style;
         if (((prefix_style != NULL && prefix_style[0] != '\0') ||
              (after_link_style != NULL && after_link_style[0] != '\0')) &&
-            !impl->opts.boring) {
+            MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
         }
         impl->ansi_pending_inline_style = NULL;
@@ -5846,7 +5854,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             impl->ansi_pending_inline_style = label_pending_inline_style != NULL ? label_pending_inline_style : label_active_inline_style;
         }
         impl->ansi_active_inline_style = NULL;
-        label_reset_pending = !impl->opts.boring;
+        label_reset_pending = MDF_ANSI_STYLED(impl);
         fallback_cols = 2 + visible_cols(url, url_len) + 1;
         if (outer_paren_context &&
             impl->opts.width > 0 &&
@@ -5863,9 +5871,9 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             wrapped_fallback_cols + 1 <= (size_t)impl->opts.width) {
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
                 mdf_emit_buffer_append(impl, url, url_len) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
                 mdf_emit_buffer_append(impl, "))", 2) != 0) {
                 mdf_impl_mark_oom(impl);
                 return -1;
@@ -5885,7 +5893,10 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             if (label_reset_pending && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
             label_reset_pending = 0;
             if (ansi_emit_newline(impl, sink) != 0) return -1;
-            if (prefix_style != NULL && prefix_style[0] != '\0') {
+            /* Emphasis is syntax even when its theme string is suppressed.
+             * Resolve this fallback before resuming emphasized text. */
+            if (impl->inline_emph_count > 0 ||
+                (prefix_style != NULL && prefix_style[0] != '\0')) {
                 if (ansi_emit_link_fallback_only(impl, sink, url, url_len, 0) != 0) return -1;
                 if (impl->ansi_pending_fallback_emit_valid &&
                     ansi_flush_pending_fallback_emit(impl, sink) != 0) return -1;
@@ -5915,9 +5926,9 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             }
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
                 mdf_emit_buffer_append(impl, url, url_len) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
                 mdf_emit_buffer_append(impl, ")", 1) != 0 ||
                 ansi_flush_pending_fallback_emit(impl, sink) != 0) {
                 mdf_impl_mark_oom(impl);
@@ -5957,9 +5968,9 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             impl->ansi_line_has_space = 1;
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
                 mdf_emit_buffer_append(impl, url, url_len) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
                 mdf_emit_buffer_append(impl, ")", 1) != 0 ||
                 ansi_flush_pending_fallback_emit(impl, sink) != 0) {
                 mdf_impl_mark_oom(impl);
@@ -5989,9 +6000,9 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
             wrapped_fallback_cols <= (size_t)impl->opts.width) {
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
                 mdf_emit_buffer_append(impl, url, url_len) != 0 ||
-                (!impl->opts.boring && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+                (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
                 mdf_emit_buffer_append(impl, ")", 1) != 0 ||
                 ansi_flush_pending_fallback_emit(impl, sink) != 0) {
                 mdf_impl_mark_oom(impl);
@@ -6018,7 +6029,7 @@ static int ansi_emit_link_parts_ex(mdf_impl *impl, mdf_sink *sink,
         inputs[0].kind = ANSI_SIM_STRUCT;
         inputs[1].text = url;
         inputs[1].len = url_len;
-        inputs[1].style = ansi_sim_style_flat(impl->opts.boring ? "" : mdf_theme_link_url(impl));
+        inputs[1].style = ansi_sim_style_flat(!MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_url(impl));
         inputs[1].kind = ANSI_SIM_URL;
         inputs[2].text = ")";
         inputs[2].len = 1;
@@ -6055,7 +6066,7 @@ int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url
     size_t wrapped_fallback_cols;
     int wrapped_fallback;
 
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
     }
     wrapped_fallback = 0;
@@ -6081,9 +6092,9 @@ int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url
         wrapped_fallback_cols <= (size_t)impl->opts.width) {
         if (mdf_emit_buffer_reset(impl) != 0 ||
             mdf_emit_buffer_append(impl, "(", 1) != 0 ||
-            (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
+            (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_url(impl)) != 0) ||
             mdf_emit_buffer_append(impl, url, url_len) != 0 ||
-            (!impl->opts.boring && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
+            (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append(impl, "\033[0m", 4) != 0) ||
             mdf_emit_buffer_append(impl, outer_paren_context ? "))" : ")", outer_paren_context ? 2 : 1) != 0 ||
             ansi_flush_pending_fallback_emit(impl, sink) != 0) {
             mdf_impl_mark_oom(impl);
@@ -6115,7 +6126,7 @@ int ansi_emit_link_fallback_only(mdf_impl *impl, mdf_sink *sink, const char *url
     inputs[0].kind = ANSI_SIM_STRUCT;
     inputs[1].text = url;
     inputs[1].len = url_len;
-    inputs[1].style = ansi_sim_style_flat(impl->opts.boring ? "" : mdf_theme_link_url(impl));
+    inputs[1].style = ansi_sim_style_flat(!MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_url(impl));
     inputs[1].kind = ANSI_SIM_URL;
     inputs[2].text = ")";
     inputs[2].len = 1;
@@ -6178,7 +6189,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
         if (text_len > 0 && ansi_ensure_left_margin(impl, sink) != 0) return -1;
     }
     if (reset_before_link_style &&
-        !impl->opts.boring &&
+        MDF_ANSI_STYLED(impl) &&
         impl->ansi_col > ansi_current_prefix_width(impl)) {
         impl->ansi_pending_style_reset = 1;
     }
@@ -6194,7 +6205,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
 
         impl->ansi_pending_inline_style = NULL;
         impl->ansi_active_inline_style = NULL;
-        link_style = impl->opts.boring ? "" : mdf_theme_link_text(impl);
+        link_style = !MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_text(impl);
         off = start;
         first = 1;
         while (off < text_len) {
@@ -6225,12 +6236,12 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
         if (impl->opts.osc8) {
             if (ansi_close_osc8_link(impl, sink) != 0) return -1;
         }
-        if (!impl->opts.boring) {
+        if (MDF_ANSI_STYLED(impl)) {
             impl->ansi_pending_style_reset = 1;
         }
         return 0;
     }
-    impl->ansi_pending_inline_style = impl->opts.boring ? NULL : mdf_theme_link_text(impl);
+    impl->ansi_pending_inline_style = !MDF_ANSI_STYLED(impl) ? NULL : mdf_theme_link_text(impl);
     impl->ansi_active_inline_style = NULL;
     if (impl->opts.osc8 && start == 0 && (limit <= 0 || (int)total_cols <= limit)) {
         if (ansi_emit_visible_chunk(impl, sink, text, text_len) != 0) {
@@ -6254,7 +6265,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
         impl->ansi_pending_emit_start_col = impl->ansi_col;
         impl->ansi_pending_autolink_emit_valid = 0;
         if (mdf_emit_buffer_reset(impl) != 0 ||
-            (!impl->opts.boring && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
+            (MDF_ANSI_STYLED(impl) && mdf_emit_buffer_append_cstr(impl, mdf_theme_link_text(impl)) != 0) ||
             mdf_emit_buffer_append(impl, text, text_len) != 0 ||
             ansi_pending_emit_append(impl, impl->emit_buf, impl->emit_len) != 0 ||
             mdf_emit_buffer_reset(impl) != 0) {
@@ -6290,7 +6301,7 @@ static int ansi_emit_autolink_text(mdf_impl *impl, mdf_sink *sink, const char *t
     if (impl->opts.osc8) {
         if (ansi_close_osc8_link(impl, sink) != 0) return -1;
     }
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
     }
     return 0;
@@ -6621,7 +6632,7 @@ int ansi_reflow_pending_link(mdf_impl *impl)
         inputs[0].kind = ANSI_SIM_STRUCT;
         inputs[1].text = impl->ansi_pending_link;
         inputs[1].len = link_len;
-        inputs[1].style = ansi_sim_style_flat(impl->opts.boring ? "" : mdf_theme_link_url(impl));
+        inputs[1].style = ansi_sim_style_flat(!MDF_ANSI_STYLED(impl) ? "" : mdf_theme_link_url(impl));
         inputs[1].kind = ANSI_SIM_URL;
         inputs[2].text = close_len == 2 ? "))" : ")";
         inputs[2].len = close_len;
@@ -6814,20 +6825,20 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     }
     if (impl->format == MDF_FORMAT_HTML) {
         if (code_len > 0 &&
-            ansi_emit_styled_visible_chunk(impl, sink, impl->opts.boring ? "" : mdf_theme_code_inline(impl), code, code_len) != 0) {
+            ansi_emit_styled_visible_chunk(impl, sink, !MDF_ANSI_STYLED(impl) ? "" : mdf_theme_code_inline(impl), code, code_len) != 0) {
             return -1;
         }
-        if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+        if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         impl->inline_mode = 0;
         impl->inline_code_len = 0;
         impl->inline_code_delim_len = 0;
         impl->inline_code_pending_ticks = 0;
         return 0;
     }
-    if (!impl->opts.boring && ansi_emit_styled_prefix(impl, sink, mdf_theme_code_inline(impl)) != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && ansi_emit_styled_prefix(impl, sink, mdf_theme_code_inline(impl)) != 0) return -1;
     if (code_len > 0 && ansi_write_visible(impl, sink, code, code_len) != 0) return -1;
     if (ansi_flush_word(impl, sink) != 0) return -1;
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     impl->inline_mode = 0;
     impl->inline_code_len = 0;
     impl->inline_code_delim_len = 0;
@@ -6889,7 +6900,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
         if (impl->opts.width <= 0 ||
             impl->ansi_col == 0 ||
             impl->ansi_col + (int)total_cols <= impl->opts.width) {
-            style_len = impl->opts.boring ? 0 : strlen(effective_prefix);
+            style_len = !MDF_ANSI_STYLED(impl) ? 0 : strlen(effective_prefix);
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, impl->ansi_word, impl->ansi_word_len) != 0 ||
                 mdf_emit_buffer_append(impl, effective_prefix, style_len) != 0 ||
@@ -6902,7 +6913,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
             ansi_update_visible_output_state(impl, text, text_len);
             impl->ansi_word_len = 0;
             impl->ansi_word_cols = 0;
-            if (!impl->opts.boring) {
+            if (MDF_ANSI_STYLED(impl)) {
                 impl->ansi_pending_style_reset = 1;
             }
             impl->ansi_active_inline_style = NULL;
@@ -6951,7 +6962,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
         impl->ansi_col == (impl->quote_wrap_active ? 0 : impl->heading_level + 1)) {
         continuation_prefix = effective_prefix;
     }
-    if (impl->heading_open && !impl->opts.boring &&
+    if (impl->heading_open && MDF_ANSI_STYLED(impl) &&
         impl->ansi_col != (impl->quote_wrap_active ? 0 : impl->heading_level + 1)) {
         impl->ansi_pending_style_reset = 1;
     }
@@ -7166,7 +7177,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
             continue;
         }
         if ((emitted_link || scan > 0) && !impl->opts.osc8) {
-            if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+            if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         }
         if (ansi_emit_link_parts(impl, sink, text + label_start, label_end - label_start, text + url_start, url_end - url_start,
                 (impl->heading_open && impl->ansi_col == (impl->quote_wrap_active ? 0 : impl->heading_level + 1)) ? continuation_prefix : effective_prefix) != 0) return -1;
@@ -7184,7 +7195,7 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
             ansi_flush_pending_exact_fallback(impl, sink, pos < text_len ? text[pos] : '\0') != 0) return -1;
     }
     if (ansi_flush_pending_exact_fallback(impl, sink, '\0') != 0) return -1;
-    if (!impl->opts.boring && !consumed_trailing_suffix) {
+    if (MDF_ANSI_STYLED(impl) && !consumed_trailing_suffix) {
         impl->ansi_pending_style_reset = 1;
     }
     if (impl->heading_open) {
@@ -7324,7 +7335,7 @@ int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int 
                        impl->ansi_col + (int)total_cols > impl->opts.width) {
                 if (ansi_emit_newline(impl, sink) != 0) return -1;
             }
-            style_len = impl->opts.boring ? 0 : strlen(prefix);
+            style_len = !MDF_ANSI_STYLED(impl) ? 0 : strlen(prefix);
             if (mdf_emit_buffer_reset(impl) != 0 ||
                 mdf_emit_buffer_append(impl, impl->ansi_word, impl->ansi_word_len) != 0 ||
                 mdf_emit_buffer_append(impl, prefix, style_len) != 0 ||
@@ -7337,7 +7348,7 @@ int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int 
             impl->ansi_prev_char = impl->inline_emph[impl->inline_emph_len - 1];
             impl->ansi_word_len = 0;
             impl->ansi_word_cols = 0;
-            if (!impl->opts.boring) {
+            if (MDF_ANSI_STYLED(impl)) {
                 impl->ansi_active_inline_style = active_prefix;
             }
             impl->inline_emph_after_word = 0;
@@ -7355,7 +7366,7 @@ int ansi_inline_emit_streamed_emphasis_word(mdf_impl *impl, mdf_sink *sink, int 
     if (ansi_write_styled_words_inner(impl, sink, impl->inline_emph, impl->inline_emph_len, prefix, 1, 0) != 0) {
         return -1;
     }
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         impl->ansi_active_inline_style = active_prefix;
     }
     impl->inline_emph_len = 0;
@@ -7558,7 +7569,7 @@ int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char
             impl->inline_emph_nested_close_count == 0 &&
             impl->inline_emph_nested_count < 3) {
             impl->inline_emph_nested_count++;
-            if (!impl->opts.boring) {
+            if (MDF_ANSI_STYLED(impl)) {
                 const char *nested_style;
                 char nested_style_buf[160];
 
@@ -7593,7 +7604,7 @@ int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char
                 closed_style = NULL;
                 outer_style = NULL;
                 if (ansi_flush_word(impl, sink) != 0) return -1;
-                if (!impl->opts.boring) {
+                if (MDF_ANSI_STYLED(impl)) {
                     closed_style = ansi_inline_nested_emphasis_style(impl,
                                                                      impl->inline_emph_nested_count,
                                                                      NULL,
@@ -7603,7 +7614,7 @@ int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char
                 impl->inline_emph_nested_count = 0;
                 impl->inline_emph_nested_close_count = -1;
                 impl->inline_emph_nested_saw_space = 0;
-                if (!impl->opts.boring) {
+                if (MDF_ANSI_STYLED(impl)) {
                     outer_style = ansi_inline_outer_emphasis_prefix(impl,
                                                                     0,
                                                                     outer_style_buf,
@@ -7692,7 +7703,7 @@ int ansi_inline_emit_streamed_emphasis_char(mdf_impl *impl, mdf_sink *sink, char
         impl->inline_emph_nested_count = opener_count;
         impl->inline_emph_nested_close_count = 0;
         impl->inline_emph_nested_saw_space = 0;
-        if (!impl->opts.boring) {
+        if (MDF_ANSI_STYLED(impl)) {
             nested_style = ansi_inline_emphasis_prefix(impl,
                                                        0,
                                                        nested_style_buf,
@@ -7807,7 +7818,7 @@ static int ansi_inline_close_streamed_emphasis(mdf_impl *impl, mdf_sink *sink)
         return 0;
     }
     if (ansi_inline_emit_streamed_emphasis_word(impl, sink, 1) != 0) return -1;
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         impl->ansi_pending_style_reset = 1;
         if (single_word) {
             impl->ansi_pending_attached_style = prefix;
@@ -8449,7 +8460,7 @@ ansi_case5_reprocess:
                 impl->inline_emph_nested_close_count = 0;
                 impl->inline_emph_nested_saw_space = 0;
                 impl->ansi_prev_char = 0;
-                if (!impl->opts.boring) {
+                if (MDF_ANSI_STYLED(impl)) {
                     const char *nested_style;
                     char nested_style_buf[160];
 
@@ -8484,7 +8495,7 @@ ansi_case5_reprocess:
                     impl->inline_emph_nested_saw_space = 0;
                     impl->inline_emph_close_count = 0;
                     impl->inline_emph_len = 0;
-                    if (!impl->opts.boring) {
+                    if (MDF_ANSI_STYLED(impl)) {
                         nested_style = ansi_inline_emphasis_prefix(impl,
                                                                    0,
                                                                    nested_style_buf,
@@ -8520,7 +8531,7 @@ ansi_case5_reprocess:
                 impl->inline_emph_nested_close_count = 0;
                 impl->inline_emph_nested_saw_space = 0;
                 impl->inline_emph_close_count = 0;
-                if (!impl->opts.boring) {
+                if (MDF_ANSI_STYLED(impl)) {
                     nested_style = ansi_inline_emphasis_prefix(impl,
                                                                0,
                                                                nested_style_buf,
@@ -8550,7 +8561,7 @@ ansi_case5_reprocess:
                     closed_style = NULL;
                     outer_style = NULL;
                     if (ansi_flush_word(impl, sink) != 0) return -1;
-                    if (!impl->opts.boring) {
+                    if (MDF_ANSI_STYLED(impl)) {
                         closed_style = ansi_inline_nested_emphasis_style(impl,
                                                                          impl->inline_emph_nested_count,
                                                                          NULL,
@@ -8560,7 +8571,7 @@ ansi_case5_reprocess:
                     impl->inline_emph_nested_count = 0;
                     impl->inline_emph_nested_close_count = 0;
                     impl->inline_emph_nested_saw_space = 0;
-                    if (!impl->opts.boring) {
+                    if (MDF_ANSI_STYLED(impl)) {
                         outer_style = ansi_inline_outer_emphasis_prefix(impl,
                                                                         0,
                                                                         outer_style_buf,
@@ -8852,7 +8863,7 @@ int ansi_flush_pending_list_marker(mdf_impl *impl, mdf_sink *sink)
         if (ansi_write_visible(impl, sink, impl->pending_list_marker_text, marker_start) != 0) return -1;
         if (ansi_flush_word(impl, sink) != 0) return -1;
     }
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         if (ansi_emit_styled_visible_chunk(impl, sink, mdf_theme_list_marker(impl),
                 impl->pending_list_marker_text + marker_start,
                 impl->pending_list_marker_len - marker_start) != 0) return -1;
@@ -8866,12 +8877,12 @@ int ansi_flush_pending_list_marker(mdf_impl *impl, mdf_sink *sink)
                         (int)(impl->pending_list_marker_len - marker_start + 1);
     impl->ansi_wrap_indent = (int)marker_start + marker_indent;
     impl->ansi_wrap_indent_in_quote = impl->quote_open;
-    if (!impl->opts.boring && ordered_marker && impl->pending_list_marker_quote_context) {
+    if (MDF_ANSI_STYLED(impl) && ordered_marker && impl->pending_list_marker_quote_context) {
         if (mdf_emit_cstr(impl, sink, "\033[0m ") != 0) return -1;
         impl->ansi_col++;
         impl->ansi_prev_char = ' ';
         impl->ansi_line_has_space = 1;
-    } else if (!impl->opts.boring) {
+    } else if (MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
         if (impl->pending_list_marker_quote_context) {
             if (mdf_emit_cstr(impl, sink, " ") != 0) return -1;
@@ -8895,7 +8906,7 @@ int ansi_finish_heading_end(mdf_impl *impl, mdf_sink *sink)
     impl->heading_open = 0;
     impl->heading_level = 0;
     impl->heading_style_suspended = 0;
-    if (!impl->opts.boring) {
+    if (MDF_ANSI_STYLED(impl)) {
         if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     }
     impl->ansi_active_inline_style = NULL;
@@ -9143,7 +9154,7 @@ static void ansi_chart_sort(ansi_chart_data *chart, int flags)
 
 static int ansi_chart_append_style(mdf_impl *impl, const char *style)
 {
-    if (impl->opts.boring || style == NULL || style[0] == '\0') {
+    if (!MDF_ANSI_STYLED(impl) || style == NULL || style[0] == '\0') {
         return 0;
     }
     return mdf_emit_buffer_append_cstr(impl, style);
@@ -9151,7 +9162,7 @@ static int ansi_chart_append_style(mdf_impl *impl, const char *style)
 
 static int ansi_chart_append_reset(mdf_impl *impl)
 {
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         return 0;
     }
     return mdf_emit_buffer_append_cstr(impl, "\033[0m");
@@ -9161,7 +9172,7 @@ static int ansi_chart_append_styled(mdf_impl *impl, const char *style, const cha
 {
     int styled;
 
-    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    styled = MDF_ANSI_STYLED(impl) && style != NULL && style[0] != '\0';
     if (styled && ansi_chart_append_style(impl, style) != 0) return -1;
     if (mdf_emit_buffer_append(impl, src, len) != 0) return -1;
     if (styled && ansi_chart_append_reset(impl) != 0) return -1;
@@ -9331,7 +9342,7 @@ static int ansi_chart_append_tile_segment(mdf_impl *impl, const char *style, con
     char bg_style[64];
     int styled;
 
-    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    styled = MDF_ANSI_STYLED(impl) && style != NULL && style[0] != '\0';
     if (styled) {
         if (ansi_chart_style_bg_code(style, bg_style, sizeof(bg_style)) != 0) return -1;
         if (ansi_chart_append_style(impl, bg_style) != 0) return -1;
@@ -9346,7 +9357,7 @@ static int ansi_chart_append_tile_fill(mdf_impl *impl, const char *style)
     char bg_style[64];
     int styled;
 
-    styled = !impl->opts.boring && style != NULL && style[0] != '\0';
+    styled = MDF_ANSI_STYLED(impl) && style != NULL && style[0] != '\0';
     if (styled) {
         if (ansi_chart_append_style(impl, style) != 0) return -1;
         if (ansi_chart_style_bg_only_code(style, bg_style, sizeof(bg_style)) != 0) return -1;
@@ -10272,7 +10283,7 @@ int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
                 if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
                 impl->code_style_open = 0;
             }
-            if (impl->in_pre && !impl->opts.boring) {
+            if (impl->in_pre && MDF_ANSI_STYLED(impl)) {
                 if (!impl->code_style_open) {
                     if (mdf_emit_cstr(impl, sink, mdf_theme_code_block(impl)) != 0) return -1;
                     impl->code_style_open = 1;
@@ -10317,7 +10328,7 @@ int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
         impl->heading_level = token->level;
         impl->heading_style_suspended = 0;
         if (ansi_ensure_left_margin(impl, sink) != 0) return -1;
-        if (!impl->opts.boring) {
+        if (MDF_ANSI_STYLED(impl)) {
             const char *style;
             size_t style_len;
             char marker[32];
@@ -10343,7 +10354,7 @@ int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
         }
         if (ansi_write_visible_cstr(impl, sink, " ") != 0) return -1;
         if (ansi_flush_pending_space(impl, sink) != 0) return -1;
-        if (!impl->opts.boring) {
+        if (MDF_ANSI_STYLED(impl)) {
             if (mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
             impl->heading_style_pending_prefix = 1;
         }
@@ -10408,6 +10419,131 @@ int ansi_write_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
     return 0;
 }
 
+/* A chart is a complete aggregate decision; ordinary text is forwarded as
+ * visible input runs and never copied into a second token-sized buffer. */
+static mdf_status ansi_plain_token_consume(void *userdata, const char *data, size_t len)
+{
+    mdf_impl *impl;
+    char *next;
+    size_t need;
+    size_t cap;
+
+    impl = (mdf_impl *)userdata;
+    if (len > (size_t)-1 - impl->plain_token_input_len) return MDF_ERROR_NOMEM;
+    need = impl->plain_token_input_len + len;
+    if (need > impl->plain_token_input_cap) {
+        cap = impl->plain_token_input_cap > 0 ? impl->plain_token_input_cap : 128;
+        while (cap < need) {
+            if (cap > (size_t)-1 / 2) {
+                cap = need;
+                break;
+            }
+            cap *= 2;
+        }
+        next = (char *)mdf_realloc_mem(&impl->allocator, impl->plain_token_input,
+                                       impl->plain_token_input_cap, cap);
+        if (next == NULL) return MDF_ERROR_NOMEM;
+        impl->plain_token_input = next;
+        impl->plain_token_input_cap = cap;
+    }
+    memcpy(impl->plain_token_input + impl->plain_token_input_len, data, len);
+    impl->plain_token_input_len = need;
+    return MDF_OK;
+}
+
+typedef struct ansi_plain_input {
+    mdf_renderer *renderer;
+    mdf_sink *sink;
+    const mdf_token *token;
+} ansi_plain_input;
+
+static mdf_status ansi_plain_stream_consume(void *userdata, const char *data, size_t len)
+{
+    ansi_plain_input *input;
+    mdf_token visible;
+
+    input = (ansi_plain_input *)userdata;
+    visible = *input->token;
+    visible.text = data;
+    visible.len = len;
+    return ansi_write_token(input->renderer, &visible, input->sink) == 0 ? MDF_OK : MDF_ERROR_IO;
+}
+
+static mdf_status ansi_plain_newline_consume(void *userdata, const char *data, size_t len)
+{
+    ansi_plain_input *input;
+    mdf_token visible;
+
+    input = (ansi_plain_input *)userdata;
+    visible = *input->token;
+    visible.text = data;
+    visible.len = len;
+    /* A retained C2 lead precedes the newline as text, not as a second
+     * newline token. The original newline metadata remains intact. */
+    if (len != 1 || data[0] != '\n') visible.type = MDF_TOKEN_TEXT;
+    return ansi_write_token(input->renderer, &visible, input->sink) == 0 ? MDF_OK : MDF_ERROR_IO;
+}
+
+static int ansi_finish_plain_tokens(mdf_renderer *self, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_token token;
+    ansi_plain_input input;
+
+    impl = (mdf_impl *)self->impl;
+    memset(&token, 0, sizeof(token));
+    token.type = MDF_TOKEN_TEXT;
+    input.renderer = self;
+    input.sink = sink;
+    input.token = &token;
+    return mdf_plain_filter_finish(&impl->plain_tokens, ansi_plain_stream_consume, &input) == MDF_OK ? 0 : -1;
+}
+
+static int ansi_write_plain_token(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
+{
+    mdf_impl *impl;
+    mdf_token normalized;
+    ansi_plain_input input;
+    size_t i;
+    unsigned char byte;
+    int needed;
+
+    impl = (mdf_impl *)self->impl;
+    if (token->type == MDF_TOKEN_DOCUMENT_END && ansi_finish_plain_tokens(self, sink) != 0) return -1;
+    if (token->type == MDF_TOKEN_NEWLINE &&
+        (impl->plain_tokens.mode || impl->plain_tokens.pending_c2 || impl->plain_tokens.utf8_left)) {
+        input.renderer = self;
+        input.sink = sink;
+        input.token = token;
+        return mdf_plain_filter_feed(&impl->plain_tokens, "\n", 1,
+                                     ansi_plain_newline_consume, &input) == MDF_OK ? 0 : -1;
+    }
+    if (token->text == NULL || token->len == 0) return ansi_write_token(self, token, sink);
+    needed = impl->plain_tokens.mode || impl->plain_tokens.pending_c2 || impl->plain_tokens.utf8_left;
+    for (i = 0; !needed && i < token->len; i++) {
+        byte = (unsigned char)token->text[i];
+        needed = byte == 0x1b || byte == 7 || byte == 0x18 || byte == 0x1a || byte >= 0x80;
+    }
+    if (!needed) return ansi_write_token(self, token, sink);
+    if (token->type == MDF_TOKEN_TEXT || token->type == MDF_TOKEN_SPACE || token->type == MDF_TOKEN_CODE_TEXT) {
+        input.renderer = self;
+        input.sink = sink;
+        input.token = token;
+        return mdf_plain_filter_feed(&impl->plain_tokens, token->text, token->len,
+                                     ansi_plain_stream_consume, &input) == MDF_OK ? 0 : -1;
+    }
+    impl->plain_token_input_len = 0;
+    if (mdf_plain_filter_feed(&impl->plain_tokens, token->text, token->len,
+                              ansi_plain_token_consume, impl) != MDF_OK) {
+        mdf_impl_mark_oom(impl);
+        return -1;
+    }
+    normalized = *token;
+    normalized.text = impl->plain_token_input;
+    normalized.len = impl->plain_token_input_len;
+    return ansi_write_token(self, &normalized, sink);
+}
+
 mdf_status mdf_renderer_write_token_internal(mdf_renderer *self, const mdf_token *token, mdf_sink *sink)
 {
     mdf_impl *impl;
@@ -10433,7 +10569,9 @@ mdf_status mdf_renderer_write_token_internal(mdf_renderer *self, const mdf_token
         mdf_set_error(self, "deck renderers do not support token streaming");
         return MDF_ERROR_INVALID;
     }
-    rc = impl->format == MDF_FORMAT_HTML ? html_write_token(self, token, sink) : ansi_write_token(self, token, sink);
+    if (impl->format == MDF_FORMAT_HTML) rc = html_write_token(self, token, sink);
+    else if (impl->opts.ansi_mode == MDF_ANSI_OFF) rc = ansi_write_plain_token(self, token, sink);
+    else rc = ansi_write_token(self, token, sink);
     if (rc != 0) {
         return mdf_renderer_fail_from_impl(self, impl, "sink write failed");
     }
@@ -10464,6 +10602,9 @@ mdf_status mdf_renderer_begin_internal(mdf_renderer *self, mdf_sink *sink)
 
 mdf_status ansi_renderer_finish(mdf_renderer *self, mdf_impl *impl, mdf_sink *sink)
 {
+    if (impl->opts.ansi_mode == MDF_ANSI_OFF && ansi_finish_plain_tokens(self, sink) != 0) {
+        return mdf_renderer_fail_from_impl(self, impl, "sink write failed");
+    }
     if (impl->ansi_col > 0 || impl->ansi_pending_space || impl->ansi_word_len > 0) {
         if (ansi_write_newline(impl, sink) != 0) {
             return mdf_renderer_fail_sink_write(self);

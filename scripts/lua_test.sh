@@ -17,6 +17,13 @@ PATH="$ROOT/build/lua-runtime/bin:$PATH" \
 LUA_PATH="$TREE/share/lua/5.5/?.lua;$TREE/share/lua/5.5/?/init.lua;;" \
 LUA_CPATH="$TREE/lib/lua/5.5/?.so;;" \
 "$ROOT/build/lua-runtime/bin/lua" "$ROOT/tests/lua_smoke.lua"
+PATH="$ROOT/build/lua-runtime/bin:$PATH" \
+LUA_PATH="$TREE/share/lua/5.5/?.lua;$TREE/share/lua/5.5/?/init.lua;;" \
+LUA_CPATH="$TREE/lib/lua/5.5/?.so;;" \
+python3 "$ROOT/tests/test_cmdf_zero_ansi.py" "$ROOT/build/luarocks/cmdf.lua" --lua
+LUA_PATH="$TREE/share/lua/5.5/?.lua;$TREE/share/lua/5.5/?/init.lua;;" \
+LUA_CPATH="$TREE/lib/lua/5.5/?.so;;" \
+python3 "$ROOT/tests/test_lua_zero_ansi.py" "$ROOT/build/lua-runtime/bin/lua"
 
 sample='# Lua
 

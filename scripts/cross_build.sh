@@ -9,4 +9,7 @@ for target in $TARGETS; do
   echo "==> $preset"
   "$ROOT/scripts/configure_preset.sh" "$preset" release
   "$ROOT/scripts/with_target_env.sh" "$preset" cmake --build --preset "$preset"
+  if [ "$target" = x86_64-linux-gnu ] && [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]; then
+    ctest --test-dir "$ROOT/build/$preset" --output-on-failure
+  fi
 done

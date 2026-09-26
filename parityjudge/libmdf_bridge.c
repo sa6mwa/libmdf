@@ -226,6 +226,7 @@ int libmdf_bridge_render(int format,
     sink_data.trace_enabled = trace;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = width;
     opts.theme_name = theme == NULL || theme[0] == '\0' ? "default" : theme;
     opts.boring = boring;

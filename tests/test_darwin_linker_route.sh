@@ -4,7 +4,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 BASE="$ROOT/build/test-darwin-linker-route"
 OSXCROSS_ROOT=${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}
-CPKT_OSXCROSS_HOST=${CPKT_OSXCROSS_HOST:-arm64-apple-darwin25}
+description=$("$ROOT/scripts/cpkt-toolchains.sh" discover arm64-apple-darwin)
+CPKT_OSXCROSS_HOST=$(printf '%s\n' "$description" | sed -n 's/^prefix=//p')
 LD="$OSXCROSS_ROOT/bin/$CPKT_OSXCROSS_HOST-ld"
 TOOLCHAIN="$ROOT/cmake/toolchains/arm64-apple-darwin.cmake"
 

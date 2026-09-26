@@ -335,6 +335,7 @@ static int expect_malformed_front_matter_theme_is_safe(const char *name, const c
     int fails;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     inst = NULL;
     out = NULL;
     fails = 0;
@@ -870,6 +871,7 @@ int main(void)
     memset(&fail_sink, 0, sizeof(fail_sink));
     memset(&armed_sink, 0, sizeof(armed_sink));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -1061,6 +1063,7 @@ int main(void)
     snprintf(italic_font_path, sizeof(italic_font_path),
              "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = "fonts";
     opts.html_font_dump_regular_path = regular_font_path;
     opts.html_font_dump_italic_path = italic_font_path;
@@ -1101,6 +1104,7 @@ int main(void)
     fails += expect(st == MDF_ERROR_INVALID,
                     "public font dump preflight rejects empty explicit destinations");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_dump_font = 1;
     opts.html_font_uri = "https:relative-fonts";
     st = mdf_html_font_resolve_dump_paths(&opts,
@@ -1127,6 +1131,7 @@ int main(void)
     fails += expect(st == MDF_ERROR_INVALID,
                     "public font dump preflight rejects fragment-only font URI bases");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = "?v=1";
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID && inst == NULL,
@@ -1137,6 +1142,7 @@ int main(void)
     fails += expect(st == MDF_ERROR_INVALID && inst == NULL,
                     "HTML renderer rejects fragment-only per-face font URIs");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_dump_regular_path = regular_font_path;
     opts.html_font_dump_italic_path = italic_font_path;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
@@ -1158,6 +1164,7 @@ int main(void)
     fails += expect(mkdir(font_dump_dir_path, 0700) == 0,
                     "font dump delimiter directory setup succeeds");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = "https://example.invalid/fonts";
     opts.html_font_dump_path = font_dump_dir_path;
     opts.html_dump_font = 1;
@@ -1200,6 +1207,7 @@ int main(void)
     fails += expect(mkdir(font_dump_alias_path, 0700) == 0,
                     "font dump embedded-scheme directory setup succeeds");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = font_dump_alias_path;
     opts.html_dump_font = 1;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
@@ -1235,6 +1243,7 @@ int main(void)
     fails += expect(mkdir(font_dump_dir_path, 0700) == 0,
                     "font dump literal-percent directory setup succeeds");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = font_dump_dir_path;
     opts.html_font_dump_path = font_dump_dir_path;
     opts.html_dump_font = 1;
@@ -1272,6 +1281,7 @@ int main(void)
     snprintf(italic_font_path, sizeof(italic_font_path),
              "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
     opts.html_font_uri = "assets/fonts";
     opts.html_dump_font = 1;
@@ -1304,6 +1314,7 @@ int main(void)
     snprintf(regular_font_uri, sizeof(regular_font_uri), "file://LOCALHOST%s", regular_font_path);
     snprintf(italic_font_uri, sizeof(italic_font_uri), "file://LOCALHOST%s", italic_font_path);
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = NULL;
     opts.html_font_regular_uri = regular_font_uri;
     opts.html_font_italic_uri = italic_font_uri;
@@ -1415,6 +1426,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = "fonts";
     opts.html_font_regular_uri = "fonts/JetBrainsMono-Regular.woff2";
     opts.html_font_italic_uri = "fonts/JetBrainsMono-Italic.woff2";
@@ -1434,6 +1446,7 @@ int main(void)
         inst = NULL;
     }
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_regular_uri = "fonts/</style><script>bad</script>";
     opts.html_font_italic_uri = "fonts/italic.woff2";
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
@@ -1450,6 +1463,7 @@ int main(void)
         inst = NULL;
     }
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "default external html font renderer create succeeds");
@@ -1469,6 +1483,7 @@ int main(void)
     strcpy(deck_regular_font_uri, "deck-owned/regular.woff2");
     strcpy(deck_italic_font_uri, "deck-owned/italic.woff2");
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_regular_uri = deck_regular_font_uri;
     opts.html_font_italic_uri = deck_italic_font_uri;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
@@ -1490,6 +1505,7 @@ int main(void)
         inst = NULL;
     }
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;
     opts.html_font_uri = "deck-fonts";
     opts.deck_transition = MDF_DECK_TRANSITION_CROSS;
@@ -1605,6 +1621,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html styled link labels create succeeds");
     st = inst->render_cstr(inst,
@@ -1623,6 +1640,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.theme_name = "ayu-light";
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "ayu-light html inline code renderer create succeeds");
@@ -1637,6 +1655,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck lower heading create succeeds");
     st = inst->render_cstr(inst,
@@ -1666,6 +1685,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html normal link target create succeeds");
     st = inst->render_cstr(inst, "[Plain Link](https://example.com)\n", &out);
@@ -1681,6 +1701,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.theme_name = "horizon";
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "horizon html deck styled link labels create succeeds");
@@ -1702,6 +1723,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck link target create succeeds");
     st = inst->render_cstr(inst, "# Links\n\n[Deck Link](https://example.com)\n", &out);
@@ -1715,6 +1737,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck raw html semantics create succeeds");
     st = inst->render_cstr(inst,
@@ -1737,6 +1760,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck explicit title create succeeds");
     st = mdf_set_html_title(inst, "Deck & <API>");
@@ -1764,6 +1788,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck boring create succeeds");
@@ -1792,6 +1817,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_content_width_ch = 72.0;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck content width create succeeds");
@@ -1807,6 +1833,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font.family = "Deck Mono";
     opts.html_font.regular.format = MDF_HTML_FONT_FORMAT_WOFF2;
     opts.html_font.regular.data = deck_font_bytes;
@@ -1826,6 +1853,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck unknown front matter create succeeds");
     st = inst->render_cstr(inst,
@@ -1861,6 +1889,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck YAML list front matter create succeeds");
     st = inst->render_cstr(inst,
@@ -1891,6 +1920,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.slide_numbers = 1;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck CRLF front matter create succeeds");
@@ -1922,6 +1952,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck commented front matter create succeeds");
     st = inst->render_cstr(inst,
@@ -1950,6 +1981,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck invalid front matter theme create succeeds");
     st = inst->render_cstr(inst,
@@ -2011,6 +2043,7 @@ int main(void)
         "Visible body\n");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.theme_name = "default";
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck explicit default theme create succeeds");
@@ -2034,6 +2067,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck default create succeeds");
     st = inst->render_cstr(inst, "# One\n\n---\n\n# Two\n", &out);
@@ -2056,6 +2090,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.deck_transition = MDF_DECK_TRANSITION_HARD;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck hard transition create succeeds");
@@ -2070,12 +2105,14 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.deck_transition = (mdf_deck_transition)99;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID && inst == NULL,
                     "html deck rejects invalid transition enum");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck separator create succeeds");
     st = inst->render_cstr(inst,
@@ -2137,6 +2174,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck lazy blockquote separator create succeeds");
     st = inst->render_cstr(inst,
@@ -2161,6 +2199,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck closed blockquote separator create succeeds");
     st = inst->render_cstr(inst,
@@ -2182,6 +2221,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck comment-only front matter create succeeds");
     st = inst->render_cstr(inst,
@@ -2203,6 +2243,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck unclosed front matter ambiguity create succeeds");
     st = inst->render_cstr(inst,
@@ -2223,6 +2264,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck rejected front matter create succeeds");
     st = inst->render_cstr(inst,
@@ -2256,6 +2298,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck source failure create succeeds");
     src.userdata = NULL;
@@ -2277,6 +2320,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck sink failure create succeeds");
     memset(&src_data, 0, sizeof(src_data));
@@ -2302,6 +2346,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
     opts.allocator.realloc = test_realloc;
@@ -2332,6 +2377,7 @@ int main(void)
                     "html deck delayed source read failure releases renderer-owned buffers");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck streaming create succeeds");
     if (inst != NULL) {
@@ -2385,6 +2431,7 @@ int main(void)
         replacement_sink.write = grow_write;
         for (format_index = 0; format_index < sizeof(formats) / sizeof(formats[0]); format_index++) {
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             st = mdf_create(formats[format_index], &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL,
                             "early lifecycle guard renderer creates");
@@ -2428,6 +2475,7 @@ int main(void)
         replacement_sink.userdata = &replacement_capture;
         replacement_sink.write = grow_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.memory.max_retained_bytes = 1;
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
@@ -2467,6 +2515,7 @@ int main(void)
         replacement_sink.userdata = &replacement_capture;
         replacement_sink.write = grow_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL,
@@ -2500,6 +2549,7 @@ int main(void)
         bound_sink.userdata = &control_sink;
         bound_sink.write = teardown_control_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL,
@@ -2531,6 +2581,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
     fail_allocs.fail_after = 32;
@@ -2561,6 +2612,7 @@ int main(void)
         saw_front_theme_oom = 0;
         for (fail_after = 1; fail_after < 80; fail_after++) {
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.allocator.userdata = &fail_allocs;
             opts.allocator.alloc = failing_alloc;
             opts.allocator.realloc = failing_realloc;
@@ -2602,6 +2654,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.slide_numbers = 1;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck slide-number streaming create succeeds");
@@ -2641,6 +2694,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     st = mdf_create(MDF_FORMAT_HTML_DECK, &opts, &inst);
     fails += expect(st == MDF_OK && inst != NULL, "html deck ambiguous leading separator streaming create succeeds");
     if (inst != NULL) {
@@ -2673,6 +2727,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.deck_transition = MDF_DECK_TRANSITION_HARD;
     opts.slide_numbers = 1;
     opts.deck_center_front_text = 1;
@@ -2699,6 +2754,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2719,6 +2775,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2736,6 +2793,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2755,6 +2813,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -2853,6 +2912,7 @@ int main(void)
             memset(&writes, 0, sizeof(writes));
             memset(&traces, 0, sizeof(traces));
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = boring_values[case_index];
             opts.width = initial_widths[case_index];
             opts.write_trace.userdata = &traces;
@@ -2883,6 +2943,7 @@ int main(void)
                 reference = NULL;
                 expected = NULL;
                 mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
                 opts.boring = boring_values[case_index];
                 opts.width = target_widths[case_index];
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -2921,6 +2982,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -2958,6 +3020,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 5;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -2991,6 +3054,7 @@ int main(void)
         memset(&output, 0, sizeof(output));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3019,6 +3083,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 80;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3056,6 +3121,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3089,6 +3155,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 80;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3127,6 +3194,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3157,6 +3225,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 10;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3190,6 +3259,7 @@ int main(void)
 
         memset(&writes, 0, sizeof(writes));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 3;
         opts.emission_buffer.initial_cap = 4;
@@ -3239,6 +3309,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 3;
             if (mdf_create(MDF_FORMAT_ANSI, &opts, &reference) == MDF_OK) {
@@ -3267,6 +3338,7 @@ int main(void)
         mdf_token token;
 
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 3;
         opts.emission_buffer.initial_cap = 4;
@@ -3323,6 +3395,7 @@ int main(void)
 
         memset(&failure_source, 0, sizeof(failure_source));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 3;
         opts.emission_buffer.initial_cap = 4;
@@ -3357,6 +3430,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 3;
         opts.write_trace.userdata = &traces;
@@ -3406,6 +3480,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
         opts.write_trace.emit = emission_log_trace;
@@ -3438,6 +3513,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.width = 80;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
             if (st == MDF_OK) {
@@ -3474,6 +3550,7 @@ int main(void)
         memset(traces, 0, sizeof(traces));
         for (run = 0; run < 2; run++) {
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.width = 21;
             opts.margin_left = 1;
             opts.margin_right = 1;
@@ -3531,6 +3608,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3561,6 +3639,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 10;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3600,6 +3679,7 @@ int main(void)
         traces.max_events = 64;
         traces.max_bytes = 1024;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3648,6 +3728,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3703,6 +3784,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         opts.write_trace.userdata = &traces;
@@ -3729,6 +3811,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 80;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3765,6 +3848,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         opts.osc8 = 0;
         opts.write_trace.userdata = &traces;
@@ -3791,6 +3875,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.width = 80;
             opts.osc8 = 0;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &reference);
@@ -3823,6 +3908,7 @@ int main(void)
         memset(&writes, 0, sizeof(writes));
         memset(&traces, 0, sizeof(traces));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.osc8 = 0;
         opts.width = 80;
@@ -3869,6 +3955,7 @@ int main(void)
         bound_sink.userdata = &output;
         bound_sink.write = width_change_output_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 80;
         st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL,
@@ -3893,6 +3980,7 @@ int main(void)
             reference = NULL;
             expected = NULL;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.width = 80;
             st = mdf_create(MDF_FORMAT_HTML, &opts, &reference);
             if (st == MDF_OK) {
@@ -3948,6 +4036,7 @@ int main(void)
         recovery_sink.userdata = &recovery_capture;
         recovery_sink.write = grow_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         opts.width = 80;
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
@@ -4143,6 +4232,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 20;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
@@ -4172,6 +4262,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 10;
     opts.margin_left = 2;
@@ -4189,6 +4280,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 20;
     opts.margin_left = 2;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
@@ -4206,6 +4298,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 10;
     opts.margin_right = 2;
@@ -4223,6 +4316,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.width = 10;
     opts.margin_left = 2;
@@ -4241,6 +4335,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 10;
     opts.margin_left = 5;
     opts.margin_right = 5;
@@ -4254,16 +4349,19 @@ int main(void)
                     "ansi rejects oversized margins without integer overflow");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 1;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID, "ansi rejects one-column content width");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 2;
     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
     fails += expect(st == MDF_ERROR_INVALID, "ansi rejects two-column content width");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.width = 4;
     opts.margin_left = 1;
     opts.margin_right = 1;
@@ -4271,6 +4369,7 @@ int main(void)
     fails += expect(st == MDF_ERROR_INVALID, "ansi rejects margins that leave two content columns");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.margin_left = 4;
     opts.margin_right = 4;
     st = mdf_create(MDF_FORMAT_HTML, &opts, &inst);
@@ -4288,6 +4387,7 @@ int main(void)
         if (st == MDF_OK) st = inst->render_cstr(inst, "alpha\n", &html_with_margins);
         fails += expect(st == MDF_OK && html_with_margins != NULL, "html render with runtime ansi margins");
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         st = mdf_create(MDF_FORMAT_HTML, &opts, &plain_html);
         fails += expect(st == MDF_OK && plain_html != NULL, "html renderer without ansi margins");
         if (plain_html != NULL) {
@@ -4306,6 +4406,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 0;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -4336,6 +4437,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.osc8 = 1;
     opts.allocator.userdata = &allocs;
@@ -4387,6 +4489,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 0;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -4413,6 +4516,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 0;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -4437,6 +4541,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     {
         char fixed_emit[8];
@@ -4457,6 +4562,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     {
         char fixed_emit[64];
@@ -4499,6 +4605,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 0;
     opts.emission_buffer.initial_cap = 8;
     opts.emission_buffer.max_cap = 8;
@@ -4518,6 +4625,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.emission_buffer.initial_cap = 8;
     opts.emission_buffer.max_cap = 1024;
@@ -4545,6 +4653,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 0;
     opts.emission_buffer.initial_cap = 8;
     opts.emission_buffer.max_cap = 1024;
@@ -4714,6 +4823,7 @@ int main(void)
     }
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5053,6 +5163,7 @@ int main(void)
     inst->destroy(inst);
     inst = NULL;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
@@ -5093,6 +5204,7 @@ int main(void)
     inst->destroy(inst);
     inst = NULL;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5132,6 +5244,7 @@ int main(void)
     inst = NULL;
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5157,6 +5270,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5180,6 +5294,7 @@ int main(void)
 
     memset(&allocs, 0, sizeof(allocs));
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5222,6 +5337,7 @@ int main(void)
     inst->destroy(inst);
     inst = NULL;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5506,6 +5622,7 @@ int main(void)
     inst->destroy(inst);
     inst = NULL;
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     opts.allocator.userdata = &allocs;
     opts.allocator.alloc = test_alloc;
@@ -5645,6 +5762,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
@@ -5687,6 +5805,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
@@ -5722,6 +5841,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.fail_after = 1;
     opts.allocator.userdata = &fail_allocs;
@@ -5732,6 +5852,7 @@ int main(void)
     fails += expect(st == MDF_ERROR_NOMEM && inst == NULL, "create surfaces allocator failure");
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
@@ -5760,6 +5881,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     fail_allocs.alloc_calls = 0;
     fail_allocs.realloc_calls = 0;
@@ -5791,6 +5913,7 @@ int main(void)
     inst = NULL;
 
     mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
     opts.boring = 1;
     memset(&sink_oom_allocs, 0, sizeof(sink_oom_allocs));
     opts.allocator.userdata = &sink_oom_allocs;
@@ -5838,6 +5961,7 @@ int main(void)
 
         memset(&allocs, 0, sizeof(allocs));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 40;
         opts.allocator.userdata = &allocs;
         opts.allocator.alloc = test_alloc;
@@ -5872,6 +5996,7 @@ int main(void)
 
         memset(&allocs, 0, sizeof(allocs));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.allocator.userdata = &allocs;
         opts.allocator.alloc = test_alloc;
         opts.allocator.realloc = test_realloc;
@@ -5905,6 +6030,7 @@ int main(void)
 
         memset(&allocs, 0, sizeof(allocs));
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.width = 40;
         opts.allocator.userdata = &allocs;
         opts.allocator.alloc = test_alloc;
@@ -5961,6 +6087,7 @@ int main(void)
         sink.userdata = &expected_sink;
         sink.write = grow_write;
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
         fails += expect(st == MDF_OK && inst != NULL, "incremental reference renderer creates");
@@ -6100,6 +6227,7 @@ int main(void)
             memset(&fail_allocs, 0, sizeof(fail_allocs));
             fail_allocs.fail_after = (size_t)-1;
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             opts.width = 1000;
             opts.emission_buffer.initial_cap = 8;
@@ -6215,6 +6343,7 @@ int main(void)
             if (eof_sized_chart != NULL) {
                 memset(eof_sized_chart, 'x', eof_sized_chart_len);
                 mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
                 opts.boring = 1;
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
                 fails += expect(st == MDF_OK && inst != NULL, "incremental eof-sized chart renderer creates");
@@ -6262,6 +6391,7 @@ int main(void)
                     size_t off;
 
                     mdf_options_init(&opts);
+                    opts.ansi_mode = MDF_ANSI_ON;
                     opts.boring = 1;
                     opts.table_buffer_mode = MDF_TABLE_BUFFER_ROW;
                     st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
@@ -6296,6 +6426,7 @@ int main(void)
             size_t row;
 
             mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
             opts.boring = 1;
             st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
             fails += expect(st == MDF_OK && inst != NULL, "incremental bounded table renderer creates");
@@ -6327,6 +6458,7 @@ int main(void)
                 memcpy(frontmatter_table + strlen(frontmatter_table_prefix) + 35000,
                        frontmatter_table_suffix, strlen(frontmatter_table_suffix));
                 mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
                 opts.boring = 1;
                 st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
                 fails += expect(st == MDF_OK && inst != NULL,
@@ -6362,6 +6494,7 @@ int main(void)
                 memset(&fail_allocs, 0, sizeof(fail_allocs));
                 fail_allocs.fail_after = (size_t)-1;
                 mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
                 opts.boring = 1;
                 opts.allocator.userdata = &fail_allocs;
                 opts.allocator.alloc = failing_alloc;
@@ -6404,6 +6537,7 @@ int main(void)
         source_offset_probe_sink stream_sink;
 
         mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
         opts.boring = 1;
         memset(&stream_src, 0, sizeof(stream_src));
         stream_src.src = source_stream_markdown;

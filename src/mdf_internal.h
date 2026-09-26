@@ -28,6 +28,9 @@ typedef struct mdf_theme_style {
     const char *table_wire;
 } mdf_theme_style;
 
+/* Escape-free output and boring suppress style independently. */
+#define MDF_ANSI_STYLED(impl) (!(impl)->opts.boring && ((impl)->format != MDF_FORMAT_ANSI || (impl)->opts.ansi_mode != MDF_ANSI_OFF))
+
 typedef struct mdf_parser {
     mdf_status (*parse)(struct mdf_parser *self, mdf_source *source, mdf_renderer *renderer, mdf_sink *sink);
     const char *(*error)(const struct mdf_parser *self);
@@ -67,11 +70,28 @@ typedef struct mdf_ansi_pending_state {
     int heading_style_pending_prefix;
 } mdf_ansi_pending_state;
 
+/* Constant-size input decision state; never retains an escape payload. */
+typedef struct mdf_plain_filter {
+    int mode;
+    int string_escape;
+    int pending_c2;
+    int utf8_left;
+} mdf_plain_filter;
+
+typedef mdf_status (*mdf_plain_consumer)(void *userdata, const char *data, size_t len);
+mdf_status mdf_plain_filter_feed(mdf_plain_filter *state, const char *data, size_t len,
+                                mdf_plain_consumer consume, void *userdata);
+mdf_status mdf_plain_filter_finish(mdf_plain_filter *state, mdf_plain_consumer consume, void *userdata);
+
 typedef struct mdf_impl {
     mdf_format format;
     mdf_options opts;
     const mdf_theme_style *theme;
     int theme_name_explicit;
+    mdf_plain_filter plain_tokens;
+    char *plain_token_input;
+    size_t plain_token_input_len;
+    size_t plain_token_input_cap;
     mdf_allocator user_allocator;
     mdf_memory memory;
     mdf_allocator allocator;
@@ -267,6 +287,7 @@ typedef struct mdf_sink_callback_guard {
 } mdf_sink_callback_guard;
 
 typedef struct mdf_parser_impl {
+    mdf_plain_filter plain_input;
     mdf_options opts;
     mdf_allocator allocator;
     char error[256];

@@ -97,7 +97,7 @@ end
 local cmdf = assert(os.getenv("LIBMDF_CMDF"), "LIBMDF_CMDF")
 local cmdf_lua = assert(os.getenv("LIBMDF_CMDF_LUA"), "LIBMDF_CMDF_LUA")
 local sample = "# Lua\n\nbody with **strong** and [link](https://example.com)\n"
-local parity_opts = { boring = true, osc8 = mdf.detect_osc8_support() }
+local parity_opts = { ansi_mode = "on", boring = true, osc8 = mdf.detect_osc8_support() }
 
 do
   local f = assert(io.open(cmdf_lua, "rb"))
@@ -140,6 +140,28 @@ assert(type(mdf.pager) == "function", "lua facade exposes pager")
 assert(mdf.paths_alias("same-path", "same-path"), "lua facade exposes path alias checks")
 
 do
+  -- Every non-private native module function must be reachable through the facade.
+  for name, value in pairs(require("libmdf.core")) do
+    if type(value) == "function" and name:sub(1, 1) ~= "_" then
+      assert(type(mdf[name]) == "function", "Lua facade missing native function: " .. name)
+    end
+  end
+  assert_equal(mdf.path_relative_to("/docs/output", "/docs/fonts/face name.woff2"),
+               "../fonts/face%20name.woff2", "relative paths escape URI bytes")
+  assert_equal(mdf.path_relative_to("/docs/./output", "/docs/output/../output"),
+               ".", "relative paths normalize dot components")
+  assert_equal(mdf.path_relative_to("build/docs", "build/fonts/face.woff2"),
+               "../fonts/face.woff2", "relative inputs resolve against the same working directory")
+  assert_equal(mdf.file_descriptor(io.stdout), 1, "stdout descriptor exposed without closing")
+  local f = assert(io.open(cmdf_lua, "rb"))
+  assert(mdf.file_descriptor(f) >= 0, "open Lua file has a usable destination descriptor")
+  assert(f:read(1), "descriptor helper leaves file open and readable")
+  f:close()
+  assert(not pcall(mdf.file_descriptor, f), "descriptor helper rejects closed files")
+  assert(not pcall(mdf.file_descriptor, {}), "descriptor helper rejects non-files")
+end
+
+do
   local path = os.tmpname() .. ".txt"
   local f = assert(io.open(path, "wb"))
   f:write("# pager override\n")
@@ -156,7 +178,7 @@ do
   os.remove(path)
 end
 
-local out = mdf.render("# Lua\n\nbody\n", { boring = true })
+local out = mdf.render("# Lua\n\nbody\n", { ansi_mode = "on", boring = true })
 assert(out:match("Lua"), out)
 assert(out:match("body"), out)
 
@@ -183,13 +205,13 @@ assert(stream_html_auto_title:match("<title>Stream Auto HTML</title>"),
        "lua streaming html auto-title is owned by libmdf")
 
 local lua_ansi = mdf.render(sample, parity_opts)
-local cmdf_ansi = run_capture(shell_quote(cmdf) .. " -b", sample)
+local cmdf_ansi = run_capture(shell_quote(cmdf) .. " --ansi on -b", sample)
 assert_equal(lua_ansi, cmdf_ansi, "lua facade ansi parity")
 
-local cmdf_lua_html_stdin = run_stdin_capture(shell_quote(cmdf_lua) .. " --html", "# Pipe Lua\n\nbody\n")
+local cmdf_lua_html_stdin = run_stdin_capture(shell_quote(cmdf_lua) .. " --ansi on --html", "# Pipe Lua\n\nbody\n")
 assert(cmdf_lua_html_stdin:match("<title>Pipe Lua</title>"), "cmdf.lua stdin html auto-title uses first ATX heading")
 
-local cmdf_lua_html_tab_blank = run_stdin_capture(shell_quote(cmdf_lua) .. " --html", "\t\n# Tab Pipe Lua\n\nbody\n")
+local cmdf_lua_html_tab_blank = run_stdin_capture(shell_quote(cmdf_lua) .. " --ansi on --html", "\t\n# Tab Pipe Lua\n\nbody\n")
 assert(cmdf_lua_html_tab_blank:match("<title>mdf</title>"),
        "cmdf.lua stdin html auto-title stops when leading tab rules out a heading")
 
@@ -198,12 +220,12 @@ assert_equal(stream_ansi, cmdf_ansi, "lua streaming ansi parity")
 
 local margin_sample = "alpha\n\nbeta gamma\n"
 local margin_expected = "  alpha\n\n  beta\n  gamma\n"
-local lua_margin = mdf.render(margin_sample, { boring = true, width = 10, margin_left = 2, margin_right = 1 })
+local lua_margin = mdf.render(margin_sample, { ansi_mode = "on", boring = true, width = 10, margin_left = 2, margin_right = 1 })
 assert_equal(lua_margin, margin_expected, "lua ansi margins")
 
 local trace = {}
 local traced = mdf.render(sample, {
-  boring = true,
+  ansi_mode = "on", boring = true,
   osc8 = mdf.detect_osc8_support(),
   write_trace = function(format, chunk)
     trace[#trace + 1] = format .. ":" .. chunk
@@ -213,7 +235,7 @@ assert_equal(traced, cmdf_ansi, "lua traced render parity")
 assert(#trace > 3, "lua write trace captures decision emissions")
 
 local incremental_chunks = {}
-local incremental = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+local incremental = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function(chunk)
   incremental_chunks[#incremental_chunks + 1] = chunk
 end)
 assert(incremental:write("Hello incremental"), "lua document stream accepts a fragment")
@@ -230,7 +252,7 @@ incremental:destroy()
 
 do
   local chunks = {}
-  local stream = mdf.document_stream({ format = "ansi", boring = true, width = 80 }, function(chunk)
+  local stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true, width = 80 }, function(chunk)
     chunks[#chunks + 1] = chunk
   end)
   assert(stream:write("alpha "), "lua document stream accepts input before runtime width change")
@@ -245,7 +267,7 @@ end
 do
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", boring = true, width = 80,
+    format = "ansi", ansi_mode = "on", boring = true, width = 80,
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
   assert(stream:write("`abcdefghij`"), "lua geometry stream retains undecided inline code")
@@ -256,7 +278,7 @@ do
   assert(stream:finish_document(), "lua geometry stream finishes its original document")
   assert_equal(table.concat(writes),
                mdf.render("`abcdefghij` tail\n", {
-                 format = "ansi", boring = true, width = 12, margin_left = 2, margin_right = 2,
+                 format = "ansi", ansi_mode = "on", boring = true, width = 12, margin_left = 2, margin_right = 2,
                }), "lua pending code uses new geometry")
   assert(#writes == #traces, "lua geometry sink and trace counts match")
   for i = 1, #writes do
@@ -278,7 +300,7 @@ end
 do
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", boring = true, width = 20,
+    format = "ansi", ansi_mode = "on", boring = true, width = 20,
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
   assert(stream:write("alpha\n\nbeta "),
@@ -320,7 +342,7 @@ do
     for chunk_mode = 1, 2 do
       local writes, traces = {}, {}
       local stream = mdf.document_stream({
-        format = "ansi", boring = true, width = 80, margin_left = case[4],
+        format = "ansi", ansi_mode = "on", boring = true, width = 80, margin_left = case[4],
         write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
       }, function(chunk) writes[#writes + 1] = chunk end)
       local function feed(src)
@@ -362,7 +384,7 @@ do
   for case_index, case in ipairs(cases) do
     local writes, traces = {}, {}
     local stream = mdf.document_stream({
-      format = "ansi", boring = true, width = 80,
+      format = "ansi", ansi_mode = "on", boring = true, width = 80,
       write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
     }, function(chunk) writes[#writes + 1] = chunk end)
     assert(stream:write(case[1]), "lua repeated geometry feeds first fragment")
@@ -398,7 +420,7 @@ end
 do
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", boring = true, width = 12,
+    format = "ansi", ansi_mode = "on", boring = true, width = 12,
     table_buffer_mode = "row", table_wire_mode = "space",
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
@@ -423,7 +445,7 @@ end
 do
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", boring = true, width = 20, table_buffer_mode = "row",
+    format = "ansi", ansi_mode = "on", boring = true, width = 20, table_buffer_mode = "row",
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
   assert(stream:write("| abcdefghij | one two six ten |\n| --- | --- |\n" ..
@@ -450,7 +472,7 @@ end
 
 do
   local writes = {}
-  local handle = mdf.new({ format = "ansi", boring = true, width = 12 })
+  local handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true, width = 12 })
   assert(handle:set_sink(function(chunk) writes[#writes + 1] = chunk end),
          "lua geometry handle binds its sink")
   local reads = 0
@@ -472,7 +494,7 @@ end
 do
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", boring = true, width = 12,
+    format = "ansi", ansi_mode = "on", boring = true, width = 12,
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
   assert(stream:write("alpha\n\n"), "lua geometry stream emits its first paragraph")
@@ -493,7 +515,7 @@ end
 do
   local first = {}
   local second = {}
-  local stream = mdf.document_stream({ format = "ansi", boring = true, osc8 = true }, function(chunk)
+  local stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true, osc8 = true }, function(chunk)
     first[#first + 1] = chunk
   end)
   assert(stream:write("discarded "), "lua document stream starts before sink replacement")
@@ -514,7 +536,7 @@ do
   local sink = function(chunk)
     chunks[#chunks + 1] = chunk
   end
-  local stream = mdf.document_stream({ format = "ansi", boring = true }, sink)
+  local stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, sink)
   assert(stream:write("retained"), "lua document stream starts before an identical sink bind")
   assert(stream:set_sink(sink), "lua document stream accepts an identical sink bind")
   assert(stream:write(" input\n"), "lua document stream continues after an identical sink bind")
@@ -526,7 +548,7 @@ end
 
 do
   local replacement = {}
-  local stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+  local stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function()
     return false
   end)
   assert(stream:write("discarded"),
@@ -545,7 +567,7 @@ end
 
 do
   local replacement = {}
-  local stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+  local stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function()
     return false
   end)
   assert(stream:write("discarded"), "lua document stream starts before a failed reset")
@@ -600,7 +622,7 @@ do
   local function create_cyclic_handle()
     local handle
 
-    handle = mdf.new({ format = "ansi", boring = true })
+    handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
     assert(handle:set_sink(function()
       return handle:set_width(80)
     end), "lua handle accepts a sink that captures its receiver")
@@ -610,7 +632,7 @@ do
   local function create_cyclic_stream()
     local stream
 
-    stream = mdf.document_stream({ format = "ansi", boring = true }, function()
+    stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function()
       return stream:set_width(80)
     end)
     weak.stream = stream
@@ -627,14 +649,14 @@ end
 do
   local markdown = "# Split Lua\n\n- item\n\n`code` [link](https://example.com)\n"
   local chunks = {}
-  local split = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  local split = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function(chunk)
     chunks[#chunks + 1] = chunk
   end)
   for i = 1, #markdown do
     assert(split:write(markdown:sub(i, i)), "lua document stream accepts byte-sized fragments")
   end
   assert(split:finish_document(), "lua document stream finishes byte-sized fragments")
-  assert_equal(table.concat(chunks), mdf.render(markdown, { boring = true }),
+  assert_equal(table.concat(chunks), mdf.render(markdown, { ansi_mode = "on", boring = true }),
                "lua document stream byte split parity")
   split = nil
   collectgarbage("collect")
@@ -677,7 +699,7 @@ do
   local expected = "> 1.\n>    https://example.com\n>    next\n"
   local writes, traces = {}, {}
   local stream = mdf.document_stream({
-    format = "ansi", width = 20, boring = true, osc8 = false,
+    format = "ansi", width = 20, ansi_mode = "on", boring = true, osc8 = false,
     write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
   }, function(chunk) writes[#writes + 1] = chunk end)
   assert(stream:write("> 1. <https://example.com>"),
@@ -697,11 +719,11 @@ do
   assert_equal(table.concat(writes), expected,
                "lua quoted-list autolink does not add an empty prefix line")
   stream:close()
-  assert_equal(mdf.render(input, { format = "ansi", width = 21, boring = true, osc8 = false }),
+  assert_equal(mdf.render(input, { format = "ansi", width = 21, ansi_mode = "on", boring = true, osc8 = false }),
                expected, "lua quoted-list baseline agrees with resized stream")
 end
 
-local callback_failure = mdf.document_stream({ format = "ansi", boring = true }, function()
+local callback_failure = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function()
   return false
 end)
 local callback_ok = pcall(function() callback_failure:write("callback failure") end)
@@ -712,7 +734,7 @@ callback_failure:close()
 
 local ok, err = pcall(function()
   mdf.render(sample, {
-    boring = true,
+    ansi_mode = "on", boring = true,
     write_trace = function()
       return false
     end,
@@ -784,7 +806,7 @@ do
 
   handle = mdf.new({
     format = "ansi",
-    boring = true,
+    ansi_mode = "on", boring = true,
     width = 80,
     write_trace = function(_, chunk)
       traces[#traces + 1] = chunk
@@ -812,7 +834,7 @@ do
   assert(not geometry_change_ok and not trace_geometry_change_ok,
          "lua handle rejects geometry changes from sink and trace callbacks")
   assert_equal(table.concat(writes),
-               mdf.render("`abcdefghij` text\n", { format = "ansi", boring = true, width = 80 }),
+               mdf.render("`abcdefghij` text\n", { format = "ansi", ansi_mode = "on", boring = true, width = 80 }),
                "lua output-callback width rejection preserves the active layout")
   assert(#writes == #traces,
          "lua output-callback width rejection keeps sink and trace event counts aligned")
@@ -861,7 +883,7 @@ do
   local traces = {}
   local handle = mdf.new({
     format = "ansi",
-    boring = true,
+    ansi_mode = "on", boring = true,
     width = 80,
     write_trace = function(_, chunk)
       traces[#traces + 1] = chunk
@@ -941,7 +963,7 @@ end
 
 do
   local replacement = {}
-  local reset_handle = mdf.new({ format = "ansi", boring = true })
+  local reset_handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
   assert(reset_handle:set_sink(function()
     return false
   end), "lua handle binds a sink before a failed reset")
@@ -967,7 +989,7 @@ do
   local stream_co = coroutine.create(function()
     return mdf.document_stream({
       format = "ansi",
-      boring = true,
+      ansi_mode = "on", boring = true,
       write_trace = function(_, chunk)
         stream_trace[#stream_trace + 1] = chunk
       end,
@@ -998,7 +1020,7 @@ do
   local handle_co = coroutine.create(function()
     local coroutine_handle = mdf.new({
       format = "ansi",
-      boring = true,
+      ansi_mode = "on", boring = true,
       write_trace = function(_, chunk)
         handle_trace[#handle_trace + 1] = chunk
       end,
@@ -1027,7 +1049,7 @@ do
          "lua handle refreshes sink and trace callbacks for each caller state")
 
   local nested_chunks = {}
-  local nested_handle = mdf.new({ format = "ansi", boring = true })
+  local nested_handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
   local nested_once = false
   local nested_sink
   nested_sink = function(chunk)
@@ -1057,7 +1079,7 @@ do
          "nested coroutine callback preserves subsequent Lua sink writes")
 
   local source_chunks = {}
-  local source_handle = mdf.new({ format = "ansi", boring = true })
+  local source_handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
   local source_done = false
   assert(source_handle:set_sink(function(chunk)
     source_chunks[#source_chunks + 1] = chunk
@@ -1090,7 +1112,7 @@ do
 
   local close_stream_chunks = {}
   local close_stream
-  close_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  close_stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function(chunk)
     close_stream_chunks[#close_stream_chunks + 1] = chunk
     local close_ok = pcall(function() close_stream:close() end)
     assert(not close_ok, "lua document stream rejects close from its sink callback")
@@ -1109,7 +1131,7 @@ do
   local reset_reentered = false
   reset_handle = mdf.new({
     format = "ansi",
-    boring = true,
+    ansi_mode = "on", boring = true,
     write_trace = function(_, chunk)
       reset_trace[#reset_trace + 1] = chunk
     end,
@@ -1138,7 +1160,7 @@ do
   local handle_c_chunks = {}
   local replacement_handle
   local handle_nested_replace_ok
-  replacement_handle = mdf.new({ format = "ansi", boring = true })
+  replacement_handle = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
   assert(replacement_handle:set_sink(function(chunk)
     handle_a_chunks[#handle_a_chunks + 1] = chunk
     if handle_nested_replace_ok == nil then
@@ -1167,7 +1189,7 @@ do
   local stream_c_chunks = {}
   local replacement_stream
   local stream_nested_replace_ok
-  replacement_stream = mdf.document_stream({ format = "ansi", boring = true }, function(chunk)
+  replacement_stream = mdf.document_stream({ format = "ansi", ansi_mode = "on", boring = true }, function(chunk)
     stream_a_chunks[#stream_a_chunks + 1] = chunk
     if stream_nested_replace_ok == nil then
       stream_nested_replace_ok = pcall(function()
@@ -1278,7 +1300,7 @@ assert(io.open(lua_regular_font_path, "rb") == nil and io.open(lua_italic_font_p
   "lua dump paths do not write files without dump_font")
 
 local token_out = {}
-local token_handle = mdf.new({ boring = true })
+local token_handle = mdf.new({ ansi_mode = "on", boring = true })
 token_handle:set_sink(function(chunk) token_out[#token_out + 1] = chunk end)
 token_handle:write_token({ type = mdf.token.TEXT, text = "Hello" })
 token_handle:write_token({ type = "space", text = " " })
@@ -1290,7 +1312,7 @@ assert(table.concat(token_out):match("Hello Lua"), "lua manual token API renders
 
 do
   local chunks = {}
-  local receiver = mdf.new({ format = "ansi", boring = true })
+  local receiver = mdf.new({ format = "ansi", ansi_mode = "on", boring = true })
   local sink = function(chunk) chunks[#chunks + 1] = chunk end
   assert(receiver:set_sink(sink),
          "lua handle binds its incremental receiver sink")
@@ -1306,26 +1328,26 @@ do
          "lua handle preserves its sink across incremental document boundaries")
 end
 
-local cmdf_lua_ansi = run_capture(shell_quote(cmdf_lua) .. " -b", sample)
+local cmdf_lua_ansi = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b", sample)
 assert_equal(cmdf_lua_ansi, cmdf_ansi, "cmdf.lua ansi parity")
 
-local cmdf_lua_margin = run_capture(shell_quote(cmdf_lua) .. " -b -w 10 --margin-left 2 --margin-right 1", margin_sample)
+local cmdf_lua_margin = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b -w 10 --margin-left 2 --margin-right 1", margin_sample)
 assert_equal(cmdf_lua_margin, margin_expected, "cmdf.lua ansi margins")
 
-local cmdf_version = run_command_capture(shell_quote(cmdf) .. " --version")
-local cmdf_lua_version = run_command_capture(shell_quote(cmdf_lua) .. " --version")
+local cmdf_version = run_command_capture(shell_quote(cmdf) .. " --ansi on --version")
+local cmdf_lua_version = run_command_capture(shell_quote(cmdf_lua) .. " --ansi on --version")
 assert_equal(cmdf_lua_version, cmdf_version, "cmdf.lua version parity")
 
-local invalid_width = run_expect_fail(shell_quote(cmdf_lua) .. " -w 0", sample)
+local invalid_width = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on -w 0", sample)
 assert(invalid_width:match("invalid width"), invalid_width)
 
-local invalid_fractional_width = run_expect_fail(shell_quote(cmdf_lua) .. " -w 10.5", sample)
+local invalid_fractional_width = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on -w 10.5", sample)
 assert(invalid_fractional_width:match("invalid width"), invalid_fractional_width)
 
-local invalid_large_width = run_expect_fail(shell_quote(cmdf_lua) .. " --html -w 10001", sample)
+local invalid_large_width = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --html -w 10001", sample)
 assert(invalid_large_width:match("invalid width"), invalid_large_width)
 
-local invalid_html_width = run_expect_fail(shell_quote(cmdf_lua) .. " --html --html-content-width 0", sample)
+local invalid_html_width = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --html --html-content-width 0", sample)
 assert(invalid_html_width:match("invalid html content width"), invalid_html_width)
 
 local deck_sample = "# Front\n\n---\n\n# Second\n\nbody\n"
@@ -1384,14 +1406,14 @@ end)
 assert(not ok, "lua deck rejects invalid transition")
 assert(tostring(err):match("unknown deck transition: spin"), tostring(err))
 
-local cmdf_lua_traced, cmdf_lua_trace = run_capture_with_trace(shell_quote(cmdf_lua) .. " -b", sample)
+local cmdf_lua_traced, cmdf_lua_trace = run_capture_with_trace(shell_quote(cmdf_lua) .. " --ansi on -b", sample)
 assert_equal(cmdf_lua_traced, cmdf_ansi, "cmdf.lua traced ansi parity")
 local trace_lines = 0
 for _ in cmdf_lua_trace:gmatch("[^\n]+") do trace_lines = trace_lines + 1 end
 assert(trace_lines > 3, "cmdf.lua traced render emits decision chunks")
 
-local cmdf_html = run_capture(shell_quote(cmdf) .. " --html", sample)
-local cmdf_lua_html = run_capture(shell_quote(cmdf_lua) .. " --html", sample)
+local cmdf_html = run_capture(shell_quote(cmdf) .. " --ansi on --html", sample)
+local cmdf_lua_html = run_capture(shell_quote(cmdf_lua) .. " --ansi on --html", sample)
 assert(cmdf_lua_html:match("JetBrains Mono"), "cmdf.lua html embeds JetBrains Mono")
 assert_equal(cmdf_lua_html, cmdf_html, "cmdf.lua html parity")
 assert(mdf.path_aliases_stdout("/dev/stdout"), "lua facade identifies stdout path aliases")
@@ -1406,7 +1428,7 @@ os.remove(cmdf_lua_bare_dump_dir)
 assert(os.execute("mkdir -p " .. shell_quote(cmdf_lua_bare_dump_dir)))
 local cmdf_lua_bare_output_path = cmdf_lua_bare_dump_dir .. "/index.html"
 local cmdf_lua_bare_dumped_font_html = run_capture(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font -o " .. shell_quote(cmdf_lua_bare_output_path), sample)
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font -o " .. shell_quote(cmdf_lua_bare_output_path), sample)
 assert_equal(cmdf_lua_bare_dumped_font_html, "", "cmdf.lua bare dump writes explicit output")
 local cmdf_lua_bare_output = assert(io.open(cmdf_lua_bare_output_path, "rb"))
 local cmdf_lua_bare_html = cmdf_lua_bare_output:read("*a")
@@ -1429,7 +1451,7 @@ local cmdf_lua_relative_input_file = assert(io.open(cmdf_lua_relative_input, "wb
 cmdf_lua_relative_input_file:write(sample)
 cmdf_lua_relative_input_file:close()
 local cmdf_lua_relative_dump_output = run_command_capture(
-  "cd " .. shell_quote(cmdf_lua_relative_dump_dir) .. " && " .. shell_quote(cmdf_lua) ..
+  "cd " .. shell_quote(cmdf_lua_relative_dump_dir) .. " && " .. shell_quote(cmdf_lua) .. " --ansi on" ..
   " --html --html-dump-font-path 'assets#v1?%' -o out/index.html " .. shell_quote(cmdf_lua_relative_input))
 assert_equal(cmdf_lua_relative_dump_output, "", "cmdf.lua relative font dump writes explicit output")
 local cmdf_lua_relative_html_file = assert(io.open(cmdf_lua_relative_dump_dir .. "/out/index.html", "rb"))
@@ -1459,7 +1481,7 @@ local cmdf_lua_stdout_input_file = assert(io.open(cmdf_lua_stdout_input, "wb"))
 cmdf_lua_stdout_input_file:write(sample)
 cmdf_lua_stdout_input_file:close()
 local cmdf_lua_stdout_dump_html = run_command_capture(
-  "cd " .. shell_quote(cmdf_lua_stdout_dump_dir) .. " && " .. shell_quote(cmdf_lua) ..
+  "cd " .. shell_quote(cmdf_lua_stdout_dump_dir) .. " && " .. shell_quote(cmdf_lua) .. " --ansi on" ..
   " --html --html-dump-font-path 'assets#stdout?%' " .. shell_quote(cmdf_lua_stdout_input))
 assert(cmdf_lua_stdout_dump_html:find('src:url("assets%23stdout%3F%25/JetBrainsMono-Regular.woff2")', 1, true),
        "cmdf.lua URI-encodes local regular dump paths when HTML is written to stdout")
@@ -1476,7 +1498,7 @@ os.remove(cmdf_lua_stdout_input)
 assert(os.execute("rmdir " .. shell_quote(cmdf_lua_stdout_dump_dir .. "/assets#stdout?%") ..
                   " " .. shell_quote(cmdf_lua_stdout_dump_dir)))
 local cmdf_lua_dumped_font_html = run_capture(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font-regular-path " ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font-regular-path " ..
   shell_quote(cmdf_lua_regular_font_path) .. " --html-dump-font-italic-path " ..
   shell_quote(cmdf_lua_italic_font_path), sample)
 assert(cmdf_lua_dumped_font_html:find(cmdf_lua_regular_font_path, 1, true),
@@ -1494,7 +1516,7 @@ local cmdf_lua_alias_italic_path = os.tmpname()
 os.remove(cmdf_lua_alias_output_path)
 os.remove(cmdf_lua_alias_italic_path)
 local cmdf_lua_alias_output = run_expect_fail(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font-regular-path " ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font-regular-path " ..
   shell_quote(cmdf_lua_alias_output_path) .. " --html-dump-font-italic-path " ..
   shell_quote(cmdf_lua_alias_italic_path) .. " -o " .. shell_quote(cmdf_lua_alias_output_path), sample)
 assert(cmdf_lua_alias_output:match("font dump destination aliases input, output, or stdout"),
@@ -1510,7 +1532,7 @@ cmdf_lua_alias_input_file:write("# Preserve this input\n")
 cmdf_lua_alias_input_file:close()
 os.remove(cmdf_lua_alias_input_italic_path)
 local cmdf_lua_alias_input = run_command_expect_fail(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font-regular-path " ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font-regular-path " ..
   shell_quote(cmdf_lua_alias_input_path) .. " --html-dump-font-italic-path " ..
   shell_quote(cmdf_lua_alias_input_italic_path) .. " " .. shell_quote(cmdf_lua_alias_input_path))
 assert(cmdf_lua_alias_input:match("font dump destination aliases input, output, or stdout"),
@@ -1525,7 +1547,7 @@ os.remove(cmdf_lua_alias_input_italic_path)
 local cmdf_lua_stdout_alias_italic_path = os.tmpname()
 os.remove(cmdf_lua_stdout_alias_italic_path)
 local cmdf_lua_stdout_alias = run_expect_fail(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font-force --html-dump-font-regular-path /dev/stdout" ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font-force --html-dump-font-regular-path /dev/stdout" ..
   " --html-dump-font-italic-path " .. shell_quote(cmdf_lua_stdout_alias_italic_path), sample)
 assert(cmdf_lua_stdout_alias:match("font dump destination aliases input, output, or stdout"),
   "cmdf.lua rejects a font dump destination that aliases stdout")
@@ -1538,7 +1560,7 @@ local cmdf_lua_suffix_italic_path = os.tmpname()
 os.remove(cmdf_lua_suffix_regular_path)
 os.remove(cmdf_lua_suffix_italic_path)
 local cmdf_lua_suffix_only = run_expect_fail(
-  shell_quote(cmdf_lua) .. " --html --html-font-uri '?v=1' --html-dump-font-force " ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-font-uri '?v=1' --html-dump-font-force " ..
   "--html-dump-font-regular-path " .. shell_quote(cmdf_lua_suffix_regular_path) ..
   " --html-dump-font-italic-path " .. shell_quote(cmdf_lua_suffix_italic_path), sample)
 assert(cmdf_lua_suffix_only:match("html font dump paths: invalid argument"),
@@ -1558,7 +1580,7 @@ cmdf_lua_missing_italic:write("preserve italic")
 cmdf_lua_missing_italic:close()
 os.remove(cmdf_lua_missing_input)
 local cmdf_lua_missing_input_error = run_command_expect_fail(
-  shell_quote(cmdf_lua) .. " --html --html-dump-font-force --html-dump-font-regular-path " ..
+  shell_quote(cmdf_lua) .. " --ansi on --html --html-dump-font-force --html-dump-font-regular-path " ..
   shell_quote(cmdf_lua_missing_regular_path) .. " --html-dump-font-italic-path " ..
   shell_quote(cmdf_lua_missing_italic_path) .. " " .. shell_quote(cmdf_lua_missing_input))
 assert(cmdf_lua_missing_input_error:match("No such file") or cmdf_lua_missing_input_error:match("cannot open"),
@@ -1574,50 +1596,108 @@ cmdf_lua_missing_italic_check:close()
 os.remove(cmdf_lua_missing_regular_path)
 os.remove(cmdf_lua_missing_italic_path)
 
-local cmdf_html_width = run_capture(shell_quote(cmdf) .. " --html -w 42", sample)
-local cmdf_lua_html_width = run_capture(shell_quote(cmdf_lua) .. " --html -w 42", sample)
+local cmdf_html_width = run_capture(shell_quote(cmdf) .. " --ansi on --html -w 42", sample)
+local cmdf_lua_html_width = run_capture(shell_quote(cmdf_lua) .. " --ansi on --html -w 42", sample)
 assert_equal(cmdf_lua_html_width, cmdf_html_width, "cmdf.lua html width parity")
 
-local cmdf_html_after_deck = run_capture(shell_quote(cmdf) .. " --deck --html -T 'Lua Mixed'", deck_sample)
-local cmdf_lua_html_after_deck = run_capture(shell_quote(cmdf_lua) .. " --deck --html -T 'Lua Mixed'", deck_sample)
+local cmdf_html_after_deck = run_capture(shell_quote(cmdf) .. " --ansi on --deck --html -T 'Lua Mixed'", deck_sample)
+local cmdf_lua_html_after_deck = run_capture(shell_quote(cmdf_lua) .. " --ansi on --deck --html -T 'Lua Mixed'", deck_sample)
 assert_equal(cmdf_lua_html_after_deck, cmdf_html_after_deck, "cmdf.lua deck then html format flag parity")
 
-local cmdf_lua_simulated = run_capture(shell_quote(cmdf_lua) .. " -b --simulate-chunk 1", sample)
+local cmdf_lua_simulated = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b --simulate-chunk 1", sample)
 assert_equal(cmdf_lua_simulated, cmdf_ansi, "cmdf.lua simulate chunk ansi parity")
 
-local cmdf_lua_simulated_short = run_capture(shell_quote(cmdf_lua) .. " -b -S 1", sample)
+local cmdf_lua_simulated_short = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b -S 1", sample)
 assert_equal(cmdf_lua_simulated_short, cmdf_ansi, "cmdf.lua -S simulate chunk ansi parity")
 
-local cmdf_lua_simulated_delay = run_capture(shell_quote(cmdf_lua) .. " -b --simulate-delay 1ms", sample)
+local cmdf_lua_simulated_delay = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b --simulate-delay 1ms", sample)
 assert_equal(cmdf_lua_simulated_delay, cmdf_ansi, "cmdf.lua simulate delay ansi parity")
 
 for _, delay in ipairs({ ".001s", "1e-3s", "+1e-3s" }) do
-  local cmdf_delay = run_capture(shell_quote(cmdf) .. " -b --simulate-delay " .. delay, sample)
-  local cmdf_lua_delay = run_capture(shell_quote(cmdf_lua) .. " -b --simulate-delay " .. delay, sample)
+  local cmdf_delay = run_capture(shell_quote(cmdf) .. " --ansi on -b --simulate-delay " .. delay, sample)
+  local cmdf_lua_delay = run_capture(shell_quote(cmdf_lua) .. " --ansi on -b --simulate-delay " .. delay, sample)
   assert_equal(cmdf_lua_delay, cmdf_delay, "cmdf.lua simulate delay duration syntax parity: " .. delay)
 end
 
-local cmdf_deck = run_capture(shell_quote(cmdf) .. " --deck --slide-numbers -x cross -T 'Lua Deck'", deck_sample)
-local cmdf_lua_deck = run_capture(shell_quote(cmdf_lua) .. " --deck --slide-numbers -x cross -T 'Lua Deck'", deck_sample)
+local cmdf_deck = run_capture(shell_quote(cmdf) .. " --ansi on --deck --slide-numbers -x cross -T 'Lua Deck'", deck_sample)
+local cmdf_lua_deck = run_capture(shell_quote(cmdf_lua) .. " --ansi on --deck --slide-numbers -x cross -T 'Lua Deck'", deck_sample)
 assert(cmdf_lua_deck:match("JetBrains Mono"), "cmdf.lua deck embeds JetBrains Mono")
 assert_equal(cmdf_lua_deck, cmdf_deck, "cmdf.lua deck parity")
 
-local cmdf_deck_after_html = run_capture(shell_quote(cmdf) .. " --html --deck -T 'Lua Mixed'", deck_sample)
-local cmdf_lua_deck_after_html = run_capture(shell_quote(cmdf_lua) .. " --html --deck -T 'Lua Mixed'", deck_sample)
+local cmdf_deck_after_html = run_capture(shell_quote(cmdf) .. " --ansi on --html --deck -T 'Lua Mixed'", deck_sample)
+local cmdf_lua_deck_after_html = run_capture(shell_quote(cmdf_lua) .. " --ansi on --html --deck -T 'Lua Mixed'", deck_sample)
 assert_equal(cmdf_lua_deck_after_html, cmdf_deck_after_html, "cmdf.lua html then deck format flag parity")
 
-local cmdf_deck_width = run_capture(shell_quote(cmdf) .. " --deck -w 42 -T 'Lua Deck'", deck_sample)
-local cmdf_lua_deck_width = run_capture(shell_quote(cmdf_lua) .. " --deck -w 42 -T 'Lua Deck'", deck_sample)
+local cmdf_deck_width = run_capture(shell_quote(cmdf) .. " --ansi on --deck -w 42 -T 'Lua Deck'", deck_sample)
+local cmdf_lua_deck_width = run_capture(shell_quote(cmdf_lua) .. " --ansi on --deck -w 42 -T 'Lua Deck'", deck_sample)
 assert_equal(cmdf_lua_deck_width, cmdf_deck_width, "cmdf.lua deck width parity")
 
-local invalid_deck_transition = run_expect_fail(shell_quote(cmdf_lua) .. " --deck -x spin", deck_sample)
+local invalid_deck_transition = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --deck -x spin", deck_sample)
 assert(invalid_deck_transition:match("invalid deck transition"), invalid_deck_transition)
 
-local invalid_simulate_chunk = run_expect_fail(shell_quote(cmdf_lua) .. " --simulate-chunk 0", sample)
+local invalid_simulate_chunk = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --simulate-chunk 0", sample)
 assert(invalid_simulate_chunk:match("invalid simulate chunk"), invalid_simulate_chunk)
 
-local invalid_simulate_delay = run_expect_fail(shell_quote(cmdf_lua) .. " --simulate-delay 0.5", sample)
+local invalid_simulate_delay = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --simulate-delay 0.5", sample)
 assert(invalid_simulate_delay:match("invalid simulate delay"), invalid_simulate_delay)
 
-local deck_option_without_deck = run_expect_fail(shell_quote(cmdf_lua) .. " --slide-numbers", deck_sample)
+local deck_option_without_deck = run_expect_fail(shell_quote(cmdf_lua) .. " --ansi on --slide-numbers", deck_sample)
 assert(deck_option_without_deck:find("deck options require --deck", 1, true), deck_option_without_deck)
+
+-- Unknown sinks default to plain UTF-8; terminal policy remains independent of boring.
+do
+  local text = "# The Outcome-Based Agile Framework\n\nµ界 with [link](https://example.org)\n"
+  local plain = mdf.render(text)
+  assert(not plain:find("\27", 1, true), "unknown Lua sink defaults to no escapes")
+  assert(plain:find("µ界", 1, true), "plain Lua output preserves UTF-8")
+  assert_equal(plain, mdf.render(text, { ansi_mode = "off", osc8 = true }), "OFF overrides OSC8")
+  local file = assert(io.open(cmdf_lua, "rb"))
+  assert_equal(plain, mdf.render(text, { output_fd = mdf.file_descriptor(file) }),
+               "regular-file descriptor keeps AUTO plain")
+  file:close()
+  assert(mdf.render(text, { ansi_mode = "on" }):find("\27", 1, true), "ON enables styling for string output")
+  local writes, traces = {}, {}
+  local stream = mdf.document_stream({ ansi_mode = "off", osc8 = true,
+    write_trace = function(_, chunk) traces[#traces + 1] = chunk end,
+  }, function(chunk) writes[#writes + 1] = chunk end)
+  for i = 1, #text do stream:write(text:sub(i, i)); stream:flush() end
+  stream:finish_document()
+  assert_equal(table.concat(writes), plain, "plain one-byte Lua stream matches string output")
+  assert(#writes == #traces, "plain Lua sink and trace counts match")
+  for i = 1, #writes do assert_equal(writes[i], traces[i], "plain Lua trace describes exact sink write") end
+  local count = #writes
+  stream:reset()
+  stream:close()
+  assert(#writes == count, "plain Lua reset and close emit no terminal cleanup")
+  assert(not pcall(function() mdf.new({ ansi_mode = "invalid" }) end), "invalid ANSI policy rejected")
+  assert(not pcall(function() mdf.new({ output_fd = "not-an-fd" }) end), "invalid output fd rejected")
+  local dirty = "\27[31m# The Outcome-Based Agile Framework\27[0m\n\n" ..
+                "µ界\27]8;;https://hidden.example\7 with\27]8;;\7 [link](https://example.org)\n"
+  for _, opts in ipairs({ {}, { ansi_mode = "off", osc8 = true }, { boring = true, ansi_mode = "off" } }) do
+    local expected = mdf.render(text, opts)
+    assert_equal(mdf.render(dirty, opts), expected, "Lua string input escapes stripped before parsing")
+    assert_equal(collect_stream(dirty, opts, 1), expected, "Lua callback filter survives one-byte boundaries")
+    local h = mdf.new(opts)
+    assert_equal(h:render(dirty), expected, "Lua handle string uses the same plain policy")
+    local chunks = {}
+    h:set_sink(function(chunk) chunks[#chunks + 1] = chunk end)
+    local pos = 1
+    h:render_stream(function(cap)
+      if pos > #dirty then return nil end
+      local chunk = dirty:sub(pos, pos + math.min(cap, 1) - 1)
+      pos = pos + #chunk
+      return chunk
+    end)
+    assert_equal(table.concat(chunks), expected, "Lua handle streaming uses the same plain policy")
+    h:close()
+  end
+  for _, format in ipairs({ "html", "deck" }) do
+    local opts = { format = format, disable_embedded_font = true }
+    local expected = mdf.render(text, opts)
+    opts.ansi_mode = "off"
+    assert_equal(mdf.render(text, opts), expected, "Lua ANSI policy leaves " .. format .. " unchanged")
+  end
+  assert_equal(run_capture(shell_quote(cmdf), text), plain, "native CLI defaults to plain output")
+  assert_equal(run_capture(shell_quote(cmdf_lua), text), plain, "Lua CLI defaults to plain output")
+  assert_equal(run_capture(shell_quote(cmdf_lua) .. " --ascii --osc8 on", text), plain, "Lua CLI ASCII overrides OSC8")
+end

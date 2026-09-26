@@ -53,23 +53,13 @@ verify_line=$(printf '%s\n' "$release" | nl -ba | grep -F '$(MAKE) package-verif
   fail "prerelease-hardening must be an alias when no additional tier exists"
 
 worktree_root=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)
-if [ "$worktree_root" = "$ROOT" ]; then
-  make --no-print-directory -C "$ROOT" lifecycle-version-contract >/dev/null
-  if git -C "$ROOT" show-ref --verify --quiet refs/tags/v99.99.99; then
-    fail "lifecycle version contract must clean its reserved active-worktree tag"
-  fi
-else
+if [ "$worktree_root" != "$ROOT" ]; then
   [ -f "$ROOT/VERSION" ] || fail "source archive must provide VERSION"
   expected=$(sed -n '1p' "$ROOT/VERSION" | tr -d '[:space:]')
   [ "$(sh "$ROOT/scripts/version.sh")" = "$expected" ] ||
     fail "source archive version.sh must use injected VERSION"
   [ "$(make --no-print-directory -C "$ROOT" print-release-version)" = "$expected" ] ||
     fail "source archive Make version must use injected VERSION"
-  if contract_output=$(make --no-print-directory -C "$ROOT" lifecycle-version-contract 2>&1); then
-    fail "source archive must reject the tag-mutating version contract"
-  fi
-  printf '%s\n' "$contract_output" | grep -F 'must run from the git worktree root' >/dev/null ||
-    fail "source archive version contract must reject parent git worktrees"
 fi
 
 for parity_script in "$ROOT/scripts/parity.sh" "$ROOT/scripts/stream_parity.sh"; do

@@ -32,11 +32,11 @@ for src in "$CORPUS"/*.md; do
   expected_ansi40_margin="$CORPUS_ROOT/${CORPUS_NAME}__$name.w40m8boring.golden"
   variant_base="$TMP/$name.variant"
 
-  "$CMDF" --boring --width 96 "$src" > "$ansi"
-  "$CMDF" --boring --width 32 "$src" > "$narrow"
-  "$CMDF" --boring --width 80 "$src" > "$ansi80"
-  "$CMDF" --html "$src" > "$html"
-  "$CMDF" --html --boring "$src" > "$html_boring"
+  "$CMDF" --ansi on --boring --width 96 "$src" > "$ansi"
+  "$CMDF" --ansi on --boring --width 32 "$src" > "$narrow"
+  "$CMDF" --ansi on --boring --width 80 "$src" > "$ansi80"
+  "$CMDF" --ansi on --html "$src" > "$html"
+  "$CMDF" --ansi on --html --boring "$src" > "$html_boring"
 
   test -s "$ansi"
   test -s "$narrow"
@@ -49,12 +49,12 @@ for src in "$CORPUS"/*.md; do
   fi
   diff -u "$expected_ansi80" "$ansi80"
   if [ -f "$expected_ansi80_margin" ]; then
-    "$CMDF" --boring --width 80 --margin-left 20 --margin-right 20 "$src" > "$ansi80_margin"
+    "$CMDF" --ansi on --boring --width 80 --margin-left 20 --margin-right 20 "$src" > "$ansi80_margin"
     test -s "$ansi80_margin"
     diff -u "$expected_ansi80_margin" "$ansi80_margin"
   fi
   if [ -f "$expected_ansi40_margin" ]; then
-    "$CMDF" --boring --width 40 --margin-left 8 --margin-right 8 "$src" > "$ansi40_margin"
+    "$CMDF" --ansi on --boring --width 40 --margin-left 8 --margin-right 8 "$src" > "$ansi40_margin"
     test -s "$ansi40_margin"
     diff -u "$expected_ansi40_margin" "$ansi40_margin"
   fi
@@ -78,11 +78,11 @@ for src in "$CORPUS"/*.md; do
           left=8
           right=8
         fi
-        "$CMDF" -t everforest --width "$width" --margin-left "$left" --margin-right "$right" "$src" > "$normal"
-        "$CMDF" -t everforest --width "$width" --margin-left "$left" --margin-right "$right" --simulate-chunk 3 "$src" > "$simulated"
+        "$CMDF" --ansi on -t everforest --width "$width" --margin-left "$left" --margin-right "$right" "$src" > "$normal"
+        "$CMDF" --ansi on -t everforest --width "$width" --margin-left "$left" --margin-right "$right" --simulate-chunk 3 "$src" > "$simulated"
       else
-        "$CMDF" -t everforest --width "$width" "$src" > "$normal"
-        "$CMDF" -t everforest --width "$width" --simulate-chunk 3 "$src" > "$simulated"
+        "$CMDF" --ansi on -t everforest --width "$width" "$src" > "$normal"
+        "$CMDF" --ansi on -t everforest --width "$width" --simulate-chunk 3 "$src" > "$simulated"
       fi
       test -s "$normal"
       test -s "$simulated"
@@ -96,7 +96,7 @@ for src in "$CORPUS"/*.md; do
   case "$name" in
 	    08-container-contexts)
 	      quoted_list_margin="$TMP/$name.quoted-list-margin"
-	      "$CMDF" --boring --width 60 --margin-left 20 --margin-right 20 --simulate-chunk 3 "$src" > "$quoted_list_margin"
+	      "$CMDF" --ansi on --boring --width 60 --margin-left 20 --margin-right 20 --simulate-chunk 3 "$src" > "$quoted_list_margin"
 	      if grep -q 'mdf-\(bar\|vertical-bar\|tile\)-chart' "$ansi" "$narrow" "$html" "$html_boring"; then
 	        echo "container chart fence leaked as prose for $src" >&2
 	        exit 1

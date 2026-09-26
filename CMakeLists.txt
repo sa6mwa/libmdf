@@ -22,7 +22,7 @@ project(libmdf VERSION "${LIBMDF_VERSION}" LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
-set(LIBMDF_ABI_VERSION 4)
+set(LIBMDF_ABI_VERSION 5)
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
@@ -221,6 +221,15 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_contracts COMMAND test_contracts)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
 
+  add_executable(test_zero_ansi tests/test_zero_ansi.c)
+  target_include_directories(test_zero_ansi PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
+  target_link_libraries(test_zero_ansi PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+  target_compile_definitions(test_zero_ansi PRIVATE _XOPEN_SOURCE=600)
+  libmdf_configure_c89_target(test_zero_ansi)
+  libmdf_configure_development_runtime(test_zero_ansi)
+  add_test(NAME test_zero_ansi COMMAND test_zero_ansi)
+  set_tests_properties(test_zero_ansi PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
+
   add_executable(incremental_decision_parity tests/incremental_decision_parity.c)
   libmdf_configure_c89_target(incremental_decision_parity)
   target_include_directories(incremental_decision_parity PRIVATE "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -267,6 +276,11 @@ if(LIBMDF_BUILD_TESTS)
       LABELS "integration;streaming;api;cli;golden"
       TIMEOUT 20
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME cmdf_zero_ansi
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cmdf_zero_ansi.py $<TARGET_FILE:cmdf>)
+    set_tests_properties(cmdf_zero_ansi PROPERTIES LABELS "integration;cli;streaming" TIMEOUT 30)
 
     add_executable(test_cmdf tests/test_cmdf.c)
     libmdf_configure_c89_target(test_cmdf)
@@ -363,6 +377,13 @@ if(LIBMDF_BUILD_TESTS)
     COMMAND ${CMAKE_C_COMPILER} -std=c89 -I${CMAKE_CURRENT_SOURCE_DIR}/include -c ${CMAKE_CURRENT_SOURCE_DIR}/tests/header_self_sufficient.c -o ${CMAKE_CURRENT_BINARY_DIR}/source_header_self_sufficient.o)
   set_tests_properties(source_header_self_sufficient PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
+  add_test(NAME public_header_documentation_sync
+    COMMAND ${CMAKE_COMMAND}
+            -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+            -DGENERATED_INCLUDE_DIR=${LIBMDF_GENERATED_INCLUDE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/assert_public_header_sync.cmake)
+  set_tests_properties(public_header_documentation_sync PROPERTIES LABELS "unit;api;documentation" TIMEOUT 10)
+
   get_property(LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS GLOBAL PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)
   foreach(LIBMDF_BOOTLIN_TARGET IN LISTS LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS)
     add_test(NAME ${LIBMDF_BOOTLIN_TARGET}_uses_bootlin_runtime
@@ -421,6 +442,12 @@ if(LIBMDF_BUILD_TESTS)
   set_tests_properties(darwin_linker_route PROPERTIES
     LABELS "unit;packaging"
     TIMEOUT 30
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+  add_test(NAME darwin_toolchain_discovery COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_darwin_discovery.sh)
+  set_tests_properties(darwin_toolchain_discovery PROPERTIES
+    LABELS "unit;lifecycle;packaging"
+    TIMEOUT 15
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
   add_test(NAME configure_profiles COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_configure_profiles.sh)

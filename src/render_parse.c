@@ -1750,6 +1750,7 @@ static int table_render_cell_markdown_to_ansi(mdf_impl *impl,
     size_t cell_src_len;
 
     opts = impl->opts;
+    if (impl->format != MDF_FORMAT_ANSI) opts.ansi_mode = MDF_ANSI_ON;
     opts.width = MDF_TABLE_CELL_RENDER_WIDTH;
     opts.margin_left = 0;
     opts.margin_right = 0;
@@ -3026,9 +3027,9 @@ static int table_render_prefix(mdf_impl *impl, mdf_sink *sink, size_t indent_pre
     if (!quote_prefix) {
         return 0;
     }
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, mdf_theme_quote(impl)) != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, mdf_theme_quote(impl)) != 0) return -1;
     if (mdf_emit_cstr(impl, sink, ">") != 0) return -1;
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     if (mdf_emit_cstr(impl, sink, " ") != 0) return -1;
     if (quote_content_indent > 0) {
         if (table_write_repeat(impl, sink, " ", quote_content_indent) != 0) {
@@ -3059,7 +3060,7 @@ static int table_render_border(mdf_impl *impl, mdf_allocator *allocator, mdf_sin
     right = kind == 0 ? chars.top_right : kind == 1 ? chars.mid_right : chars.bottom_right;
     horizontal = chars.horizontal;
     if (table_render_prefix(impl, sink, indent_prefix, quote_content_indent, quote_prefix) != 0) return -1;
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, mdf_theme_table_wire(impl)) != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, mdf_theme_table_wire(impl)) != 0) return -1;
     buf = NULL;
     len = 0;
     cap = 0;
@@ -3086,7 +3087,7 @@ static int table_render_border(mdf_impl *impl, mdf_allocator *allocator, mdf_sin
         return -1;
     }
     mdf_free_mem(allocator, buf, cap);
-    if (!impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+    if (MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     if (mdf_emit_cstr(impl, sink, "\n") != 0) return -1;
     ansi_reset_line_output_state(impl);
     return 0;
@@ -3105,7 +3106,7 @@ static int table_style_switch(mdf_impl *impl, mdf_sink *sink, const char **curre
     }
     logical_style = style;
     logical_style_len = style_len;
-    if (impl->opts.boring) {
+    if (!MDF_ANSI_STYLED(impl)) {
         style = "";
         style_len = 0;
         logical_style = "";
@@ -3317,7 +3318,7 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
     if (table_render_prefix(impl, sink, indent_prefix, quote_content_indent, quote_prefix) != 0) return -1;
     wire_style = mdf_theme_table_wire(impl);
     header_style = mdf_theme_table_header(impl);
-    quote_text_style = (!impl->opts.boring && quote_prefix) ? mdf_theme_quote_text(impl) : "";
+    quote_text_style = (MDF_ANSI_STYLED(impl) && quote_prefix) ? mdf_theme_quote_text(impl) : "";
     wire_style_len = strlen(wire_style);
     header_style_len = strlen(header_style);
     quote_text_style_len = strlen(quote_text_style);
@@ -3424,7 +3425,7 @@ static int table_render_row_line(mdf_impl *impl, mdf_sink *sink, table_rendered_
         if (mdf_emit_cstr(impl, sink, " ") != 0) return -1;
         if (mdf_emit_cstr(impl, sink, chars.vertical) != 0) return -1;
     }
-    if (current_len > 0 && !impl->opts.boring && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
+    if (current_len > 0 && MDF_ANSI_STYLED(impl) && mdf_emit_cstr(impl, sink, "\033[0m") != 0) return -1;
     if (mdf_emit_cstr(impl, sink, "\n") != 0) return -1;
     ansi_reset_line_output_state(impl);
     return 0;
@@ -6274,11 +6275,12 @@ void mdf_parser_release_stream(mdf_parser *self)
         impl->stream_state = NULL;
     }
     mdf_free_mem(&impl->allocator, impl->chart_buf, impl->chart_cap);
+    memset(&impl->plain_input, 0, sizeof(impl->plain_input));
     memset(impl->error, 0,
            offsetof(mdf_parser_impl, stream_state) - offsetof(mdf_parser_impl, error));
 }
 
-mdf_status mdf_parser_feed(mdf_parser *self,
+static mdf_status mdf_parser_feed_unfiltered(mdf_parser *self,
                            mdf_renderer *renderer,
                            mdf_sink *sink,
                            const char *data,
@@ -6355,6 +6357,41 @@ done:
     return st;
 }
 
+typedef struct plain_parser_input {
+    mdf_parser *parser;
+    mdf_renderer *renderer;
+    mdf_sink *sink;
+} plain_parser_input;
+
+static mdf_status plain_parser_consume(void *userdata, const char *data, size_t len)
+{
+    plain_parser_input *input;
+    input = (plain_parser_input *)userdata;
+    return mdf_parser_feed_unfiltered(input->parser, input->renderer, input->sink, data, len);
+}
+
+mdf_status mdf_parser_feed(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink,
+                           const char *data, size_t len)
+{
+    plain_parser_input input;
+    mdf_impl *render_impl;
+    mdf_parser_impl *impl;
+
+    if (self == NULL || self->impl == NULL || renderer == NULL || !mdf_renderer_is_builtin(renderer) ||
+        sink == NULL || sink->write == NULL || (data == NULL && len != 0)) {
+        return mdf_parser_feed_unfiltered(self, renderer, sink, data, len);
+    }
+    render_impl = (mdf_impl *)renderer->impl;
+    if (render_impl->format != MDF_FORMAT_ANSI || render_impl->opts.ansi_mode != MDF_ANSI_OFF) {
+        return mdf_parser_feed_unfiltered(self, renderer, sink, data, len);
+    }
+    impl = (mdf_parser_impl *)self->impl;
+    input.parser = self;
+    input.renderer = renderer;
+    input.sink = sink;
+    return mdf_plain_filter_feed(&impl->plain_input, data, len, plain_parser_consume, &input);
+}
+
 mdf_status mdf_parser_flush(mdf_parser *self, mdf_renderer *renderer, mdf_sink *sink)
 {
     if (self == NULL || self->impl == NULL || renderer == NULL || sink == NULL || sink->write == NULL) {
@@ -6382,6 +6419,14 @@ mdf_status mdf_parser_finish_document(mdf_parser *self, mdf_renderer *renderer, 
         return MDF_ERROR_INVALID;
     }
     impl = (mdf_parser_impl *)self->impl;
+    {
+        plain_parser_input input;
+        input.parser = self;
+        input.renderer = renderer;
+        input.sink = sink;
+        st = mdf_plain_filter_finish(&impl->plain_input, plain_parser_consume, &input);
+        if (st != MDF_OK) return st;
+    }
     state = parser_stream_state_get(self, 1);
     if (state == NULL) {
         return MDF_ERROR_NOMEM;

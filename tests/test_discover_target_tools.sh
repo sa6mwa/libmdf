@@ -72,3 +72,38 @@ fi
 make_tool "$BASE/path/readelf"
 PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
   "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
+
+# A Darwin configuration must not change tools for Linux requests.
+make_tool "$BASE/osxcross/bin/arm64-apple-darwin25.4-readelf"
+make_tool "$BASE/osxcross/bin/arm64-apple-darwin25.4-strip"
+OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
+  PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
+  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
+
+# Unselected build trees must not supply either cached or sibling tools.
+make_tool "$BASE/sibling/arm64-apple-darwin25-readelf"
+cat >> "$BASE/root/build/preset/CMakeCache.txt" <<EOF
+LIBMDF_TARGET_ID:STRING=arm64-apple-darwin
+CMAKE_STRIP:FILEPATH=$BASE/osxcross/bin/arm64-apple-darwin25.4-strip
+EOF
+PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
+  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
+
+make_tool "$BASE/linux/x86_64-linux-gcc"
+make_tool "$BASE/linux/x86_64-linux-strip"
+mkdir -p "$BASE/root/build/linux"
+cat > "$BASE/root/build/linux/CMakeCache.txt" <<EOF
+LIBMDF_TARGET_ID:STRING=x86_64-linux-gnu
+CMAKE_C_COMPILER:FILEPATH=$BASE/linux/x86_64-linux-gcc
+EOF
+OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
+  expect_path "$BASE/linux/x86_64-linux-strip" \
+  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu strip
+
+# Even a newer ambient Darwin prefix must not override compiler siblings.
+make_tool "$BASE/sibling/arm64-apple-darwin25-strip"
+sed '/CMAKE_STRIP:/d' "$BASE/root/build/preset/CMakeCache.txt" > "$BASE/cache.tmp"
+mv "$BASE/cache.tmp" "$BASE/root/build/preset/CMakeCache.txt"
+OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
+  expect_path "$BASE/sibling/arm64-apple-darwin25-strip" \
+  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset strip
