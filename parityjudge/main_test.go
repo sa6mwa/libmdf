@@ -13,6 +13,42 @@ type failOnRead struct {
 	reads int
 }
 
+func TestNormalizeReferenceHTMLFonts(t *testing.T) {
+	face := func(family, payload, weight, style string) string {
+		return `@font-face{font-family:"` + family + `";src:url(data:font/woff2;base64,` + payload +
+			") format('woff2');font-weight:" + weight + ";font-style:" + style + ";font-display:block;}\n"
+	}
+	normal := face("JetBrains Mono", "AQID", "400", "normal")
+	bold := face("JetBrains Mono", "AQID", "700", "normal")
+	italic := face("JetBrains Mono", "BAUG", "400", "italic")
+	boldItalic := face("JetBrains Mono", "BAUG", "700", "italic")
+	weightRange := face("JetBrains Mono", "AQID", "400 700", "normal")
+	italicRange := face("JetBrains Mono", "BAUG", "400 700", "italic")
+	cases := []struct{ name, input, want string }{
+		{"paired styles", "<style>\n" + normal + bold + italic + boldItalic + "</style>\nbody\n",
+			"<style>\n" + weightRange + italicRange + "</style>\nbody\n"},
+		{"already deduplicated", weightRange + italicRange, weightRange + italicRange},
+		{"different bytes", normal + face("JetBrains Mono", "BAUG", "700", "normal"),
+			normal + face("JetBrains Mono", "BAUG", "700", "normal")},
+		{"different styles", normal + boldItalic, normal + boldItalic},
+		{"reversed weights", bold + normal, bold + normal},
+		{"nonadjacent", normal + "/* separator */\n" + bold, normal + "/* separator */\n" + bold},
+		{"custom family", face("Custom", "AQID", "400", "normal") + face("Custom", "AQID", "700", "normal"),
+			face("Custom", "AQID", "400", "normal") + face("Custom", "AQID", "700", "normal")},
+		{"no fonts", "<style>\nbody{}\n</style>\nbody\n", "<style>\nbody{}\n</style>\nbody\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(normalizeReferenceHTMLFonts([]byte(tc.input))); got != tc.want {
+				t.Fatalf("font normalization = %q, want %q", got, tc.want)
+			}
+			if got := string(normalizeReferenceHTMLFonts([]byte(tc.want))); got != tc.want {
+				t.Fatalf("font normalization is not idempotent: %q", got)
+			}
+		})
+	}
+}
+
 func (r *failOnRead) Read([]byte) (int, error) {
 	r.reads++
 	return 0, errors.New("suite dispatch must not read stdin")

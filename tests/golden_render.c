@@ -85,7 +85,7 @@ static int parse_transition(const char *s, mdf_deck_transition *out)
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s [--ansi|--html|--deck] [--repeat N] [-w N] [--boring] "
+            "usage: %s [--ansi|--html|--deck] [--repeat N] [-w N] [--boring] [--osc8] "
             "[--margin-left N] [--margin-right N] [--slide-numbers] "
             "[-x fade|cross|hard] input.md\n",
             argv0);
@@ -135,6 +135,8 @@ int main(int argc, char **argv)
             opts.html_content_width_ch = (double)opts.width;
         } else if (strcmp(argv[i], "--boring") == 0) {
             opts.boring = 1;
+        } else if (strcmp(argv[i], "--osc8") == 0) {
+            opts.osc8 = 1;
         } else if (strcmp(argv[i], "--margin-left") == 0) {
             i++;
             if (i >= argc || parse_int_arg(argv[i], &opts.margin_left) != 0) {

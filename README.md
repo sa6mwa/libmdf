@@ -253,6 +253,8 @@ Important options:
   `96`.
 - `html_font`: optional user-supplied HTML font data. HTML and deck output use
   the built-in JetBrains Mono regular and italic WOFF2 faces when this is unset.
+  Each face is declared once with a CSS weight range of `400 700`, covering
+  regular and bold without repeating its embedded payload or external URI.
 - `html_font_source`: `MDF_HTML_FONT_SOURCE_EMBEDDED` (default) or
   `MDF_HTML_FONT_SOURCE_EXTERNAL`. Any configured HTML font URI also selects
   the external built-in JetBrains Mono faces.
@@ -492,11 +494,22 @@ mode emits no table bytes until the table ends.
 `flush` cannot force an unfinished table to render. Sink writes remain
 synchronous, so neither mode promises nonblocking I/O.
 
+Table cells render an escaped pipe (`\|`) as a literal `|`, including inside
+inline code. Other code backslashes remain literal, as do pipe escapes in
+code outside tables.
+
+ANSI link wrapping considers the final label word together with attached
+closing parentheses and punctuation. With OSC8 enabled, literal parentheses
+outside the Markdown label remain outside the hyperlink, and enclosing
+emphasis, heading, and blockquote styles resume after the link. These
+decisions are preserved across fragmented input and line wraps.
+
 The Go `mdf` implementation is the behavioral reference for ANSI streaming.
 Parity checks compare the C hot path against that reference. Deliberate,
 documented exceptions are limited to narrow URI wrapping (libmdf keeps `://`
-atomic rather than rendering a scheme followed by a wrapped `//host`) and
-correct Markdown link-label handling where Go is known to be wrong. The latter
+atomic rather than rendering a scheme followed by a wrapped `//host`),
+escaped pipes inside table code spans, and correct Markdown link-label handling
+where Go is known to be wrong. The link-label exception
 keeps styled labels inside their OSC8 hyperlink and follows CommonMark for
 unequal emphasis delimiters. Every exception is listed in
 `testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt` and protected by matching
@@ -986,7 +999,8 @@ replace the full parity matrix.
 `make golden-test` verifies byte-for-byte libmdf API output snapshots rendered
 through a test utility linked directly against the library. The golden matrix
 covers three broad Markdown fixtures across ANSI, asymmetric ANSI margins,
-HTML, and deck variants. Regenerate those snapshots deliberately with
+HTML, and deck variants, plus OSC8 label fixtures at narrow and normal widths
+in styled and boring modes. Regenerate those snapshots deliberately with
 `make golden-update` only when the rendered library output change is
 intentional.
 

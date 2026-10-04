@@ -1,0 +1,18 @@
+[90m┌────────────────────────┬─────────────────────────────────────┐[0m
+[90m│ [0m[1m[36m[0m[1m[36m[35mHead|er[0m[1m[36m               [0m[90m │ [0m[1m[36mAction                             [0m[90m │[0m
+[90m├────────────────────────┼─────────────────────────────────────┤[0m
+[90m│ [0m[35m/output [compact|full][0m[90m │ [0mShow or change tool previews.      [90m │[0m
+[90m│ [0m[35ma`|b[0m                  [90m │ [0mTwo-backtick code delimiter.       [90m │[0m
+[90m│ [0m[35mc``|d[0m                 [90m │ [0mThree-backtick code delimiter.     [90m │[0m
+[90m│ [0m[35mone|two|three[0m         [90m │ [0mRepeated escaped pipes.            [90m │[0m
+[90m│ [0m[35mone\|two[0m              [90m │ [0mPreserve the other backslash.      [90m │[0m
+[90m│ [0m[35mthree\\|four[0m          [90m │ [0mPreserve two other backslashes.    [90m │[0m
+[90m│ [0m[35mpath\to\file[0m          [90m │ [0mPreserve ordinary code backslashes.[90m │[0m
+[90m│ [0m[35mx\*y[0m                  [90m │ [0mPreserve other code escapes.       [90m │[0m
+[90m│ [0m[1m[1;37mstrong|text[0m           [90m │ [0mEscaped pipe in emphasis.          [90m │[0m
+[90m│ [0mplain|text            [90m │ [0mEscaped pipe in ordinary text.     [90m │[0m
+[90m│ [0m`literal|text         [90m │ [0mEscaped code delimiter.            [90m │[0m
+[90m│ [0m`unclosed\|text       [90m │ [0mPreserve unmatched code syntax.    [90m │[0m
+[90m└────────────────────────┴─────────────────────────────────────┘[0m
+
+Outside the table: [35mcompact\|full[0m retains its literal backslash.

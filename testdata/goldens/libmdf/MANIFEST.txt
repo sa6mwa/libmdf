@@ -193,3 +193,25 @@ styled-link-labels.deck.slide-numbers.fade testdata/styled-link-labels.md --deck
 styled-link-labels.deck.boring testdata/styled-link-labels.md --deck --boring
 styled-link-labels.ansi.styled.w100.margin-l0-r0 testdata/styled-link-labels.md --ansi -w 100 --margin-left 0 --margin-right 0
 styled-link-labels.ansi.boring.w100.margin-l0-r0 testdata/styled-link-labels.md --ansi --boring -w 100 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.styled.w20.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi -w 20 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.styled.w40.margin-l10-r10 testdata/table-corpus/escaped-code-pipes.md --ansi -w 40 --margin-left 10 --margin-right 10
+escaped-code-pipes.ansi.boring.w20.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 20 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.boring.w40.margin-l10-r10 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 40 --margin-left 10 --margin-right 10
+escaped-code-pipes.ansi.styled.w40.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi -w 40 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.boring.w40.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 40 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.styled.w80.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi -w 80 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.boring.w80.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 80 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.styled.w100.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi -w 100 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.boring.w100.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 100 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.styled.w120.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi -w 120 --margin-left 0 --margin-right 0
+escaped-code-pipes.ansi.boring.w120.margin-l0-r0 testdata/table-corpus/escaped-code-pipes.md --ansi --boring -w 120 --margin-left 0 --margin-right 0
+escaped-code-pipes.html.default testdata/table-corpus/escaped-code-pipes.md --html
+escaped-code-pipes.html.w42 testdata/table-corpus/escaped-code-pipes.md --html -w 42
+escaped-code-pipes.deck.default testdata/table-corpus/escaped-code-pipes.md --deck
+escaped-code-pipes.deck.w42 testdata/table-corpus/escaped-code-pipes.md --deck -w 42
+escaped-code-pipes.deck.slide-numbers.fade testdata/table-corpus/escaped-code-pipes.md --deck --slide-numbers -x fade
+escaped-code-pipes.deck.boring testdata/table-corpus/escaped-code-pipes.md --deck --boring
+osc8-labels.ansi.styled.w12.margin-l0-r0 tests/golden-fixtures/osc8-labels.md --ansi --osc8 -w 12 --margin-left 0 --margin-right 0
+osc8-labels.ansi.boring.w12.margin-l0-r0 tests/golden-fixtures/osc8-labels.md --ansi --osc8 --boring -w 12 --margin-left 0 --margin-right 0
+osc8-labels.ansi.styled.w80.margin-l0-r0 tests/golden-fixtures/osc8-labels.md --ansi --osc8 -w 80 --margin-left 0 --margin-right 0
+osc8-labels.ansi.boring.w80.margin-l0-r0 tests/golden-fixtures/osc8-labels.md --ansi --osc8 --boring -w 80 --margin-left 0 --margin-right 0

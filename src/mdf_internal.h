@@ -173,6 +173,13 @@ typedef struct mdf_impl {
     const char *ansi_osc8_prefix;
     const char *ansi_osc8_url;
     size_t ansi_osc8_url_len;
+    size_t ansi_link_tail_cols;
+    size_t ansi_link_tail_literal_prefix_len;
+    size_t ansi_link_tail_redundant_style_len;
+    size_t ansi_link_tail_leading_space_len;
+    size_t ansi_link_tail_leading_space_cols;
+    char ansi_link_tail_last_char;
+    int ansi_link_tail_pending;
     int ansi_line_has_space;
     char ansi_prev_char;
     int ansi_punct_quote_pending;

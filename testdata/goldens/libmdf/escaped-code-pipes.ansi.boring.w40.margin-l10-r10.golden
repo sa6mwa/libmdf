@@ -1,0 +1,63 @@
+          ┌─────┬────────────┐
+          │ Hea │ Action     │
+          │ d|e │            │
+          │ r   │            │
+          ├─────┼────────────┤
+          │ /ou │ Show or    │
+          │ tpu │ change     │
+          │ t   │ tool       │
+          │ [co │ previews.  │
+          │ mpa │            │
+          │ ct| │            │
+          │ ful │            │
+          │ l]  │            │
+          │ a`| │ Two-backti │
+          │ b   │ ck code    │
+          │     │ delimiter. │
+          │ c`` │ Three-back │
+          │ |d  │ tick code  │
+          │     │ delimiter. │
+          │ one │ Repeated   │
+          │ |tw │ escaped    │
+          │ o|t │ pipes.     │
+          │ hre │            │
+          │ e   │            │
+          │ one │ Preserve   │
+          │ \|t │ the other  │
+          │ wo  │ backslash. │
+          │ thr │ Preserve   │
+          │ ee\ │ two other  │
+          │ \|f │ backslashe │
+          │ our │ s.         │
+          │ pat │ Preserve   │
+          │ h\t │ ordinary   │
+          │ o\f │ code       │
+          │ ile │ backslashe │
+          │     │ s.         │
+          │ x\* │ Preserve   │
+          │ y   │ other code │
+          │     │ escapes.   │
+          │ str │ Escaped    │
+          │ ong │ pipe in    │
+          │ |te │ emphasis.  │
+          │ xt  │            │
+          │ pla │ Escaped    │
+          │ in| │ pipe in    │
+          │ tex │ ordinary   │
+          │ t   │ text.      │
+          │ `li │ Escaped    │
+          │ ter │ code       │
+          │ al| │ delimiter. │
+          │ tex │            │
+          │ t   │            │
+          │ `un │ Preserve   │
+          │ clo │ unmatched  │
+          │ sed │ code       │
+          │ \|t │ syntax.    │
+          │ ext │            │
+          └─────┴────────────┘
+
+          Outside the table:
+          compact\|full
+          retains its literal
+          backslash.

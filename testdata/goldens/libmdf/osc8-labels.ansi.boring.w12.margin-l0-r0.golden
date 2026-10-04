@@ -1,0 +1,10 @@
+# ]8;;https://x\one two]8;;\
+  ]8;;https://x\three]8;;\
+  after
+
+abc ]8;;https://x\  hi]8;;\
+
+abc ]8;;https://x\  hi]8;;\
+]8;;https://x\there]8;;\ end
+
+(]8;;https://x\  hi]8;;\)

@@ -1,0 +1,63 @@
+          [90m┌─────┬────────────┐[0m
+          [90m│ [0m[1m[36m[0m[1m[36m[35mHea[0m[90m │ [0m[1m[36mAction    [0m[90m │[0m
+          [90m│ [0m[1m[36m[0m[1m[36m[35md|e[0m[90m │ [0m[1m[36m          [0m[90m │[0m
+          [90m│ [0m[1m[36m[0m[1m[36m[35mr[0m[1m[36m  [0m[90m │ [0m[1m[36m          [0m[90m │[0m
+          [90m├─────┼────────────┤[0m
+          [90m│ [0m[35m/ou[0m[90m │ [0mShow or   [90m │[0m
+          [90m│ [0m[35mtpu[0m[90m │ [0mchange    [90m │[0m
+          [90m│ [0m[35mt[0m  [90m │ [0mtool      [90m │[0m
+          [90m│ [0m[35m[co[0m[90m │ [0mpreviews. [90m │[0m
+          [90m│ [0m[35mmpa[0m[90m │ [0m          [90m │[0m
+          [90m│ [0m[35mct|[0m[90m │ [0m          [90m │[0m
+          [90m│ [0m[35mful[0m[90m │ [0m          [90m │[0m
+          [90m│ [0m[35ml][0m [90m │ [0m          [90m │[0m
+          [90m│ [0m[35ma`|[0m[90m │ [0mTwo-backti[90m │[0m
+          [90m│ [0m[35mb[0m  [90m │ [0mck code   [90m │[0m
+          [90m│ [0m   [90m │ [0mdelimiter.[90m │[0m
+          [90m│ [0m[35mc``[0m[90m │ [0mThree-back[90m │[0m
+          [90m│ [0m[35m|d[0m [90m │ [0mtick code [90m │[0m
+          [90m│ [0m   [90m │ [0mdelimiter.[90m │[0m
+          [90m│ [0m[35mone[0m[90m │ [0mRepeated  [90m │[0m
+          [90m│ [0m[35m|tw[0m[90m │ [0mescaped   [90m │[0m
+          [90m│ [0m[35mo|t[0m[90m │ [0mpipes.    [90m │[0m
+          [90m│ [0m[35mhre[0m[90m │ [0m          [90m │[0m
+          [90m│ [0m[35me[0m  [90m │ [0m          [90m │[0m
+          [90m│ [0m[35mone[0m[90m │ [0mPreserve  [90m │[0m
+          [90m│ [0m[35m\|t[0m[90m │ [0mthe other [90m │[0m
+          [90m│ [0m[35mwo[0m [90m │ [0mbackslash.[90m │[0m
+          [90m│ [0m[35mthr[0m[90m │ [0mPreserve  [90m │[0m
+          [90m│ [0m[35mee\[0m[90m │ [0mtwo other [90m │[0m
+          [90m│ [0m[35m\|f[0m[90m │ [0mbackslashe[90m │[0m
+          [90m│ [0m[35mour[0m[90m │ [0ms.        [90m │[0m
+          [90m│ [0m[35mpat[0m[90m │ [0mPreserve  [90m │[0m
+          [90m│ [0m[35mh\t[0m[90m │ [0mordinary  [90m │[0m
+          [90m│ [0m[35mo\f[0m[90m │ [0mcode      [90m │[0m
+          [90m│ [0m[35mile[0m[90m │ [0mbackslashe[90m │[0m
+          [90m│ [0m   [90m │ [0ms.        [90m │[0m
+          [90m│ [0m[35mx\*[0m[90m │ [0mPreserve  [90m │[0m
+          [90m│ [0m[35my[0m  [90m │ [0mother code[90m │[0m
+          [90m│ [0m   [90m │ [0mescapes.  [90m │[0m
+          [90m│ [0m[1m[1;37mstr[0m[90m │ [0mEscaped   [90m │[0m
+          [90m│ [0m[1m[1;37mong[0m[90m │ [0mpipe in   [90m │[0m
+          [90m│ [0m[1m[1;37m|te[0m[90m │ [0memphasis. [90m │[0m
+          [90m│ [0m[1m[1;37mxt[0m [90m │ [0m          [90m │[0m
+          [90m│ [0mpla[90m │ [0mEscaped   [90m │[0m
+          [90m│ [0min|[90m │ [0mpipe in   [90m │[0m
+          [90m│ [0mtex[90m │ [0mordinary  [90m │[0m
+          [90m│ [0mt  [90m │ [0mtext.     [90m │[0m
+          [90m│ [0m`li[90m │ [0mEscaped   [90m │[0m
+          [90m│ [0mter[90m │ [0mcode      [90m │[0m
+          [90m│ [0mal|[90m │ [0mdelimiter.[90m │[0m
+          [90m│ [0mtex[90m │ [0m          [90m │[0m
+          [90m│ [0mt  [90m │ [0m          [90m │[0m
+          [90m│ [0m`un[90m │ [0mPreserve  [90m │[0m
+          [90m│ [0mclo[90m │ [0munmatched [90m │[0m
+          [90m│ [0msed[90m │ [0mcode      [90m │[0m
+          [90m│ [0m\|t[90m │ [0msyntax.   [90m │[0m
+          [90m│ [0mext[90m │ [0m          [90m │[0m
+          [90m└─────┴────────────┘[0m
+
+          Outside the table:
+          [35mcompact\|full[0m
+          retains its literal
+          backslash.

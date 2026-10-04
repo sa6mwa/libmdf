@@ -117,3 +117,13 @@ emit_url_wrap_fixture url-wrap-frontmatter2 testdata/frontmatter2.md
 emit_url_wrap_fixture url-wrap-linkify testdata/future/linkify.md 40 80 100 120
 emit_url_wrap_fixture url-wrap-reflinks testdata/future/reflinks.md 40 80 100 120
 emit_styled_link_label_fixture styled-link-labels testdata/styled-link-labels.md
+emit_url_wrap_fixture escaped-code-pipes testdata/table-corpus/escaped-code-pipes.md 40 80 100 120
+emit_html_deck escaped-code-pipes testdata/table-corpus/escaped-code-pipes.md
+
+# Explicit OSC8 cases exercise label color, leading spaces, and word wrapping.
+for width in 12 80; do
+  emit_case "osc8-labels.ansi.styled.w$width.margin-l0-r0" tests/golden-fixtures/osc8-labels.md \
+    --ansi --osc8 -w "$width" --margin-left 0 --margin-right 0
+  emit_case "osc8-labels.ansi.boring.w$width.margin-l0-r0" tests/golden-fixtures/osc8-labels.md \
+    --ansi --osc8 --boring -w "$width" --margin-left 0 --margin-right 0
+done

@@ -44,6 +44,7 @@ typedef struct capture {
     char *out;
     size_t out_len;
     size_t out_cap;
+    size_t write_limit;
     int failed;
 } capture;
 
@@ -51,6 +52,39 @@ typedef struct count_sink {
     size_t bytes;
     int failed;
 } count_sink;
+
+typedef struct failing_allocator {
+    size_t calls;
+    size_t fail_at;
+    size_t live;
+    int failed;
+} failing_allocator;
+
+static void *failing_alloc(void *userdata, size_t size)
+{
+    failing_allocator *allocator;
+    void *ptr;
+
+    allocator = (failing_allocator *)userdata;
+    allocator->calls++;
+    if (allocator->calls == allocator->fail_at) {
+        allocator->failed = 1;
+        return NULL;
+    }
+    ptr = malloc(size);
+    if (ptr != NULL) allocator->live++;
+    return ptr;
+}
+
+static void failing_free(void *userdata, void *ptr, size_t size)
+{
+    failing_allocator *allocator;
+
+    (void)size;
+    allocator = (failing_allocator *)userdata;
+    if (ptr != NULL) allocator->live--;
+    free(ptr);
+}
 
 static int expect(int cond, const char *msg)
 {
@@ -141,7 +175,8 @@ static int capture_write(void *userdata, const char *src, size_t len)
     capture *cap;
 
     cap = (capture *)userdata;
-    if (capture_record(&cap->writes, &cap->write_count, &cap->write_cap, src, len) != 0 ||
+    if ((cap->write_limit > 0 && cap->write_count >= cap->write_limit) ||
+        capture_record(&cap->writes, &cap->write_count, &cap->write_cap, src, len) != 0 ||
         capture_append_output(cap, src, len) != 0) {
         cap->failed = 1;
         return -1;
@@ -160,6 +195,17 @@ static int capture_trace(void *userdata, mdf_format format, const char *src, siz
         return -1;
     }
     return 0;
+}
+
+static int reject_capture_write(void *userdata, const char *src, size_t len)
+{
+    capture *cap;
+
+    (void)src;
+    (void)len;
+    cap = (capture *)userdata;
+    cap->failed = 1;
+    return -1;
 }
 
 static int count_write(void *userdata, const char *src, size_t len)
@@ -214,7 +260,9 @@ static size_t chunk_read(void *userdata, char *dst, size_t cap, int *err)
     return n;
 }
 
-static mdf_status render_capture(mdf_format format, mdf_options *opts, const char *markdown, size_t chunk, capture *cap)
+static mdf_status render_capture_limited(mdf_format format, mdf_options *opts,
+                                         const char *markdown, size_t chunk,
+                                         size_t write_limit, capture *cap)
 {
     mdf *inst;
     mdf_source source;
@@ -224,6 +272,7 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
 
     inst = NULL;
     memset(cap, 0, sizeof(*cap));
+    cap->write_limit = write_limit;
     opts->write_trace.userdata = cap;
     opts->write_trace.emit = capture_trace;
     st = mdf_create(format, opts, &inst);
@@ -241,6 +290,12 @@ static mdf_status render_capture(mdf_format format, mdf_options *opts, const cha
     st = mdf_render(inst, &source, &sink);
     inst->destroy(inst);
     return st;
+}
+
+static mdf_status render_capture(mdf_format format, mdf_options *opts,
+                                 const char *markdown, size_t chunk, capture *cap)
+{
+    return render_capture_limited(format, opts, markdown, chunk, 0, cap);
 }
 
 static mdf_status incremental_capture(mdf_options *opts, const char *markdown,
@@ -1314,6 +1369,88 @@ static int test_table_contract(void)
     return fails;
 }
 
+static int test_table_pipe_escape_contract(void)
+{
+    static const char markdown[] =
+        "| `h\\|i` | Kind |\n"
+        "| --- | --- |\n"
+        "| `/output [compact\\|full]` | command |\n"
+        "| ``a`\\|b`` | double |\n"
+        "| ```c``\\|d``` | triple |\n"
+        "| `e\\|f\\|g` | repeated |\n"
+        "| `one\\\\|two` | slashes |\n"
+        "| `three\\\\\\|four` | slashes |\n"
+        "| `path\\to\\file` | path |\n"
+        "| `x\\*y` | literal |\n"
+        "| **strong\\|text** | strong |\n"
+        "| plain\\|text | plain |\n"
+        "| \\`literal\\|text | escaped |\n"
+        "| `unclosed\\|text | unmatched |\n"
+        "\n"
+        "Outside: `compact\\|full`\n";
+    static const char *const expected[] = {
+        "h|i", "/output [compact|full]", "a`|b", "c``|d", "e|f|g",
+        "one\\|two", "three\\\\|four", "path\\to\\file", "x\\*y",
+        "strong|text", "plain|text", "`literal|text", "`unclosed\\|text",
+        "compact\\|full"
+    };
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    char *visible;
+    size_t i;
+    int mode;
+    int style;
+    int wire;
+    int format;
+    int fails;
+
+    fails = 0;
+    for (mode = 0; mode < 2; mode++) {
+        for (style = 0; style < 3; style++) {
+            for (wire = 0; wire < 3; wire++) {
+                mdf_options_init(&opts);
+                opts.width = 120;
+                opts.ansi_mode = style == 2 ? MDF_ANSI_OFF : MDF_ANSI_ON;
+                opts.boring = style == 1;
+                opts.table_buffer_mode = mode == 0 ? MDF_TABLE_BUFFER_FULL : MDF_TABLE_BUFFER_ROW;
+                opts.table_wire_mode = (mdf_table_wire_mode)wire;
+                st = render_capture(MDF_FORMAT_ANSI, &opts, markdown, 4096, &whole);
+                fails += expect(st == MDF_OK && !whole.failed, "table pipe escapes render successfully");
+                fails += expect_trace_matches_writes(&whole, "table pipe escape writes match traces");
+                visible = strip_ansi(whole.out);
+                fails += expect(visible != NULL, "table pipe escape output strips styles");
+                for (i = 0; i < sizeof(expected) / sizeof(expected[0]); i++) {
+                    fails += expect_contains(visible, expected[i], "table consumes only the code pipe escape");
+                }
+                free(visible);
+                st = incremental_capture(&opts, markdown, 1, &split);
+                fails += expect(st == MDF_OK && !split.failed, "fragmented table pipe escapes render successfully");
+                fails += expect_trace_matches_writes(&split, "fragmented table pipe escape writes match traces");
+                fails += expect_capture_writes_equal(&split, &whole, "table pipe escape decisions survive byte feeds and flushes");
+                capture_free(&whole);
+                capture_free(&split);
+            }
+        }
+    }
+    for (format = MDF_FORMAT_HTML; format <= MDF_FORMAT_HTML_DECK; format++) {
+        mdf_options_init(&opts);
+        st = render_capture((mdf_format)format, &opts, markdown, 4096, &whole);
+        fails += expect(st == MDF_OK && !whole.failed, "HTML table pipe escapes render successfully");
+        fails += expect_contains(whole.out, "/output [compact|full]", "HTML code cell consumes the pipe escape");
+        fails += expect_contains(whole.out, "compact\\|full", "HTML code outside tables retains its backslash");
+        fails += expect_contains(whole.out, "path\\to\\file", "HTML code cell retains other backslashes");
+        st = render_capture((mdf_format)format, &opts, markdown, 1, &split);
+        fails += expect(st == MDF_OK && !split.failed, "fragmented HTML table pipe escapes render successfully");
+        fails += expect(whole.out != NULL && split.out != NULL && strcmp(whole.out, split.out) == 0,
+                        "HTML table pipe output survives byte chunks");
+        capture_free(&whole);
+        capture_free(&split);
+    }
+    return fails;
+}
+
 static int test_chart_trace_contract(void)
 {
     static const char markdown[] =
@@ -1424,9 +1561,14 @@ static int test_fallback_link_punctuation_contract(void)
         "(https://github.com/sa6mwa/centaurx).",
         "\n"
     };
+    static const size_t fragments[] = {1, 7};
     mdf_options opts;
     capture cap;
+    capture split;
     mdf_status st;
+    char *plain;
+    size_t i;
+    int mode;
     int fails;
 
     fails = 0;
@@ -1445,6 +1587,1101 @@ static int test_fallback_link_punctuation_contract(void)
     fails += expect_output_equals(&cap, "Centaurx (https://github.com/sa6mwa/centaurx).\n",
                                   "fallback-link punctuation remains attached when rendered");
     capture_free(&cap);
+    for (mode = 0; mode < 3; mode++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = mode == 0 ? MDF_ANSI_OFF : MDF_ANSI_ON;
+        opts.osc8 = 0;
+        opts.boring = mode != 2;
+        opts.width = 12;
+        st = render_capture(MDF_FORMAT_ANSI, &opts,
+                            "([https://abcdef](x)) tail\n", 4096, &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "parenthesized URI fallback renders successfully");
+        plain = cap.out == NULL ? NULL : strip_ansi(cap.out);
+        fails += expect(plain != NULL && strcmp(plain, "(https://\nabcdef (x))\ntail\n") == 0,
+                        "URI fallback keeps its first chunk with the opening parenthesis");
+        free(plain);
+        fails += expect_trace_matches_writes(&cap, "parenthesized URI fallback writes match traces");
+        fails += expect_line_margins(cap.out, 0, opts.width, "URI fallback respects line width");
+        for (i = 0; i < sizeof(fragments) / sizeof(fragments[0]); i++) {
+            st = incremental_capture(&opts, "([https://abcdef](x)) tail\n", fragments[i], &split);
+            fails += expect(st == MDF_OK && split.failed == 0,
+                            "fragmented URI fallback renders successfully");
+            fails += expect_trace_matches_writes(&split, "fragmented URI fallback writes match traces");
+            fails += expect_capture_writes_equal(&split, &cap,
+                                                 "URI fallback decisions survive fragmentation");
+            capture_free(&split);
+        }
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_osc8_link_wrapping_contract(void)
+{
+    static const struct {
+        const char *markdown;
+        int width;
+        const char *expected;
+    } cases[] = {
+        {"abc (se [tabellbilagan](https://x))\n", 21, "abc (se\ntabellbilagan)\n"},
+        {"abc ([tabellbilagan](https://x))\n", 18, "abc\n(tabellbilagan)\n"},
+        {"abc ([tabellbilagan](https://x))\n", 19, "abc (tabellbilagan)\n"},
+        {"abc (se [tabellbilagan](https://x)).\n", 22, "abc (se\ntabellbilagan).\n"},
+        {"abc (se [a tabellbilagan](https://x))\n", 23, "abc (se a\ntabellbilagan)\n"},
+        {"abc (se [**tabellbilagan**](https://x))\n", 21, "abc (se\ntabellbilagan)\n"},
+        {"abc (se [`tabellbilagan`](https://x))\n", 21, "abc (se\ntabellbilagan)\n"},
+        {"abc (se [tabellbilagan](https://x))", 21, "abc (se\ntabellbilagan)\n"},
+        {"abc [tabellbilagan](https://x)\n", 17, "abc tabellbilagan\n"},
+        {"abc [tabellbilagan](https://x), tail\n", 17, "abc\ntabellbilagan,\ntail\n"},
+        {"abc (se [tabellbilagan](https://x)))\n", 22, "abc (se\ntabellbilagan))\n"},
+        {"abc (se [räksmörgås](https://x))\n", 18, "abc (se\nräksmörgås)\n"},
+        {"abc (se [界界界](https://x))\n", 14, "abc (se\n界界界)\n"},
+        {"x [tabellbilagan](https://x))\n", 13, "x\ntabellbilagan\n)\n"},
+        {"([](https://x))\n", 80, "()\n"},
+        {"([](https://x)) tail\n", 80, "() tail\n"},
+        {"abc [hello**world**](https://x)\n", 10, "abc\nhelloworld\n"},
+        {"abc [hello**world**](https://x)\n", 14, "abc helloworld\n"},
+        {"[**https://example.com**](https://x)\n", 8, "https://\nexample.\ncom\n"},
+        {"([https://x](https://x))\n", 8, "(\nhttps://\nx)\n"},
+        {"([https://x](https://x))\n", 9, "(\nhttps://x\n)\n"},
+        {"([https://x](https://x))\n", 10, "(https://x\n)\n"},
+        {"([https://x](https://x))\n", 11, "(https://x)\n"},
+        {"abc ([https://x](https://x))\n", 8, "abc\n(\nhttps://\nx)\n"},
+        {"[**https://example.com**](https://x)\n", 80, "https://example.com\n"},
+        {"[**https://example.com**](https://x)\n", 7, "https\n://exam\nple.com\n"},
+        {"[**https://example.com**](https://x)\n", 3, "htt\nps\n://\nexa\nmpl\ne.c\nom\n"},
+        {"[http**s://example.com**](https://x)\n", 8, "https://\nexample.\ncom\n"},
+        {"[http**s:**//example.com](https://x)\n", 8, "https://\nexample.\ncom\n"},
+        {"[https:**/**/example.com](https://x)\n", 8, "https://\nexample.\ncom\n"},
+        {"[https:/**/example.com**](https://x)\n", 7, "https\n://exam\nple.com\n"},
+        {"[https:**/**/example.com](https://x)\n", 7, "https\n://exam\nple.com\n"},
+        {"[one:`/`two](https://x)\n", 6, "one:\n/two\n"},
+        {"[**one:/two**](https://x)\n", 6, "one:\n/two\n"},
+        {"[https:**/**](https://x)\n", 7, "https:/\n"},
+        {"> [**https://x**](https://x)\n", 8, ">\n> https\n> ://x\n"},
+        {"[\"**https://x**\"](https://x)\n", 8, "\"https\n://x\"\n"},
+        {"[\"**https://**\"](https://x)\n", 9, "\"https\n://\"\n"},
+        {"abc [hello**world**](https://x))\n", 11, "abc\nhelloworld)\n"},
+        {"abc [hello**world**](https://x))\n", 10, "abc\nhelloworld\n)\n"},
+        {"abc [he**llo wor**ld](https://x))\n", 9, "abc hello\nworld)\n"},
+        {"abc [hello`world`](https://x))\n", 11, "abc\nhelloworld)\n"},
+        {"([hello**world**](https://x))\n", 12, "(helloworld)\n"},
+        {"([hello**world**](https://x))\n", 10, "(\nhelloworld\n)\n"},
+        {"([abcd ef](https://x))\n", 4, "(\nabcd\nef)\n"},
+        {"[\"hello\"](https://x)\n", 6, "\"hell\no\"\n"},
+        {"['hello'](https://x)\n", 6, "'hell\no'\n"},
+        {"[“hello”](https://x)\n", 6, "“hell\no”\n"},
+        {"[‘hello’](https://x)\n", 6, "‘hell\no’\n"},
+        {"[\"hel**lo**\"](https://x)\n", 6, "\"hell\no\"\n"},
+        {"[“he**llo**”](https://x)\n", 6, "“hell\no”\n"},
+        {"[ab\"cd](https://x)\n", 3, "ab\n\"cd\n"},
+        {"> [\"a\"](https://x)\n", 3, ">\n> \"\n> a\n> \"\n"},
+        {"abc [  hi](https://x)\n", 80, "abc   hi\n"},
+        {"abc [  hi](https://x)\n", 8, "abc   hi\n"},
+        {"abc [  hi](https://x)\n", 6, "abc \nhi\n"},
+        {"[  hi](https://x)\n", 80, "  hi\n"},
+        {"abc [  hi there](https://x) end\n", 80, "abc   hi there end\n"},
+        {"abc [  **hi** there](https://x)\n", 6, "abc \nhi\nthere\n"},
+        {"abc [  **hi** there](https://x)\n", 80, "abc   hi there\n"},
+        {"abc [  ](https://x) end\n", 80, "abc    end\n"},
+        {"([  hi](https://x))\n", 80, "(  hi)\n"},
+        {"[abc](x)?\"\n", 4, "abc\n?\"\n"},
+        {"[abc](x)!'\n", 4, "abc\n!'\n"},
+        {"[abc](x).\"\n", 4, "abc\n.\"\n"},
+        {"[abc](x),\"\n", 4, "abc\n,\"\n"},
+        {"[abc](x);'\n", 4, "abc\n;'\n"},
+        {"[abc](x):\"\n", 4, "abc\n:\"\n"},
+        {"[abc](x)?\"\n", 5, "abc?\"\n"},
+        {"[abc](x)?\" tail\n", 4, "abc\n?\"\ntail\n"},
+        {"[abc](x)??\"\n", 4, "abc\n??\"\n"},
+        {"[abc](x)?\"\"\n", 4, "abc\n?\"\"\n"},
+        {"[abc](x)?\"", 4, "abc\n?\"\n"},
+        {"[abc](x)?”\n", 4, "abc\n?”\n"},
+        {"[abc](x)!’\n", 4, "abc\n!’\n"},
+        {"[abc](x)?“\n", 4, "abc\n?“\n"},
+        {"[abc](x)!‘\n", 4, "abc\n!‘\n"},
+        {"[abc](x)?” tail\n", 4, "abc\n?”\ntail\n"},
+        {"[abc](x)?d\n", 4, "abc?\nd\n"},
+        {"[abc](x)\"\n", 4, "abc\"\n"},
+        {"[abc](x)????\"\n", 4, "abc\n???\n?\"\n"},
+        {"[abc](x)????”\n", 4, "abc\n???\n?”\n"},
+        {"[abc](x)?—\n", 4, "abc?\n—\n"},
+        {"[abc](x)?€\n", 4, "abc?\n€\n"},
+        {"[abc](x)?é\n", 4, "abc?\né\n"},
+        {"[abc](x)?界\n", 4, "abc?\n界\n"},
+        {"[abc](x)?)\"\n", 4, "abc?\n)\"\n"},
+        {"> [a](x)?\"\n", 4, "> a\n> ?\"\n"},
+        {"> [a](x)?”\n", 4, "> a\n> ?”\n"},
+    };
+    static const size_t chunks[] = {1, 2, 7, 4096};
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    char *plain;
+    size_t i;
+    size_t j;
+    int boring;
+    int margin;
+    int variant;
+    int fails;
+
+    fails = 0;
+    for (variant = 0; variant < 4; variant++) {
+        boring = variant % 2;
+        margin = variant / 2;
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            char *expected;
+            size_t source_pos;
+            size_t expected_pos;
+
+            mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
+            opts.osc8 = 1;
+            opts.boring = boring;
+            opts.margin_left = margin ? 2 : 0;
+            opts.margin_right = margin ? 3 : 0;
+            opts.width = cases[i].width + opts.margin_left + opts.margin_right;
+            expected = (char *)malloc(strlen(cases[i].expected) * 3 + 3);
+            fails += expect(expected != NULL, "margin-adjusted link expectation allocates");
+            if (expected == NULL) continue;
+            expected_pos = 0;
+            for (source_pos = 0; cases[i].expected[source_pos] != '\0'; source_pos++) {
+                if (margin && (source_pos == 0 || cases[i].expected[source_pos - 1] == '\n')) {
+                    expected[expected_pos++] = ' ';
+                    expected[expected_pos++] = ' ';
+                }
+                expected[expected_pos++] = cases[i].expected[source_pos];
+            }
+            expected[expected_pos] = '\0';
+            st = render_capture(MDF_FORMAT_ANSI, &opts, cases[i].markdown, 4096, &whole);
+            fails += expect(st == MDF_OK && whole.failed == 0,
+                            "OSC8 link wrapping renders successfully");
+            fails += expect_trace_matches_writes(&whole,
+                                                 "OSC8 link wrapping writes match traces");
+            if (strstr(cases[i].expected, "://") != NULL) {
+                size_t write_idx;
+                size_t separators;
+
+                separators = 0;
+                for (write_idx = 0; write_idx < whole.write_count; write_idx++) {
+                    char *visible;
+
+                    visible = strip_ansi(whole.writes[write_idx].data);
+                    fails += expect(visible != NULL, "URI decision text is available");
+                    if (visible != NULL && strstr(visible, "://") != NULL) separators++;
+                    free(visible);
+                }
+                if (strstr(cases[i].markdown, "[https://") == NULL) {
+                    fails += expect(separators == 1, "styled URI separator stays in one sink decision");
+                }
+                fails += expect_line_margins(whole.out, opts.margin_left,
+                                             opts.width - opts.margin_right,
+                                             "styled URI decisions respect content width");
+            }
+            if (strstr(cases[i].markdown, "abc [  ") != NULL) {
+                const char *separator;
+                const char *opening;
+
+                separator = whole.out == NULL ? NULL : strstr(whole.out, "abc ");
+                opening = whole.out == NULL ? NULL : strstr(whole.out, "\033]8;;https://x\033\\");
+                fails += expect(separator != NULL && opening != NULL && separator < opening,
+                                "separator before leading label spaces is outside the hyperlink");
+            }
+            if (strstr(cases[i].markdown, "hello**world**") != NULL ||
+                strstr(cases[i].markdown, "hello`world`") != NULL) {
+                size_t write_idx;
+                size_t complete_words;
+
+                complete_words = 0;
+                for (write_idx = 0; write_idx < whole.write_count; write_idx++) {
+                    if (strstr(whole.writes[write_idx].data, "hello") != NULL &&
+                        strstr(whole.writes[write_idx].data, "world") != NULL) complete_words++;
+                }
+                fails += expect(complete_words == 1,
+                                "mixed-style link word is one sink decision");
+            }
+            plain = whole.out == NULL ? NULL : strip_ansi(whole.out);
+            fails += expect(plain != NULL && strcmp(plain, expected) == 0,
+                            "OSC8 link wraps with its closing punctuation");
+            if (plain != NULL && strcmp(plain, expected) != 0) {
+                fprintf(stderr, "source: %s\nexpected: %sactual: %s", cases[i].markdown,
+                        expected, plain);
+            }
+            free(plain);
+            free(expected);
+            for (j = 0; j < sizeof(chunks) / sizeof(chunks[0]); j++) {
+                st = incremental_capture(&opts, cases[i].markdown, chunks[j], &split);
+                fails += expect(st == MDF_OK && split.failed == 0,
+                                "fragmented OSC8 link wrapping renders successfully");
+                fails += expect_trace_matches_writes(&split,
+                                                     "fragmented OSC8 link writes match traces");
+                fails += expect_capture_writes_equal(&split, &whole,
+                                                     "OSC8 link decisions survive feed and flush boundaries");
+                capture_free(&split);
+            }
+            capture_free(&whole);
+        }
+    }
+
+    for (variant = 0; variant < 4; variant++) {
+        static const char prefix[] = "abc (se [a tabellbilagan](https://x)";
+        mdf *inst;
+        mdf_sink sink;
+        size_t writes_before_geometry;
+
+        inst = NULL;
+        memset(&whole, 0, sizeof(whole));
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.boring = variant % 2;
+        opts.width = 23;
+        opts.write_trace.userdata = &whole;
+        opts.write_trace.emit = capture_trace;
+        sink.userdata = &whole;
+        sink.write = capture_write;
+        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+        if (st == MDF_OK) st = mdf_feed(inst, prefix, strlen(prefix), &sink);
+        if (st == MDF_OK) st = mdf_flush(inst, &sink);
+        fails += expect(st == MDF_OK, "pending OSC8 final word feeds and flushes successfully");
+        plain = whole.out == NULL ? NULL : strip_ansi(whole.out);
+        fails += expect(plain != NULL && strcmp(plain, "abc (se a") == 0,
+                        "earlier link word reaches the sink immediately");
+        free(plain);
+        fails += expect_no_write_contains(&whole, "tabellbilagan",
+                                         "only the final link word waits for its suffix");
+        writes_before_geometry = whole.write_count;
+        if (st == MDF_OK) st = mdf_set_geometry(inst, variant < 2 ? 21 : 14, 2, 3);
+        fails += expect(st == MDF_OK && whole.write_count == writes_before_geometry,
+                        "pending link geometry changes do not emit before the suffix decision");
+        if (st == MDF_OK) st = mdf_feed(inst, ")\n", 2, &sink);
+        if (st == MDF_OK) st = mdf_finish_document(inst, &sink);
+        fails += expect(st == MDF_OK && whole.failed == 0,
+                        "pending OSC8 final word finishes successfully");
+        if (variant < 2) {
+            fails += expect_write_contains(&whole, opts.boring ? "tabellbilagan\033]8;;\033\\)" :
+                                           "tabellbilagan\033]8;;\033\\\033[0m)",
+                                           "final link word and closing punctuation use one sink write");
+        }
+        fails += expect_no_write_contains(&whole, "a tabellbilagan",
+                                         "link words are separate sink decisions");
+        fails += expect_trace_matches_writes(&whole, "pending OSC8 final word writes match traces");
+        plain = whole.out == NULL ? NULL : strip_ansi(whole.out);
+        fails += expect(plain != NULL && strcmp(plain, variant < 2 ? "abc (se a\n  tabellbilagan)\n" :
+                                               "abc (se a\n  tabellbil\n  agan)\n") == 0,
+                        "pending link uses the geometry current at its suffix decision");
+        free(plain);
+        if (inst != NULL) inst->destroy(inst);
+        capture_free(&whole);
+    }
+    {
+        char emission_buffer[20];
+
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.boring = 1;
+        opts.width = 80;
+        opts.emission_buffer.data = emission_buffer;
+        opts.emission_buffer.cap = sizeof(emission_buffer);
+        opts.emission_buffer.max_cap = sizeof(emission_buffer);
+        opts.emission_buffer.fixed = 1;
+        st = render_capture(MDF_FORMAT_ANSI, &opts,
+                            "[tabellbilagan](https://x))\n", 1, &whole);
+        fails += expect(st == MDF_ERROR_NOMEM && whole.failed == 0,
+                        "link suffix cannot exceed the fixed emission buffer");
+        fails += expect_no_write_contains(&whole, "tabellbilagan",
+                                         "oversized link decision never bypasses the emission buffer");
+        fails += expect_trace_matches_writes(&whole,
+                                             "bounded link failure keeps sink and trace identity");
+        capture_free(&whole);
+
+        opts.width = 40;
+        st = render_capture(MDF_FORMAT_ANSI, &opts,
+                            "[abcdefghij](https://x)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tail\n", 1, &whole);
+        fails += expect(st == MDF_ERROR_NOMEM && whole.failed == 0,
+                        "overflow suffix portion cannot exceed the fixed emission buffer");
+        fails += expect_write_contains(&whole, "abcdefghij",
+                                       "bounded overflow failure occurs after the label decision");
+        fails += expect_no_write_contains(&whole, "!",
+                                         "oversized suffix decision never bypasses the emission buffer");
+        fails += expect_trace_matches_writes(&whole,
+                                             "bounded suffix failure keeps sink and trace identity");
+        capture_free(&whole);
+    }
+    return fails;
+}
+
+static int test_osc8_link_allocation_contract(void)
+{
+    static const char *const inputs[] = {
+        "[hello](https://x) tail\n",
+        "([  **hello** world](https://x)) tail\n",
+        "[abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz](https://x)) tail\n"
+    };
+    mdf_options opts;
+    failing_allocator allocator;
+    chunk_source data;
+    mdf_source source;
+    mdf_sink sink;
+    capture cap;
+    mdf *inst;
+    mdf_status st;
+    size_t i;
+    size_t step;
+    size_t off;
+    int mode;
+    int boring;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        for (mode = 0; mode < 2; mode++) {
+            for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+                for (step = 1; step < 128; step++) {
+                    memset(&allocator, 0, sizeof(allocator));
+                    memset(&cap, 0, sizeof(cap));
+                    inst = NULL;
+                    mdf_options_init(&opts);
+                    opts.ansi_mode = MDF_ANSI_ON;
+                    opts.osc8 = 1;
+                    opts.boring = boring;
+                    opts.width = 40;
+                    opts.allocator.userdata = &allocator;
+                    opts.allocator.alloc = failing_alloc;
+                    opts.allocator.realloc = NULL;
+                    opts.allocator.free = failing_free;
+                    opts.write_trace.userdata = &cap;
+                    opts.write_trace.emit = capture_trace;
+                    sink.userdata = &cap;
+                    sink.write = capture_write;
+                    st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                    fails += expect(st == MDF_OK, "allocation-failure OSC8 renderer creates");
+                    if (st != MDF_OK) {
+                        capture_free(&cap);
+                        break;
+                    }
+                    allocator.fail_at = allocator.calls + step;
+                    if (mode == 0) {
+                        data.src = inputs[i];
+                        data.len = strlen(inputs[i]);
+                        data.off = 0;
+                        data.chunk = 4096;
+                        source.userdata = &data;
+                        source.read = chunk_read;
+                        st = mdf_render(inst, &source, &sink);
+                    } else {
+                        for (off = 0; st == MDF_OK && off < strlen(inputs[i]); off++) {
+                            st = mdf_feed(inst, inputs[i] + off, 1, &sink);
+                            if (st == MDF_OK) st = mdf_flush(inst, &sink);
+                        }
+                        if (st == MDF_OK) st = mdf_finish_document(inst, &sink);
+                    }
+                    if (allocator.failed) {
+                        fails += expect(st == MDF_ERROR_NOMEM,
+                                        "OSC8 allocation failure returns NOMEM with a successful sink");
+                        /* Whole-document parser startup may return NOMEM
+                         * before supplying a renderer diagnostic. Every
+                         * renderer failure and incremental failure must
+                         * carry the accurate diagnostic. */
+                        if (mode != 0 || inst->error(inst)[0] != '\0') {
+                            fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                                            "OSC8 allocation failure reports out of memory");
+                        }
+                        if (st != MDF_ERROR_NOMEM) {
+                            fprintf(stderr, "allocation step %lu mode %d boring %d input %lu: %s\n",
+                                    (unsigned long)step, mode, boring, (unsigned long)i, inst->error(inst));
+                        }
+                    } else {
+                        fails += expect(st == MDF_OK, "OSC8 rendering succeeds without allocation failure");
+                    }
+                    fails += expect(cap.failed == 0, "allocation regression sink always succeeds");
+                    fails += expect_trace_matches_writes(&cap,
+                                                         "allocation failures preserve sink and trace identity");
+                    inst->destroy(inst);
+                    fails += expect(allocator.live == 0, "failed OSC8 rendering releases all allocations");
+                    capture_free(&cap);
+                    if (!allocator.failed) break;
+                }
+                fails += expect(step > 1 && step < 128,
+                                "OSC8 allocation sweep exercises failures and reaches success");
+            }
+        }
+    }
+    return fails;
+}
+
+static int test_osc8_split_link_buffer_contract(void)
+{
+    static const char *const inputs[] = {
+        "[abcdefghijklmnopqrstuvwxyz](https://x)\n",
+        "[abcdefgh**ijklmnop**qrstuvwxyz](https://x)) tail\n"
+    };
+    static const size_t capacities[] = {24, 32, 40, 96};
+    static const size_t fragments[] = {1, 7};
+    char emission_buffer[96];
+    mdf_options opts;
+    chunk_source data;
+    mdf_source source;
+    mdf_sink sink;
+    mdf *inst;
+    capture whole;
+    capture split;
+    mdf_status st;
+    size_t i;
+    size_t j;
+    size_t k;
+    size_t write_idx;
+    int boring;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+            for (j = 0; j < sizeof(capacities) / sizeof(capacities[0]); j++) {
+                mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
+                opts.osc8 = 1;
+                opts.boring = boring;
+                opts.width = 8;
+                opts.emission_buffer.data = emission_buffer;
+                opts.emission_buffer.cap = capacities[j];
+                opts.emission_buffer.max_cap = capacities[j];
+                opts.emission_buffer.fixed = 1;
+                memset(&whole, 0, sizeof(whole));
+                inst = NULL;
+                opts.write_trace.userdata = &whole;
+                opts.write_trace.emit = capture_trace;
+                sink.userdata = &whole;
+                sink.write = capture_write;
+                data.src = inputs[i];
+                data.len = strlen(inputs[i]);
+                data.off = 0;
+                data.chunk = 4096;
+                source.userdata = &data;
+                source.read = chunk_read;
+                st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                if (st == MDF_OK) st = mdf_render(inst, &source, &sink);
+                if (st == MDF_ERROR_NOMEM && inst != NULL) {
+                    fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                                    "split label capacity failure reports out of memory");
+                }
+                if (inst != NULL) inst->destroy(inst);
+                fails += expect(st == MDF_OK || st == MDF_ERROR_NOMEM,
+                                "split link capacity failure is NOMEM, never a sink error");
+                if (boring == 0 && capacities[j] == 24) {
+                    fails += expect(st == MDF_ERROR_NOMEM,
+                                    "styled split label exceeds the 24-byte emission buffer");
+                }
+                if (capacities[j] == sizeof(emission_buffer)) {
+                    fails += expect(st == MDF_OK, "split label fits the larger fixed emission buffer");
+                }
+                fails += expect(whole.failed == 0, "bounded split label sink succeeds");
+                fails += expect_trace_matches_writes(&whole,
+                                                     "bounded split label writes match traces");
+                for (write_idx = 0; write_idx < whole.write_count; write_idx++) {
+                    fails += expect(whole.writes[write_idx].len <= capacities[j],
+                                    "split label never bypasses the fixed emission buffer");
+                }
+                for (k = 0; k < sizeof(fragments) / sizeof(fragments[0]); k++) {
+                    mdf_status split_st;
+
+                    split_st = incremental_capture(&opts, inputs[i], fragments[k], &split);
+                    fails += expect(split_st == st && split.failed == 0,
+                                    "fragmented split label preserves bounded-buffer status");
+                    fails += expect_trace_matches_writes(&split,
+                                                         "bounded fragmented split writes match traces");
+                    fails += expect_capture_writes_equal(&split, &whole,
+                                                         "bounded split decisions survive fragmentation");
+                    capture_free(&split);
+                }
+                capture_free(&whole);
+            }
+        }
+    }
+    return fails;
+}
+
+static int test_osc8_manual_finish_contract(void)
+{
+    static const struct {
+        const char *text;
+        int width;
+        const char *expected;
+    } cases[] = {
+        {"[hello](https://x)", 80, "hello\n"},
+        {"[one two](https://x)", 80, "one two\n"},
+        {"([hello](https://x))", 80, "(hello)\n"},
+        {"[hello**world**](https://x)", 80, "helloworld\n"},
+        {"[  hi](https://x)", 80, "  hi\n"},
+        {"[hello](https://x)", 4, "hell\no\n"},
+        {"[one two](https://x)", 4, "one\ntwo\n"},
+        {"([](https://x))", 80, "()\n"},
+        {"[abc](https://x)?\"", 4, "abc\n?\"\n"},
+        {"[abc](https://x)?”", 4, "abc\n?”\n"},
+    };
+    mdf_options opts;
+    mdf_token token;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    capture baseline;
+    mdf_status st;
+    char *plain;
+    size_t i;
+    size_t off;
+    size_t count;
+    int boring;
+    int mode;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            memset(&baseline, 0, sizeof(baseline));
+            /* Compare explicit EOF, implicit finish, and byte-sized tokens. */
+            for (mode = 0; mode < 3; mode++) {
+                memset(&cap, 0, sizeof(cap));
+                mdf_options_init(&opts);
+                opts.ansi_mode = MDF_ANSI_ON;
+                opts.osc8 = 1;
+                opts.boring = boring;
+                opts.width = cases[i].width;
+                opts.write_trace.userdata = &cap;
+                opts.write_trace.emit = capture_trace;
+                sink.userdata = &cap;
+                sink.write = capture_write;
+                inst = NULL;
+                st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                fails += expect(st == MDF_OK, "manual OSC8 renderer creates");
+                memset(&token, 0, sizeof(token));
+                token.type = MDF_TOKEN_TEXT;
+                for (off = 0; st == MDF_OK && off < strlen(cases[i].text); off += token.len) {
+                    token.text = cases[i].text + off;
+                    token.len = mode == 2 ? 1 : strlen(cases[i].text);
+                    st = mdf_write_token(inst, &token, &sink);
+                }
+                fails += expect(st == MDF_OK, "manual OSC8 text tokens succeed");
+                if (st == MDF_OK && mode == 0) {
+                    memset(&token, 0, sizeof(token));
+                    token.type = MDF_TOKEN_DOCUMENT_END;
+                    st = mdf_write_token(inst, &token, &sink);
+                    fails += expect(st == MDF_OK, "manual OSC8 explicit EOF succeeds");
+                }
+                if (st == MDF_OK) st = mdf_finish(inst, &sink);
+                fails += expect(st == MDF_OK && !cap.failed, "manual OSC8 finish succeeds");
+                plain = strip_ansi(cap.out != NULL ? cap.out : "");
+                fails += expect(plain != NULL && strcmp(plain, cases[i].expected) == 0,
+                                "manual OSC8 finish preserves the complete label and wrapping");
+                free(plain);
+                if (strcmp(cases[i].expected, "()\n") != 0) {
+                    fails += expect_contains(cap.out, "\033]8;;https://x\033\\", "manual OSC8 finish opens hyperlink");
+                    fails += expect_contains(cap.out, "\033]8;;\033\\", "manual OSC8 finish closes hyperlink");
+                }
+                fails += expect_trace_matches_writes(&cap, "manual OSC8 finish writes match traces");
+                if (mode != 0) {
+                    fails += expect_capture_writes_equal(&cap, &baseline,
+                                                        "manual finish and fragmented tokens match explicit EOF emissions");
+                }
+                count = cap.write_count;
+                if (st == MDF_OK) st = mdf_finish(inst, &sink);
+                fails += expect(st == MDF_OK && cap.write_count == count,
+                                "repeated manual OSC8 finish emits nothing");
+                if (mode == 0) baseline = cap;
+                else capture_free(&cap);
+                memset(&cap, 0, sizeof(cap));
+                if (st == MDF_OK) {
+                    memset(&token, 0, sizeof(token));
+                    token.type = MDF_TOKEN_TEXT;
+                    token.text = "[again](https://y)";
+                    token.len = strlen(token.text);
+                    st = mdf_write_token(inst, &token, &sink);
+                    if (st == MDF_OK) st = mdf_finish(inst, &sink);
+                    plain = strip_ansi(cap.out != NULL ? cap.out : "");
+                    fails += expect(st == MDF_OK && plain != NULL &&
+                                        strcmp(plain, cases[i].width == 4 ? "agai\nn\n" : "again\n") == 0,
+                                    "manual OSC8 renderer can finish another session");
+                    free(plain);
+                    fails += expect_trace_matches_writes(&cap, "reused manual OSC8 finish writes match traces");
+                }
+                if (inst != NULL) inst->destroy(inst);
+                capture_free(&cap);
+            }
+            capture_free(&baseline);
+        }
+    }
+    return fails;
+}
+
+static int test_osc8_manual_finish_failure_contract(void)
+{
+    char emission_buffer[64];
+    mdf_options opts;
+    mdf_token token;
+    mdf_sink sink;
+    mdf *inst;
+    capture cap;
+    mdf_status st;
+    size_t count;
+    int boring;
+    int bounded;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        for (bounded = 0; bounded < 2; bounded++) {
+            memset(&cap, 0, sizeof(cap));
+            mdf_options_init(&opts);
+            opts.ansi_mode = MDF_ANSI_ON;
+            opts.osc8 = 1;
+            opts.boring = boring;
+            opts.width = 160;
+            opts.write_trace.userdata = &cap;
+            opts.write_trace.emit = capture_trace;
+            if (bounded) {
+                opts.emission_buffer.data = emission_buffer;
+                opts.emission_buffer.cap = sizeof(emission_buffer);
+                opts.emission_buffer.fixed = 1;
+            }
+            sink.userdata = &cap;
+            sink.write = bounded ? capture_write : reject_capture_write;
+            inst = NULL;
+            st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+            fails += expect(st == MDF_OK, "manual OSC8 failure renderer creates");
+            memset(&token, 0, sizeof(token));
+            token.type = MDF_TOKEN_TEXT;
+            token.text = bounded ? "[hello](https://x)!!!!!!!!!!!!!!!!!!!!"
+                                   "!!!!!!!!!!!!!!!!!!!!"
+                                   "!!!!!!!!!!!!!!!!!!!!"
+                                   "!!!!!!!!!!!!!!!!!!!!"
+                                 : "[hello](https://x)";
+            token.len = strlen(token.text);
+            if (st == MDF_OK) st = mdf_write_token(inst, &token, &sink);
+            fails += expect(st == MDF_OK && cap.write_count == 0 && !cap.failed,
+                            "manual OSC8 failure is deferred until finish");
+            if (st == MDF_OK) st = mdf_finish(inst, &sink);
+            fails += expect(st == (bounded ? MDF_ERROR_NOMEM : MDF_ERROR_IO),
+                            "manual OSC8 finish distinguishes emission capacity and sink failures");
+            if (inst != NULL) {
+                fails += expect(strcmp(inst->error(inst), bounded ? "out of memory" : "sink write failed") == 0,
+                                "manual OSC8 finish preserves failure diagnostics");
+                fails += expect(bounded ? !cap.failed : cap.failed,
+                                "manual OSC8 capacity failure does not call the rejecting sink");
+                fails += expect_trace_matches_writes(&cap, "failed manual OSC8 finish traces only successful writes");
+                count = cap.write_count;
+                sink.write = capture_write;
+                st = mdf_finish(inst, &sink);
+                fails += expect(st == MDF_OK && cap.write_count == count,
+                                "failed manual OSC8 finish discards the failed session");
+                inst->destroy(inst);
+            }
+            capture_free(&cap);
+        }
+    }
+    return fails;
+}
+
+static int test_osc8_emission_capacity_contract(void)
+{
+    static const char *const inputs[] = {
+        "[                              hi](https://x)\n",
+        "[abcdefghij](https://x)!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! tail\n"
+    };
+    static const size_t fragments[] = {0, 1, 7};
+    char emission_buffer[96];
+    mdf_options opts;
+    chunk_source data;
+    mdf_source source;
+    mdf_sink sink;
+    mdf *inst;
+    capture whole;
+    capture split;
+    mdf_status st;
+    size_t i;
+    size_t j;
+    size_t off;
+    size_t n;
+    size_t write_idx;
+    size_t failure_write;
+    size_t limit;
+    int policy;
+    int roomy;
+    int boring;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        for (i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+            for (policy = 0; policy < 4; policy++) {
+                for (roomy = 0; roomy < 2; roomy++) {
+                    limit = roomy ? sizeof(emission_buffer) : 24;
+                    mdf_options_init(&opts);
+                    opts.ansi_mode = MDF_ANSI_ON;
+                    opts.osc8 = 1;
+                    opts.boring = boring;
+                    opts.width = i == 0 ? 80 : 40;
+                    if (policy == 3) {
+                        opts.emission_buffer.initial_cap = 16;
+                        opts.emission_buffer.max_cap = limit;
+                    } else {
+                        opts.emission_buffer.data = emission_buffer;
+                        opts.emission_buffer.cap = policy == 2 ? sizeof(emission_buffer) : limit;
+                        opts.emission_buffer.fixed = policy != 1;
+                        /* Policies 0/1 test the capacity bound without an
+                         * explicit maximum; policy 2 tests a smaller max. */
+                        if (policy == 2) opts.emission_buffer.max_cap = limit;
+                    }
+                    memset(&whole, 0, sizeof(whole));
+                    for (j = 0; j < sizeof(fragments) / sizeof(fragments[0]); j++) {
+                        memset(&split, 0, sizeof(split));
+                        opts.write_trace.userdata = &split;
+                        opts.write_trace.emit = capture_trace;
+                        sink.userdata = &split;
+                        sink.write = capture_write;
+                        inst = NULL;
+                        st = mdf_create(MDF_FORMAT_ANSI, &opts, &inst);
+                        fails += expect(st == MDF_OK, "bounded OSC8 capacity renderer creates");
+                        if (st == MDF_OK && fragments[j] == 0) {
+                            data.src = inputs[i];
+                            data.len = strlen(inputs[i]);
+                            data.off = 0;
+                            data.chunk = 4096;
+                            source.userdata = &data;
+                            source.read = chunk_read;
+                            st = mdf_render(inst, &source, &sink);
+                        } else {
+                            for (off = 0; st == MDF_OK && off < strlen(inputs[i]); off += n) {
+                                n = strlen(inputs[i]) - off;
+                                if (n > fragments[j]) n = fragments[j];
+                                st = mdf_feed(inst, inputs[i] + off, n, &sink);
+                                if (st == MDF_OK) st = mdf_flush(inst, &sink);
+                            }
+                            if (st == MDF_OK) st = mdf_finish_document(inst, &sink);
+                        }
+                        fails += expect(st == (roomy ? MDF_OK : MDF_ERROR_NOMEM) && !split.failed,
+                                        "OSC8 leading spaces and overflow suffix capacity failures are NOMEM");
+                        if (!roomy && inst != NULL) {
+                            fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                                            "OSC8 capacity failure exposes the memory diagnostic");
+                        }
+                        fails += expect_trace_matches_writes(&split, "OSC8 capacity failures preserve sink/trace identity");
+                        for (write_idx = 0; write_idx < split.write_count; write_idx++) {
+                            fails += expect(split.writes[write_idx].len <= limit,
+                                            "OSC8 decisions never bypass the configured emission bound");
+                        }
+                        if (!roomy) {
+                            fails += expect_no_write_contains(&split, i == 0 ? "hi" : "!",
+                                                            "rejected OSC8 decision does not reach the sink");
+                        }
+                        if (inst != NULL) inst->destroy(inst);
+                        if (j == 0) {
+                            whole = split;
+                        } else {
+                            fails += expect_capture_writes_equal(&split, &whole,
+                                                                 "bounded OSC8 decisions survive fragmented feeds and flushes");
+                            capture_free(&split);
+                        }
+                    }
+                    if (roomy) {
+                        failure_write = 0;
+                        for (write_idx = 0; write_idx < whole.write_count; write_idx++) {
+                            if (strstr(whole.writes[write_idx].data,
+                                       i == 0 ? "                              " : "!!!") != NULL) {
+                                failure_write = write_idx;
+                                break;
+                            }
+                        }
+                        fails += expect(failure_write > 0, "successful OSC8 render emits the target decision");
+                        if (failure_write > 0) {
+                            st = render_capture_limited(MDF_FORMAT_ANSI, &opts, inputs[i], 1,
+                                                        failure_write, &split);
+                            fails += expect(st == MDF_ERROR_IO && split.failed,
+                                            "genuine sink rejection of the same OSC8 decision remains IO");
+                            fails += expect_trace_matches_writes(&split, "sink rejection traces only successful writes");
+                            capture_free(&split);
+                        }
+                    }
+                    capture_free(&whole);
+                }
+            }
+        }
+    }
+    return fails;
+}
+
+static int test_osc8_link_edge_contract(void)
+{
+    static const struct {
+        const char *markdown;
+        const char *expected;
+    } prefix_cases[] = {
+        {"> [ab](https://x))\n", ">\n> ab\n> )\n"},
+        {"- [ab](https://x))\n", "- \n  ab\n  )\n"},
+    };
+    static const struct {
+        const char *markdown;
+        int width;
+        const char *expected;
+        const char *styled_suffix;
+    } cases[] = {
+        {"**[one](https://x)! tail**\n", 80, "one! tail\n",
+         "\033]8;;\033\\\033[0m\033[1m\033[1;37m!"},
+        {"**[one](https://x)!! tail**\n", 4, "one!\n!\ntail\n",
+         "\033[0m\n\033[1m\033[1;37m!"},
+    };
+    mdf_options opts;
+    capture cap;
+    mdf_status st;
+    char *plain;
+    size_t i;
+    int boring;
+    int fails;
+
+    fails = 0;
+    for (boring = 0; boring < 2; boring++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.boring = boring;
+        opts.width = 4;
+        opts.margin_left = 1;
+        st = render_capture_limited(MDF_FORMAT_ANSI, &opts, "> > [ab](https://x)\n", 1, 128, &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "OSC8 link advances when quote prefix exhausts the line");
+        fails += expect_trace_matches_writes(&cap,
+                                             "exhausted-prefix link writes match traces");
+        plain = cap.out == NULL ? NULL : strip_ansi(cap.out);
+        fails += expect(plain != NULL && strcmp(plain, " > >\n > > a\n > > b\n") == 0,
+                        "exhausted-prefix link preserves each label character");
+        free(plain);
+        capture_free(&cap);
+    }
+
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.width = cases[i].width;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, cases[i].markdown, 1, &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "OSC8 link suffix inside emphasis renders successfully");
+        fails += expect_trace_matches_writes(&cap,
+                                             "emphasized OSC8 link writes match traces");
+        plain = cap.out == NULL ? NULL : strip_ansi(cap.out);
+        fails += expect(plain != NULL && strcmp(plain, cases[i].expected) == 0,
+                        "emphasized OSC8 suffix keeps its wrap position");
+        fails += expect(cap.out != NULL && strstr(cap.out, cases[i].styled_suffix) != NULL,
+                        "emphasized OSC8 suffix resumes its enclosing style");
+        free(plain);
+        capture_free(&cap);
+    }
+
+    mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
+    opts.osc8 = 1;
+    opts.boring = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "([one two](https://x))\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "parenthesized multiword OSC8 link renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "parenthesized multiword OSC8 writes match traces");
+    fails += expect(cap.out != NULL &&
+                    strstr(cap.out, "(\033]8;;https://x\033\\one ") != NULL,
+                    "OSC8 opens before the first label word, after the literal parenthesis");
+    capture_free(&cap);
+
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "([one](https://x))\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "parenthesized single-word OSC8 link renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "parenthesized single-word OSC8 writes match traces");
+    fails += expect(cap.out != NULL &&
+                    strstr(cap.out, "(\033]8;;https://x\033\\one\033]8;;\033\\)") != NULL,
+                    "single-word OSC8 excludes both literal parentheses");
+    capture_free(&cap);
+
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "([https://x](https://x))\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "parenthesized URL-shaped OSC8 label renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "parenthesized URL-shaped OSC8 writes match traces");
+    fails += expect(cap.out != NULL &&
+                    strstr(cap.out, "(\033]8;;https://x\033\\https://x\033]8;;\033\\)") != NULL,
+                    "URL-shaped OSC8 label excludes both literal parentheses");
+    capture_free(&cap);
+
+    mdf_options_init(&opts);
+    opts.ansi_mode = MDF_ANSI_ON;
+    opts.osc8 = 1;
+    opts.width = 80;
+    st = render_capture(MDF_FORMAT_ANSI, &opts, "*italic* [one](https://x)\n", 1, &cap);
+    fails += expect(st == MDF_OK && cap.failed == 0,
+                    "OSC8 link after italic span renders successfully");
+    fails += expect_trace_matches_writes(&cap,
+                                         "post-italic OSC8 writes match traces");
+    fails += expect(cap.out != NULL &&
+                    strstr(cap.out, "italic\033[0m \033]8;;https://x\033\\") != NULL,
+                    "pending italic style resets before the OSC8 label");
+    capture_free(&cap);
+
+    for (i = 0; i < sizeof(prefix_cases) / sizeof(prefix_cases[0]); i++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.boring = 1;
+        opts.width = 4;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, prefix_cases[i].markdown, 1, &cap);
+        fails += expect(st == MDF_OK && cap.failed == 0,
+                        "OSC8 suffix after structural prefix renders successfully");
+        fails += expect_trace_matches_writes(&cap,
+                                             "structural-prefix OSC8 writes match traces");
+        plain = cap.out == NULL ? NULL : strip_ansi(cap.out);
+        fails += expect(plain != NULL && strcmp(plain, prefix_cases[i].expected) == 0,
+                        "OSC8 suffix fits within the structural content width");
+        free(plain);
+        capture_free(&cap);
+    }
+    return fails;
+}
+
+static int test_osc8_quote_style_contract(void)
+{
+    static const struct {
+        const char *markdown;
+        int width;
+        const char *styled_following;
+    } cases[] = {
+        {"> before [one](https://x) after\n", 80, "\033[38;5;183m after"},
+        {"> before [one](https://x)) after\n", 80, "\033[0m\033[38;5;183m) after"},
+        {"> [one](https://x)) ok\n", 5, "\033[38;5;183m)"},
+        {"> [abc](x)?\" tail\n", 6, "\033[38;5;183m?\""},
+        {"> [abc](x)?” tail\n", 6, "\033[38;5;183m?”"},
+    };
+    static const size_t chunks[] = {1, 2, 7, 4096};
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    size_t i;
+    size_t j;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.theme_name = "dracula";
+        opts.width = cases[i].width;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, cases[i].markdown, 4096, &whole);
+        fails += expect(st == MDF_OK && whole.failed == 0,
+                        "OSC8 link inside a colored blockquote renders successfully");
+        fails += expect_trace_matches_writes(&whole,
+                                             "colored blockquote OSC8 writes match traces");
+        fails += expect(whole.out != NULL && strstr(whole.out, cases[i].styled_following) != NULL,
+                        "colored blockquote resumes its style after an OSC8 link");
+        for (j = 0; j < sizeof(chunks) / sizeof(chunks[0]); j++) {
+            st = incremental_capture(&opts, cases[i].markdown, chunks[j], &split);
+            fails += expect(st == MDF_OK && split.failed == 0,
+                            "fragmented colored blockquote renders successfully");
+            fails += expect_trace_matches_writes(&split,
+                                                 "fragmented colored blockquote writes match traces");
+            fails += expect_capture_writes_equal(&split, &whole,
+                                                 "quote style survives feed and flush boundaries");
+            capture_free(&split);
+        }
+        capture_free(&whole);
+    }
+    return fails;
+}
+
+static int test_osc8_label_style_contract(void)
+{
+    static const struct {
+        const char *markdown;
+        const char *theme;
+        int width;
+        const char *continuation;
+    } cases[] = {
+        {"# [one two three](https://x) after\n", "default", 80,
+         "\033[4m\033[1;34mone two three"},
+        {"# [one two three](https://x) after\n", "default", 12,
+         "\033[4m\033[1;34mone two"},
+        {"> [one two three](https://x) after\n", "dracula", 80,
+         "\033[4m\033[1;38;5;141mone two three"},
+        {"# **[one](https://x)) after**\n", "default", 80,
+         "\033[1m\033[1;37m after"},
+        {"# **[one](https://x)) after**\n", "dracula", 80,
+         "\033[1m\033[1;38;5;117m after"},
+        {"# *[one](https://x)) after*\n", "dracula", 80,
+         "\033[3m\033[38;5;141m after"},
+        {"# ***[one](https://x)) after***\n", "dracula", 80,
+         "\033[1m\033[3m\033[1;38;5;204m after"},
+        {"# **[one](https://x)) after**\n", "dracula", 10,
+         "\033[1m\033[1;38;5;117mafter"},
+        {"> **[abcdefghij](https://x)!! tail**\n", "dracula", 12,
+         "\033[1m\033[1;38;5;117m!! tail"},
+        {"> **[abcdefghij](https://x)!!! tail**\n", "dracula", 12,
+         "\033[1m\033[1;38;5;117m!!! tail"},
+        {"> *[abcdefghij](https://x)!! tail*\n", "dracula", 12,
+         "\033[3m\033[38;5;141m!! tail"},
+        {"> ***[abcdefghij](https://x)!! tail***\n", "dracula", 12,
+         "\033[1m\033[3m\033[1;38;5;204m!! tail"},
+        {"> **[abcdefghij](https://x)!!!!!!!!!!!! tail**\n", "dracula", 12,
+         "\033[1m\033[1;38;5;117m!! tail"},
+        {"> > **[abcdefgh](https://x)!! tail**\n", "dracula", 12,
+         "\033[1m\033[1;38;5;117m!! tail"},
+        {"> [abcdefghij](https://x)!! tail\n", "dracula", 12,
+         "\033[38;5;183m!! tail"},
+        {"> **[abc](x)?\" tail**\n", "dracula", 6,
+         "\033[1m\033[1;38;5;117m?\""},
+        {"> *[abc](x)!’ tail*\n", "dracula", 6,
+         "\033[3m\033[38;5;141m!’"},
+        {"# **[abc](x)?\" tail**\n", "dracula", 6,
+         "\033[1m\033[1;38;5;117m?\""},
+    };
+    static const size_t chunks[] = {1, 2, 7, 4096};
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    size_t i;
+    size_t j;
+    int fails;
+
+    fails = 0;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mdf_options_init(&opts);
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.osc8 = 1;
+        opts.theme_name = cases[i].theme;
+        opts.width = cases[i].width;
+        st = render_capture(MDF_FORMAT_ANSI, &opts, cases[i].markdown, 4096, &whole);
+        fails += expect(st == MDF_OK && whole.failed == 0, "styled OSC8 span renders successfully");
+        fails += expect_trace_matches_writes(&whole, "styled OSC8 span writes match traces");
+        fails += expect_contains(whole.out, cases[i].continuation,
+                                 "OSC8 output preserves link and enclosing span styles");
+        if (strstr(cases[i].markdown, "!!!!!!!!!!!!") != NULL) {
+            fails += expect_write_contains(&whole, "\033[1m\033[1;38;5;117m!!!!!!!!!!",
+                                            "fitting overflow suffix portion is one styled sink decision");
+        }
+        if (whole.out != NULL) {
+            fails += expect_line_margins(whole.out, 0, opts.width,
+                                         "styled OSC8 output stays within the configured width");
+        }
+        for (j = 0; j < sizeof(chunks) / sizeof(chunks[0]); j++) {
+            st = incremental_capture(&opts, cases[i].markdown, chunks[j], &split);
+            fails += expect(st == MDF_OK && split.failed == 0, "fragmented OSC8 label renders successfully");
+            fails += expect_trace_matches_writes(&split, "fragmented OSC8 label writes match traces");
+            fails += expect_capture_writes_equal(&split, &whole,
+                                                 "OSC8 label styles survive feed and flush boundaries");
+            capture_free(&split);
+        }
+        capture_free(&whole);
+    }
     return fails;
 }
 
@@ -4012,9 +5249,19 @@ int main(int argc, char **argv)
     fails += test_unicode_width_stream_contract();
     fails += test_margin_contract();
     fails += test_table_contract();
+    fails += test_table_pipe_escape_contract();
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
     fails += test_fallback_link_punctuation_contract();
+    fails += test_osc8_link_wrapping_contract();
+    fails += test_osc8_link_allocation_contract();
+    fails += test_osc8_split_link_buffer_contract();
+    fails += test_osc8_manual_finish_contract();
+    fails += test_osc8_manual_finish_failure_contract();
+    fails += test_osc8_emission_capacity_contract();
+    fails += test_osc8_link_edge_contract();
+    fails += test_osc8_quote_style_contract();
+    fails += test_osc8_label_style_contract();
     fails += test_autolink_punctuation_contract();
     fails += test_runtime_width_autolink_margin_contract();
     fails += test_runtime_width_quoted_list_autolink_contract();

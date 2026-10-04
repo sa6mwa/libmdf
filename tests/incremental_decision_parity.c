@@ -300,7 +300,7 @@ static void print_emission(FILE *fp, const emission *item)
 
 static void usage(const char *argv0)
 {
-    fprintf(stderr, "usage: %s --ansi [--boring] [-w width] "
+    fprintf(stderr, "usage: %s --ansi [--boring] [--osc8] [-w width] "
             "[--margin-left columns] [--margin-right columns] input.md\n", argv0);
 }
 
@@ -326,6 +326,8 @@ int main(int argc, char **argv)
             /* ANSI is the only supported decision-stream contract. */
         } else if (strcmp(argv[i], "--boring") == 0) {
             opts.boring = 1;
+        } else if (strcmp(argv[i], "--osc8") == 0) {
+            opts.osc8 = 1;
         } else if (strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--width") == 0) {
             i++;
             if (i >= (size_t)argc || parse_nonnegative(argv[i], &value) != 0 || value == 0) {

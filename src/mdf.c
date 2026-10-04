@@ -88,6 +88,11 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->ansi_pending_code_len = 0;
     impl->ansi_pending_code_valid = 0;
     impl->ansi_owned_inline_style[0] = '\0';
+    impl->ansi_link_tail_cols = 0;
+    impl->ansi_link_tail_literal_prefix_len = 0;
+    impl->ansi_link_tail_redundant_style_len = 0;
+    impl->ansi_link_tail_last_char = '\0';
+    impl->ansi_link_tail_pending = 0;
     impl->inline_emph_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, inline_emph_count, inline_emph_after_word);
     impl->inline_emph_parenthesized = 0;
@@ -3663,10 +3668,12 @@ int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)
     }
     mdf_impl_ensure_emit_buffer_initialized(impl);
     if (impl->emit_max_cap > 0 && len > impl->emit_max_cap) {
+        mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
         return -1;
     }
     if (len > impl->emit_cap) {
         if (impl->emit_fixed_mode || (impl->emit_buf != impl->emit_fixed && !impl->emit_owns_buf)) {
+            mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
             return -1;
         }
         next_cap = impl->emit_cap == 0 ? sizeof(impl->emit_fixed) : impl->emit_cap;
@@ -3681,6 +3688,7 @@ int mdf_emit_all(mdf_impl *impl, mdf_sink *sink, const char *src, size_t len)
             }
         }
         if (next_cap < len) {
+            mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
             return -1;
         }
         if (impl->emit_using_heap && impl->emit_workspace_owned) {
@@ -3755,14 +3763,17 @@ int mdf_emit_buffer_append(mdf_impl *impl, const char *src, size_t len)
         }
     }
     if (len > ((size_t)-1) - impl->emit_len) {
+        mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
         return -1;
     }
     need = impl->emit_len + len;
     if (impl->emit_max_cap > 0 && need > impl->emit_max_cap) {
+        mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
         return -1;
     }
     if (need > impl->emit_cap) {
         if (impl->emit_fixed_mode || (impl->emit_buf != impl->emit_fixed && !impl->emit_owns_buf)) {
+            mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
             return -1;
         }
         next_cap = impl->emit_cap == 0 ? sizeof(impl->emit_fixed) : impl->emit_cap;
@@ -3777,6 +3788,7 @@ int mdf_emit_buffer_append(mdf_impl *impl, const char *src, size_t len)
             }
         }
         if (next_cap < need) {
+            mdf_copy_error_message(impl->error, sizeof(impl->error), "out of memory");
             return -1;
         }
         if (impl->emit_using_heap && impl->emit_workspace_owned) {

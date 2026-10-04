@@ -129,11 +129,42 @@ func renderOptions(opts parityOptions, traceEncoder mdf.WriteTraceEncoder) []mdf
 	return out
 }
 
+func normalizeReferenceHTMLFonts(out []byte) []byte {
+	// C emits each variable font once with a weight range. Normalize only
+	// adjacent, byte-identical built-in faces from Go's older HTML shell.
+	lines := bytes.SplitAfter(out, []byte("\n"))
+	result := make([]byte, 0, len(out))
+	fontStart := []byte(`@font-face{font-family:"JetBrains Mono";src:url(data:font/woff2;base64,`)
+	for i := 0; i < len(lines); i++ {
+		merged := false
+		if i+1 < len(lines) && bytes.HasPrefix(lines[i], fontStart) && bytes.HasPrefix(lines[i+1], fontStart) {
+			for _, style := range []string{"normal", "italic"} {
+				ending := ";font-style:" + style + ";font-display:block;}\n"
+				regular := []byte("font-weight:400" + ending)
+				bold := []byte("font-weight:700" + ending)
+				if bytes.HasSuffix(lines[i], regular) && bytes.HasSuffix(lines[i+1], bold) &&
+					bytes.Equal(bytes.TrimSuffix(lines[i], regular), bytes.TrimSuffix(lines[i+1], bold)) {
+					result = append(result, bytes.TrimSuffix(lines[i], regular)...)
+					result = append(result, []byte("font-weight:400 700"+ending)...)
+					i++
+					merged = true
+					break
+				}
+			}
+		}
+		if !merged {
+			result = append(result, lines[i]...)
+		}
+	}
+	return result
+}
+
 func normalizeReferenceHTML(out []byte) []byte {
 	// libmdf/cmdf intentionally owns the standalone HTML document shell and
 	// heading presentation scale. The Go mdf module remains the ANSI behavioral
 	// reference, but its HTML shell uses smaller legacy ATX sizes and does not
-	// emit C build provenance. Normalize only those known presentation literals
+	// emit C build provenance. C also embeds each variable font only once.
+	// Normalize only those known presentation literals
 	// so HTML parity still proves parser, escaping, wrapping, table, link, and
 	// theme behavior without resetting the C/cmdf document shell or typography
 	// back to the Go default.
@@ -152,7 +183,7 @@ func normalizeReferenceHTML(out []byte) []byte {
 	for _, repl := range repls {
 		out = bytes.ReplaceAll(out, []byte(repl.old), []byte(repl.new))
 	}
-	return out
+	return normalizeReferenceHTMLFonts(out)
 }
 
 func normalizeHTMLTitleForCompare(out []byte) []byte {

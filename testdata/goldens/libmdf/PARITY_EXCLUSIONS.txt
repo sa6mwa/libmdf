@@ -10,6 +10,20 @@
 # clickable and follows CommonMark's literal-* plus strong interpretation.
 # These exact libmdf goldens make that deliberate behavioral authority
 # explicit rather than silently weakening the parity gate.
+# Go mdf retains the table-level pipe escape inside code spans. Libmdf
+# consumes that escape as requested, following GFM tables Example 200;
+# other code backslashes and code outside tables remain literal.
+html testdata/table-corpus/escaped-code-pipes.md
+ansi testdata/table-corpus/escaped-code-pipes.md 20
+ansi testdata/table-corpus/escaped-code-pipes.md 40
+ansi testdata/table-corpus/escaped-code-pipes.md 80
+ansi testdata/table-corpus/escaped-code-pipes.md 100
+ansi testdata/table-corpus/escaped-code-pipes.md 120
+trace testdata/table-corpus/escaped-code-pipes.md 20
+trace testdata/table-corpus/escaped-code-pipes.md 40
+trace testdata/table-corpus/escaped-code-pipes.md 80
+trace testdata/table-corpus/escaped-code-pipes.md 100
+trace testdata/table-corpus/escaped-code-pipes.md 120
 html testdata/styled-link-labels.md
 ansi testdata/styled-link-labels.md 20
 ansi testdata/styled-link-labels.md 40

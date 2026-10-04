@@ -326,6 +326,117 @@ static size_t count_substrings(const char *haystack, const char *needle)
     return count;
 }
 
+typedef struct font_reader_probe {
+    const unsigned char *data;
+    size_t len;
+    size_t starts;
+    size_t bytes;
+} font_reader_probe;
+
+static size_t font_probe_read(void *userdata, size_t offset, unsigned char *dst, size_t cap, int *err)
+{
+    font_reader_probe *probe;
+
+    (void)err;
+    probe = (font_reader_probe *)userdata;
+    if (offset == 0) probe->starts++;
+    if (offset >= probe->len || cap == 0) return 0;
+    /* Exercise base64 carry handling with short reads. */
+    dst[0] = probe->data[offset];
+    probe->bytes++;
+    return 1;
+}
+
+static int test_html_font_weight_ranges(void)
+{
+    static const unsigned char regular[] = {1, 2, 3, 4};
+    static const unsigned char italic[] = {5, 6, 7, 8};
+    mdf_options opts;
+    mdf *inst;
+    mdf_status st;
+    font_reader_probe regular_reader;
+    font_reader_probe italic_reader;
+    char *out;
+    size_t face_count;
+    int deck;
+    int mode;
+    int render;
+    int fails;
+
+    fails = 0;
+    for (deck = 0; deck < 2; deck++) {
+        for (mode = 0; mode < 6; mode++) {
+            mdf_options_init(&opts);
+            memset(&regular_reader, 0, sizeof(regular_reader));
+            memset(&italic_reader, 0, sizeof(italic_reader));
+            regular_reader.data = regular;
+            regular_reader.len = sizeof(regular);
+            italic_reader.data = italic;
+            italic_reader.len = sizeof(italic);
+            if (mode == 1) mdf_html_jetbrains_mono_font(&opts.html_font);
+            if (mode == 2 || mode == 3 || mode == 5) {
+                opts.html_font.family = "Custom Mono";
+                opts.html_font.regular.format = MDF_HTML_FONT_FORMAT_WOFF2;
+                if (mode != 5) opts.html_font.italic.format = MDF_HTML_FONT_FORMAT_WOFF2;
+                if (mode == 3) {
+                    opts.html_font.regular.read = font_probe_read;
+                    opts.html_font.regular.userdata = &regular_reader;
+                    opts.html_font.italic.read = font_probe_read;
+                    opts.html_font.italic.userdata = &italic_reader;
+                } else {
+                    opts.html_font.regular.data = regular;
+                    opts.html_font.regular.data_len = sizeof(regular);
+                    if (mode != 5) {
+                        opts.html_font.italic.data = italic;
+                        opts.html_font.italic.data_len = sizeof(italic);
+                    }
+                }
+            }
+            if (mode == 4) {
+                opts.html_font_regular_uri = "fonts/regular.woff2";
+                opts.html_font_italic_uri = "fonts/italic.woff2";
+            }
+            inst = NULL;
+            st = mdf_create(deck ? MDF_FORMAT_HTML_DECK : MDF_FORMAT_HTML, &opts, &inst);
+            fails += expect(st == MDF_OK && inst != NULL, "font weight range renderer creates");
+            if (inst == NULL) continue;
+            face_count = mode == 5 ? 1 : 2;
+            for (render = 0; render < 2; render++) {
+                out = NULL;
+                st = inst->render_cstr(inst, "# Weight check\n\nRegular **bold** *italic* ***both***\n", &out);
+                fails += expect(st == MDF_OK && out != NULL, "font weight range document renders");
+                fails += expect(count_substrings(out, "@font-face{") == face_count,
+                                "HTML declares each font style once per document");
+                fails += expect(count_substrings(out, "font-weight:400 700;font-style:normal;") == 1 &&
+                                    count_substrings(out, "font-weight:400 700;font-style:italic;") == face_count - 1,
+                                "HTML font ranges cover regular and bold for each configured style");
+                fails += expect(count_substrings(out, "data:font/woff2;base64,") == (mode == 4 ? 0 : face_count),
+                                "HTML embeds each configured font payload once");
+                if (mode == 2 || mode == 3 || mode == 5) {
+                    fails += expect(count_substrings(out, "base64,AQIDBA==)") == 1 &&
+                                        count_substrings(out, "base64,BQYHCA==)") == face_count - 1,
+                                    "font deduplication preserves exact base64 bytes and padding");
+                }
+                if (mode == 3) {
+                    fails += expect(regular_reader.starts == (size_t)render + 1 &&
+                                        italic_reader.starts == (size_t)render + 1 &&
+                                        regular_reader.bytes == sizeof(regular) * ((size_t)render + 1) &&
+                                        italic_reader.bytes == sizeof(italic) * ((size_t)render + 1),
+                                    "HTML reads each streamed font only once per document");
+                }
+                if (mode == 4) {
+                    fails += expect(count_substrings(out, "src:url(\"fonts/regular.woff2\")") == 1 &&
+                                        count_substrings(out, "src:url(\"fonts/italic.woff2\")") == 1,
+                                    "external font references use one declaration per style");
+                }
+                inst->string_free(inst, out);
+            }
+            inst->destroy(inst);
+        }
+    }
+    return fails;
+}
+
 static int expect_malformed_front_matter_theme_is_safe(const char *name, const char *src)
 {
     mdf_options opts;
@@ -858,7 +969,7 @@ int main(void)
     int font_paths_alias;
     static const unsigned char deck_font_bytes[] = {1, 2, 3};
 
-    fails = 0;
+    fails = test_html_font_weight_ranges();
     inst = NULL;
     out = NULL;
     memset(long_markdown, 'a', sizeof(long_markdown));
@@ -4507,8 +4618,10 @@ int main(void)
                         "ansi create accepts supplied emission buffer with smaller max");
         if (inst != NULL) {
             st = inst->render_cstr(inst, "# Too Large\n", &out);
-            fails += expect(st != MDF_OK && out == NULL,
+            fails += expect(st == MDF_ERROR_NOMEM && out == NULL,
                             "supplied emission buffer honors configured max below capacity");
+            fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                            "composed emission maximum rejection reports out of memory");
             inst->destroy(inst);
             inst = NULL;
         }
@@ -4533,8 +4646,10 @@ int main(void)
                         "ansi create accepts tiny fixed emission buffer");
         if (inst != NULL) {
             st = inst->render_cstr(inst, "# Too Large\n", &out);
-            fails += expect(st != MDF_OK && out == NULL,
+            fails += expect(st == MDF_ERROR_NOMEM && out == NULL,
                             "tiny fixed emission buffer fails instead of growing");
+            fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                            "composed fixed emission capacity rejection reports out of memory");
             inst->destroy(inst);
             inst = NULL;
         }
@@ -4554,8 +4669,10 @@ int main(void)
                         "ansi create accepts tiny fixed emission buffer for direct emit path");
         if (inst != NULL) {
             st = inst->render_cstr(inst, "https://example.com/abcdefghijklmnopqrstuvwxyz0123456789\n", &out);
-            fails += expect(st != MDF_OK && out == NULL,
+            fails += expect(st == MDF_ERROR_NOMEM && out == NULL,
                             "direct emission path honors tiny fixed emission buffer");
+            fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                            "direct emission capacity rejection reports out of memory");
             inst->destroy(inst);
             inst = NULL;
         }
@@ -4618,8 +4735,10 @@ int main(void)
                     "ansi create accepts bounded growable emission buffer");
     if (inst != NULL) {
         st = inst->render_cstr(inst, "# Too Large\n", &out);
-        fails += expect(st != MDF_OK && out == NULL,
+        fails += expect(st == MDF_ERROR_NOMEM && out == NULL,
                         "bounded growable emission buffer fails at configured max");
+        fails += expect(strcmp(inst->error(inst), "out of memory") == 0,
+                        "bounded growable emission rejection reports out of memory");
         inst->destroy(inst);
         inst = NULL;
     }

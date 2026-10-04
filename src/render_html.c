@@ -532,14 +532,10 @@ static int html_write_default_font_faces(mdf_impl *impl, mdf_sink *sink)
         return 0;
     }
     if (html_write_font_face(sink, font->family, &font->regular,
-                             impl->html_font_regular_uri, "400", "normal") != 0) return -1;
-    if (html_write_font_face(sink, font->family, &font->regular,
-                             impl->html_font_regular_uri, "700", "normal") != 0) return -1;
+                             impl->html_font_regular_uri, "400 700", "normal") != 0) return -1;
     if (font->italic.format != MDF_HTML_FONT_FORMAT_NONE) {
         if (html_write_font_face(sink, font->family, &font->italic,
-                                 impl->html_font_italic_uri, "400", "italic") != 0) return -1;
-        if (html_write_font_face(sink, font->family, &font->italic,
-                                 impl->html_font_italic_uri, "700", "italic") != 0) return -1;
+                                 impl->html_font_italic_uri, "400 700", "italic") != 0) return -1;
     }
     return 0;
 }

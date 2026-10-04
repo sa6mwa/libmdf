@@ -4,6 +4,10 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 JUDGE="$ROOT/build/parityjudge-cgo"
 STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
+# Keep option comparisons under the same golden-backed behavioral exceptions
+# as scripts/parity.sh. The row trace case compares final output too.
+CASE_EXCLUDES=$(awk -v root="$ROOT/" '$1 == "ansi" { printf "%s%s@%s ", root, $2, $3 }' \
+  "$ROOT/testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt")
 
 "$ROOT/scripts/build_parityjudge.sh" "$JUDGE" "libmdf_$STAMP"
 
@@ -13,6 +17,7 @@ run_case() {
     ansi_table_wire)
       "$JUDGE" -mode ansi -compare-libmdf \
         -suite "$ROOT/testdata/table-corpus" \
+        -exclude-cases "$CASE_EXCLUDES" \
         -chunks 4096 \
         -widths "20 100" \
         -themes default \
@@ -24,6 +29,7 @@ run_case() {
     ansi_table_boring)
       "$JUDGE" -mode ansi -compare-libmdf \
         -suite "$ROOT/testdata/table-corpus" \
+        -exclude-cases "$CASE_EXCLUDES" \
         -chunks 4096 \
         -widths "20 100" \
         -themes default \
@@ -35,6 +41,7 @@ run_case() {
     ansi_table_row_trace)
       "$JUDGE" -mode ansi -compare-libmdf -trace-compare \
         -suite "$ROOT/testdata/table-corpus" \
+        -exclude-cases "$CASE_EXCLUDES" \
         -chunks 1 \
         -widths "20 100" \
         -themes default \

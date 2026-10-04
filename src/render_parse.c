@@ -1694,13 +1694,42 @@ static int table_copy_cell_markdown(mdf_allocator *allocator, const char *src, s
     size_t cap;
     size_t dst_len;
     size_t i;
+    size_t code_ticks;
+    size_t ticks;
+    int escaped;
     int ent_len;
     const char nbsp[] = "\302\240";
 
     buf = NULL;
     cap = 0;
     dst_len = 0;
+    code_ticks = 0;
+    escaped = 0;
     for (i = 0; i < len; ) {
+        if (src[i] == '`' && !escaped) {
+            ticks = table_count_backtick_run(src + i, len - i);
+            if (code_ticks == ticks) {
+                code_ticks = 0;
+            } else if (code_ticks == 0 &&
+                       table_has_closing_backtick_run(src + i + ticks, len - i - ticks, ticks)) {
+                code_ticks = ticks;
+            }
+            if (table_buf_append(allocator, &buf, &dst_len, &cap, src + i, ticks) != 0) {
+                mdf_free_mem(allocator, buf, cap);
+                return -1;
+            }
+            i += ticks;
+            continue;
+        }
+        /* A table pipe escape applies inside code too. Other code
+         * backslashes remain literal; ordinary text is unescaped by the
+         * inline renderer, so consuming its escape here would do it twice. */
+        if (code_ticks > 0 && src[i] == '\\' && i + 1 < len && src[i + 1] == '|') {
+            i++;
+        }
+        if (code_ticks == 0) {
+            escaped = !escaped && src[i] == '\\';
+        }
         ent_len = table_nbsp_entity_len(src + i, len - i);
         if (ent_len > 0) {
             if (table_buf_append(allocator, &buf, &dst_len, &cap, nbsp, 2) != 0) {

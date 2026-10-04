@@ -1,0 +1,33 @@
+[90m┌──────────────────┬───────────────────┐[0m
+[90m│ [0m[1m[36m[0m[1m[36m[35mHead|er[0m[1m[36m         [0m[90m │ [0m[1m[36mAction           [0m[90m │[0m
+[90m├──────────────────┼───────────────────┤[0m
+[90m│ [0m[35m/output[0m         [90m │ [0mShow or change   [90m │[0m
+[90m│ [0m[35m[compact|full][0m  [90m │ [0mtool previews.   [90m │[0m
+[90m│ [0m[35ma`|b[0m            [90m │ [0mTwo-backtick code[90m │[0m
+[90m│ [0m                [90m │ [0mdelimiter.       [90m │[0m
+[90m│ [0m[35mc``|d[0m           [90m │ [0mThree-backtick   [90m │[0m
+[90m│ [0m                [90m │ [0mcode delimiter.  [90m │[0m
+[90m│ [0m[35mone|two|three[0m   [90m │ [0mRepeated escaped [90m │[0m
+[90m│ [0m                [90m │ [0mpipes.           [90m │[0m
+[90m│ [0m[35mone\|two[0m        [90m │ [0mPreserve the     [90m │[0m
+[90m│ [0m                [90m │ [0mother backslash. [90m │[0m
+[90m│ [0m[35mthree\\|four[0m    [90m │ [0mPreserve two     [90m │[0m
+[90m│ [0m                [90m │ [0mother            [90m │[0m
+[90m│ [0m                [90m │ [0mbackslashes.     [90m │[0m
+[90m│ [0m[35mpath\to\file[0m    [90m │ [0mPreserve ordinary[90m │[0m
+[90m│ [0m                [90m │ [0mcode backslashes.[90m │[0m
+[90m│ [0m[35mx\*y[0m            [90m │ [0mPreserve other   [90m │[0m
+[90m│ [0m                [90m │ [0mcode escapes.    [90m │[0m
+[90m│ [0m[1m[1;37mstrong|text[0m     [90m │ [0mEscaped pipe in  [90m │[0m
+[90m│ [0m                [90m │ [0memphasis.        [90m │[0m
+[90m│ [0mplain|text      [90m │ [0mEscaped pipe in  [90m │[0m
+[90m│ [0m                [90m │ [0mordinary text.   [90m │[0m
+[90m│ [0m`literal|text   [90m │ [0mEscaped code     [90m │[0m
+[90m│ [0m                [90m │ [0mdelimiter.       [90m │[0m
+[90m│ [0m`unclosed\|text [90m │ [0mPreserve         [90m │[0m
+[90m│ [0m                [90m │ [0munmatched code   [90m │[0m
+[90m│ [0m                [90m │ [0msyntax.          [90m │[0m
+[90m└──────────────────┴───────────────────┘[0m
+
+Outside the table: [35mcompact\|full[0m retains
+its literal backslash.
