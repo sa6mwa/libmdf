@@ -7,6 +7,8 @@ runtime_env=$("$root/scripts/bootlin_x86_runtime.sh")
 eval "$runtime_env"
 work="$root/build/luarocks"
 mkdir -p "$work/source/lua"
+mkdir -p "$work/scratch"
+export TMPDIR="$work/scratch"
 cp "$root/lua/libmdf.lua" "$root/lua/libmdf_core.c" "$work/source/lua/"
 "$root/scripts/render_release_rockspec.sh" "$work/source/libmdf-$version-1.rockspec" "$version"
 cd "$work/source"

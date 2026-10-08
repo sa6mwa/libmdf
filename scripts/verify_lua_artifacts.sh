@@ -13,6 +13,8 @@ test -x "$lua_root/bin/lua" || { printf 'Prepare the native Lua interpreter with
 for file in "$archive" "$rockspec" "$srcrock" "$sdk_archive"; do test -f "$file"; done
 rm -rf -- "$work"
 mkdir -p "$work/archive" "$work/srcrock" "$work/sdk" "$work/tree"
+mkdir -p "$work/scratch"
+export TMPDIR="$work/scratch"
 tar -C "$work/archive" -xzf "$archive"
 source="$work/archive/libmdf-lua-$version"
 test "$(cat "$source/VERSION")" = "$version"
