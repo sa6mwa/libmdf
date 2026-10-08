@@ -58,3 +58,20 @@ printf '%s\n' 'int main(void) { return 0; }' > "$BASE/bootlin-leak.c"
 tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
 (cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
 expect_fail bootlin-path 'contains pinned Bootlin toolchain path'
+
+reset_dist
+mkdir -p "$PKG/bin"
+printf '%s\n' 'int main(void) { return 0; }' > "$BASE/runtime.c"
+"$TOOLCHAIN_CC" "$BASE/runtime.c" '-Wl,-rpath,$ORIGIN/../lib' -o "$PKG/bin/runtime"
+tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
+(cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
+LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh"
+if LIBMDF_READELF="$BASE/missing-readelf" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >"$BASE/missing-tool.out" 2>"$BASE/missing-tool.err"; then
+  printf '%s\n' 'privacy gate accepted a missing target inspection tool' >&2
+  exit 1
+fi
+grep -q 'no available target-correct readelf' "$BASE/missing-tool.err"
+"$TOOLCHAIN_CC" "$BASE/runtime.c" '-Wl,-rpath,$ORIGIN/../lib:/opt/undeclared-runtime' -o "$PKG/bin/runtime"
+tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
+(cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
+expect_fail mixed-origin-path 'non-\$ORIGIN RPATH/RUNPATH'

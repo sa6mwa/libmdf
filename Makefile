@@ -1,58 +1,48 @@
 PREFIX ?= /usr/local
+CMAKE_BUILD_PARALLEL_LEVEL ?= 2
+export CMAKE_BUILD_PARALLEL_LEVEL
+.NOTPARALLEL:
 
-.PHONY: help deps-debug deps-release deps-cross build build-debug build-release benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test install test test-debug test-all test-hardening valgrind fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-html-stream parity-lua lua-env lua-rock lua-test release-lua-artifacts verify-lua-artifacts package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-matrix release-pipeline finalize-slice prerelease prerelease-hardening lifecycle-version-contract release print-release-version format clean clean-dist cross-build test-install-tree example-smoke-local
+.PHONY: help tools-native tools-cross build build-debug build-release install test test-debug check-native check-clean test-all test-hardening valgrind fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-lua lua-test lua-rock lua-env benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test format format-check shell-check package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-lua-artifacts verify-lua-artifacts cross-build release-matrix prerelease prerelease-hardening release lifecycle-version-contract print-release-version finalize-slice test-install-tree example-smoke-local clean clean-dist
 
 help:
-	@printf '%s\n' 'libmdf lifecycle targets:'
-	@printf '%s\n' '  make deps-debug            Report debug dependency acquisition status'
-	@printf '%s\n' '  make deps-release          Report release dependency acquisition status'
-	@printf '%s\n' '  make deps-cross            Report cross dependency acquisition status'
-	@printf '%s\n' '  make build                  Build static cmdf for local install'
-	@printf '%s\n' '  make build-debug            Configure and build debug preset'
-	@printf '%s\n' '  make build-release          Configure and build host release preset'
-	@printf '%s\n' '  make benchmark              Benchmark C libmdf and Lua binding ANSI/HTML rendering paths'
-	@printf '%s\n' '  make benchmark-cmdf         Benchmark C cmdf and cmdf.lua UX paths'
-	@printf '%s\n' '  make bench-check            Fail if C/Lua ANSI or HTML medians regress >5%'
-	@printf '%s\n' '  make golden-update          Regenerate libmdf API output goldens'
-	@printf '%s\n' '  make golden-test            Verify libmdf API output goldens'
-	@printf '%s\n' '  make install                Install built cmdf to DESTDIR/PREFIX/bin/cmdf'
-	@printf '%s\n' '  make test                   Run debug tests'
-	@printf '%s\n' '  make test-all               Run bounded local gate: tests, Valgrind, fuzz smoke, quick parity'
-	@printf '%s\n' '  make test-hardening         Run tests, Valgrind, fuzz smoke, and full parity'
-	@printf '%s\n' '  make parity                 Run exhaustive ANSI, HTML, streaming, and Lua parity gates'
-	@printf '%s\n' '  make parity-quick           Run bounded ANSI, HTML, and streaming parity smoke'
-	@printf '%s\n' '  make lua-test               Run Lua facade and cmdf.lua parity smoke tests'
-	@printf '%s\n' '  make lua-env                Print Lua local development environment'
-	@printf '%s\n' '  make lua-rock               Build local Lua rock'
-	@printf '%s\n' '  make release-lua-artifacts  Build Lua source archive and source rock'
-	@printf '%s\n' '  make verify-lua-artifacts   Verify Lua release artifacts'
-	@printf '%s\n' '  make valgrind               Run native Bootlin Valgrind memory check'
-	@printf '%s\n' '  make fuzz-smoke             Run bounded native AFL++ fuzz smoke'
-	@printf '%s\n' '  make fuzz                   Run standard bounded native AFL++ job'
-	@printf '%s\n' '  make fuzz-long              Run longer bounded native AFL++ job'
-	@printf '%s\n' '  make package                Build release SDK archives'
-	@printf '%s\n' '  make package-source         Build source archive'
-	@printf '%s\n' '  make package-source-smoke   Build and test the source archive'
-	@printf '%s\n' '  make package-checksums      Generate release checksum manifest'
-	@printf '%s\n' '  make package-verify         Verify release SDK archives'
-	@printf '%s\n' '  make verify-release-privacy Verify release artifacts for local path leaks'
-	@printf '%s\n' '  make verify-release-archives Verify release archive checks'
-	@printf '%s\n' '  make release-matrix         Build all configured release targets'
-	@printf '%s\n' '  make finalize-slice         Run format and local test gate'
-	@printf '%s\n' '  make prerelease             Run the release proof graph without an initial clean'
-	@printf '%s\n' '  make prerelease-hardening   Alias for the complete prerelease proof graph'
-	@printf '%s\n' '  make lifecycle-version-contract Verify lightweight-tag release version handling'
-	@printf '%s\n' '  make release                Run the clean final release gate'
-	@printf '%s\n' '  make print-release-version  Print packaging version'
-	@printf '%s\n' '  make format                 Format project-owned C sources'
-	@printf '%s\n' '  make cross-build            Build configured cross targets'
-	@printf '%s\n' '  make test-install-tree      Build and verify install tree packages'
-	@printf '%s\n' '  make example-smoke-local    Run local example smoke'
-	@printf '%s\n' '  make clean                  Remove generated build, dist, and cache state'
-	@printf '%s\n' '  make clean-dist             Remove generated dist artifacts'
+	@printf '%s\n' \
+	  'libmdf native lifecycle (all operations are serialized):' \
+	  '  make tools-native            Explicitly prepare pinned GNU/AFL++ tooling' \
+	  '  make tools-cross             Explicitly prepare the declared target tools' \
+	  '  make build                   Build the static native musl CLI' \
+	  '  make build-debug             Build native tests, Go parity tools and Lua facade' \
+	  '  make build-release           Build native Release libraries and static CLI' \
+	  '  make install                 Install static cmdf to DESTDIR/PREFIX/bin' \
+	  '  make test                    Force the native CTest suite' \
+	  '  make check-native            Reuse unchanged native suite success' \
+	  '  make check-clean             Invalidate local suite success records' \
+	  '  make test-all                Native checks, memory, fuzz and quick parity' \
+	  '  make test-hardening          Native checks, memory, fuzz and full parity' \
+	  '  make valgrind                Check the existing native Debug producer' \
+	  '  make fuzz-smoke              Check AFL failure gates and native fuzz smoke' \
+	  '  make fuzz / fuzz-long        Run fresh bounded fuzz jobs' \
+	  '  make parity / parity-quick   Full / bounded Go parity CTest suites' \
+	  '  make lua-test / lua-rock     Verify the installed-SDK facade / build a local rock' \
+	  '  make benchmark               Measure C/Lua API ANSI and HTML medians' \
+	  '  make benchmark-cmdf          Measure C/Lua CLI ANSI, HTML and deck medians' \
+	  '  make bench-check             Check the declared benchmark baseline' \
+	  '  make golden-test             Verify library output snapshots' \
+	  '  make format / format-check   Apply / check C formatting' \
+	  '  make shell-check             Validate lifecycle shell syntax' \
+	  '  make package                 Build/reuse selected binary archive producers' \
+	  '  make package-verify          Verify the binary rehearsal through CTest' \
+	  '  make package-source-smoke    Reconstruct and test the committed source archive' \
+	  '  make prerelease              Incremental binary/Lua preparation; source smoke is explicit' \
+	  '  make release                 Require a clean exact tag, clean once and verify final bytes' \
+	  '  make clean                   Remove owned build/dist/extraction state; preserve shared caches'
 
-deps-debug deps-release deps-cross:
-	@printf '%s\n' 'libmdf has no c.pkt.systems dependency bundle to acquire.'
+tools-native:
+	@scripts/cpkt-toolchains.sh ensure x86_64-linux-gnu
+	@scripts/cpkt-aflpp.sh ensure
+
+tools-cross:
+	@scripts/prepare_targets.sh
 
 build:
 	@scripts/build_cmdf_static.sh
@@ -63,100 +53,95 @@ build-debug:
 build-release:
 	@scripts/build.sh x86_64-linux-gnu-release
 
-benchmark:
-	@scripts/benchmark_libmdf.py $(BENCH_ARGS)
-
-benchmark-cmdf:
-	@scripts/benchmark_cmdf.py $(BENCH_ARGS)
-
-bench-check:
-	@scripts/check_benchmark_libmdf.py $(BENCH_CHECK_ARGS)
-
-golden-update:
-	@scripts/update_libmdf_goldens.sh
-
-golden-test: build-debug
-	@tests/test_libmdf_goldens.sh build/debug/golden_render
-
-cmdf-golden-update:
-	@scripts/update_cmdf_goldens.sh
-
-cmdf-golden-test: build-debug
-	@tests/test_cmdf_goldens.sh build/debug/cmdf
-
 install:
 	@scripts/install_cmdf.sh
 
 test test-debug:
 	@scripts/test.sh debug
 
-test-all: test valgrind fuzz-smoke parity-quick
+check-native:
+	@scripts/build.sh debug --target check-native
 
-test-hardening: test valgrind fuzz-smoke parity
+check-clean:
+	@scripts/invalidate_checks.sh
+
+test-all: check-native valgrind fuzz-smoke parity-quick
+
+test-hardening: check-native valgrind fuzz-smoke parity
 
 valgrind:
-	@scripts/valgrind.sh
+	@scripts/build.sh debug --target check-memory
+
+fuzz-smoke:
+	@scripts/fuzz.sh smoke
 
 fuzz:
 	@scripts/fuzz.sh standard
 
-fuzz-smoke:
-	@bash tests/test_afl_gate.sh
-	@scripts/fuzz.sh smoke
-
 fuzz-long:
 	@scripts/fuzz.sh long
 
-parity: parity-ansi parity-html parity-stream parity-lua
-
-parity-full: parity
-
+parity parity-full: parity-ansi parity-html parity-stream parity-lua
 parity-quick: parity-ansi-quick parity-html-quick parity-stream-quick
 
 parity-ansi:
-	@scripts/parity.sh ansi
-
-parity-ansi-quick:
-	@LIBMDF_PARITY_PROFILE=quick scripts/parity.sh ansi
+	@scripts/build.sh debug --target check-parity-ansi
 
 parity-html:
-	@scripts/parity.sh html
+	@scripts/build.sh debug --target check-parity-html
+
+parity-stream parity-ansi-stream:
+	@scripts/build.sh debug --target check-parity-stream
+
+parity-ansi-quick:
+	@scripts/build.sh debug --target check-quick-parity-ansi
 
 parity-html-quick:
-	@LIBMDF_PARITY_PROFILE=quick scripts/parity.sh html
+	@scripts/build.sh debug --target check-quick-parity-html
 
-parity-stream: parity-ansi-stream
+parity-stream-quick parity-ansi-stream-quick:
+	@scripts/build.sh debug --target check-quick-parity-stream
 
-parity-stream-quick: parity-ansi-stream-quick
-
-parity-ansi-stream:
-	@scripts/stream_parity.sh ansi
-
-parity-ansi-stream-quick:
-	@LIBMDF_STREAM_PARITY_PROFILE=quick scripts/stream_parity.sh ansi
-
-parity-html-stream:
-	@printf '%s\n' 'html streaming parity is not a supported contract' >&2
-	@exit 2
-
-parity-lua: lua-test
-
-lua-env:
-	@printf 'LUA=%s/build/lua-runtime/bin/lua\n' "$$(pwd)"
-	@printf 'LUA_PATH=%s/build/luarocks/tree/share/lua/5.5/?.lua;;\n' "$$(pwd)"
-	@printf 'LUA_CPATH=%s/build/luarocks/tree/lib/lua/5.5/?.so;;\n' "$$(pwd)"
-
-lua-rock:
-	@scripts/build_lua_rock.sh
+parity-lua: check-native
 
 lua-test:
 	@scripts/lua_test.sh
 
-release-lua-artifacts:
-	@scripts/release_lua_artifacts.sh
+lua-rock:
+	@scripts/build_lua_rock.sh
 
-verify-lua-artifacts:
-	@scripts/verify_lua_artifacts.sh
+lua-env:
+	@printf 'LUA=%s/build/debug/lua-runtime/bin/lua\nLUA_PATH=%s/build/debug/lua-tree/share/lua/5.5/?.lua;;\nLUA_CPATH=%s/build/debug/lua-tree/lib/lua/5.5/?.so;;\n' "$(CURDIR)" "$(CURDIR)" "$(CURDIR)"
+
+benchmark:
+	@scripts/benchmark.sh api $(BENCH_ARGS)
+
+benchmark-cmdf:
+	@scripts/benchmark.sh cli $(BENCH_ARGS)
+
+bench-check:
+	@scripts/check_benchmark.sh $(BENCH_CHECK_ARGS)
+
+golden-update:
+	@scripts/update_libmdf_goldens.sh
+
+golden-test: build-debug
+	@ctest --test-dir build/debug -R '^libmdf_goldens$$' --output-on-failure --stop-on-failure --no-tests=error -j1
+
+cmdf-golden-update:
+	@scripts/update_cmdf_goldens.sh
+
+cmdf-golden-test: build-debug
+	@ctest --test-dir build/debug -R '^cmdf_goldens$$' --output-on-failure --stop-on-failure --no-tests=error -j1
+
+format:
+	@scripts/format.sh
+
+format-check:
+	@scripts/format.sh --check
+
+shell-check:
+	@scripts/check_shell.sh
 
 package:
 	@scripts/package.sh
@@ -168,53 +153,43 @@ package-source-smoke: package-source
 	@scripts/test_release_from_source.sh
 
 package-checksums:
-	@scripts/package_checksums.sh
+	@scripts/package_checksums.sh complete
 
 package-verify:
-	@scripts/package-verify.sh
+	@scripts/verify_packages.sh binary
+
+verify-release-archives:
+	@scripts/verify_packages.sh complete
 
 verify-release-privacy:
 	@scripts/verify_release_privacy.sh
 
-verify-release-archives: package-verify
-
-release-matrix:
-	@scripts/cross_build.sh
-	@scripts/package.sh
+release-lua-artifacts:
 	@scripts/release_lua_artifacts.sh
-	@scripts/package-verify.sh
 
-finalize-slice: format test
+verify-lua-artifacts:
+	@scripts/verify_packages.sh lua
 
-release-pipeline:
-	+@$(MAKE) format
-	+@$(MAKE) test-hardening
-	+@$(MAKE) release-matrix
+cross-build:
+	@scripts/cross_build.sh
 
-prerelease: release-pipeline
+release-matrix: package release-lua-artifacts package-verify verify-lua-artifacts
 
-prerelease-hardening: prerelease
+prerelease prerelease-hardening:
+	@scripts/release.sh prepare
+
+release:
+	@scripts/release.sh final
 
 lifecycle-version-contract:
 	@scripts/lifecycle_version_contract.sh
 
-release:
-	+@$(MAKE) lifecycle-version-contract
-	+@$(MAKE) clean
-	+@$(MAKE) release-pipeline
-	+@$(MAKE) package-source-smoke
-	+@$(MAKE) package-checksums
-	+@$(MAKE) package-verify
-
 print-release-version:
 	@scripts/release_version.sh
 
-format:
-	@scripts/format.sh
+finalize-slice: format-check test-all
 
-test-install-tree:
-	@scripts/package.sh
-	@scripts/package-verify.sh
+test-install-tree: package package-verify
 
 example-smoke-local: build-debug
 	@build/debug/example_basic >/dev/null
@@ -223,4 +198,4 @@ clean:
 	@scripts/clean.sh
 
 clean-dist:
-	@rm -rf dist
+	@scripts/clean_dist.sh

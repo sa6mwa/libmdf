@@ -15,7 +15,7 @@ expect_rejected() {
 
   rm -rf "$build"
   mkdir -p "$(dirname "$log")"
-  if cmake -S "$ROOT" -B "$build" -G Ninja "$@" >"$log" 2>&1; then
+  if cmake -S "$ROOT" -B "$build" -G Ninja -DLIBMDF_BUILD_HOST_TESTS=OFF "$@" >"$log" 2>&1; then
     printf '%s\n' "expected CMake configure to reject $name" >&2
     exit 1
   fi
@@ -30,7 +30,7 @@ expect_configured() {
 
   rm -rf "$build"
   mkdir -p "$(dirname "$log")"
-  cmake -S "$ROOT" -B "$build" -G Ninja "$@" >"$log" 2>&1
+  cmake -S "$ROOT" -B "$build" -G Ninja -DLIBMDF_BUILD_HOST_TESTS=OFF "$@" >"$log" 2>&1
 }
 
 write_consumer_sources() {
@@ -68,7 +68,8 @@ EOF
 assert_bootlin_runtime() {
   executable=$1
 
-  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  runtime_env=$("$ROOT/scripts/bootlin_x86_runtime.sh")
+  eval "$runtime_env"
   cmake \
     -DREADELF="$LIBMDF_BOOTLIN_READELF" \
     -DEXECUTABLE="$executable" \
@@ -81,7 +82,8 @@ build_pkg_config_consumer() {
   executable=$1
   shift
 
-  eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
+  runtime_env=$("$ROOT/scripts/bootlin_x86_runtime.sh")
+  eval "$runtime_env"
   "$LIBMDF_BOOTLIN_CC" "$@" \
     "-Wl,--dynamic-linker,$LIBMDF_BOOTLIN_INTERPRETER" \
     "-Wl,--disable-new-dtags,-rpath,$LIBMDF_BOOTLIN_RUNTIME_RPATH"
@@ -106,7 +108,7 @@ verify_install_tree() {
 
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
-  cmake -S "$ROOT" -B "$build" -G Ninja \
+  cmake -S "$ROOT" -B "$build" -G Ninja -DLIBMDF_BUILD_HOST_TESTS=OFF \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DLIBMDF_BUILD_BINARY=OFF \
@@ -163,7 +165,7 @@ verify_absolute_pkg_config() {
 
   rm -rf "$BASE/$name"
   mkdir -p "$BASE/$name"
-  cmake -S "$ROOT" -B "$build" -G Ninja \
+  cmake -S "$ROOT" -B "$build" -G Ninja -DLIBMDF_BUILD_HOST_TESTS=OFF \
     -DCMAKE_TOOLCHAIN_FILE="$ROOT/cmake/toolchains/x86_64-linux-gnu.cmake" \
     -DCMAKE_INSTALL_PREFIX="$install" \
     -DCMAKE_INSTALL_LIBDIR="$abs_lib" \

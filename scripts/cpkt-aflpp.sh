@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Provision native AFL++ GCC-plugin instrumentation for the pkt.systems lifecycle.
 set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/cpkt-archive-cache.sh"
+source "$(dirname -- "${BASH_SOURCE[0]}")/cpkt-afl-runtime.sh"
 
 version=5.02c
 revision=2
@@ -32,8 +34,8 @@ with_cache_lock() {
 }
 cache() {
   if [[ -n "${CPKT_TOOLCHAIN_CACHE:-}" ]]; then printf '%s\n' "$CPKT_TOOLCHAIN_CACHE"
-  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then printf '%s/c.pkt.systems/toolchains\n' "$XDG_CACHE_HOME"
-  elif [[ -n "${HOME:-}" ]]; then printf '%s/.cache/c.pkt.systems/toolchains\n' "$HOME"
+  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then printf '%s/cpkt/toolchains\n' "$XDG_CACHE_HOME"
+  elif [[ -n "${HOME:-}" ]]; then printf '%s/.cache/cpkt/toolchains\n' "$HOME"
   else die 'HOME, XDG_CACHE_HOME, or CPKT_TOOLCHAIN_CACHE is required'; fi
 }
 collection_id() {
@@ -42,52 +44,67 @@ collection_id() {
   [[ "$id" =~ ^[A-Za-z0-9._-]+$ ]] || die "Bootlin collection identity contains unsupported characters: $id"
   printf '%s\n' "$id"
 }
-root() { local id=$1; printf '%s/roots/aflplusplus-%s-x86_64-linux-gnu-%s\n' "$(cache)" "$version" "$id"; }
+root() { local id=$1; printf '%s/roots/aflplusplus-%s-x86_64-linux-gnu-%s-r%s\n' "$(cache)" "$version" "$id" "$revision"; }
 value() { sed -n "s/^$1=//p" <<<"$2" | tail -1; }
 ready() {
-  local r=$1 id=$2
-  [[ -x "$r/bin/afl-fuzz" && -x "$r/bin/afl-showmap" &&
-     -x "$r/bin/cpkt-afl-gcc" && -x "$r/bin/cpkt-afl-g++" &&
-     -f "$r/lib/afl/afl-gcc-pass.so" && -f "$r/lib/afl/afl-compiler-rt.o" &&
-     -f "$r/.cpkt-aflpp-revision-$revision-$id" ]]
+  local r=$1 id=$2 path
+  [[ -d "$r" ]] || return 1
+  r=$(CDPATH= cd -- "$r" && pwd -P) || return 1
+  for path in bin/{afl-fuzz,afl-showmap,cpkt-afl-gcc,cpkt-afl-g++,afl-cc,afl-gcc-fast,afl-g++-fast,bootlin-gcc,bootlin-g++} \
+      libexec/bootlin-runtime/{cc1,cc1plus}; do
+    [[ -x "$r/$path" ]] && cpkt_afl_owned_file "$r" "$r/$path" || return 1
+  done
+  for path in lib/afl/{afl-gcc-pass.so,afl-compiler-rt.o,dynamic_list.txt} ".cpkt-aflpp-revision-$revision-$id"; do
+    cpkt_afl_owned_file "$r" "$r/$path" || return 1
+  done
 }
 
 bootlin_description() {
   [[ -x "$bootlin" ]] || die "Bootlin resolver missing: $bootlin"
-  "$bootlin" ensure x86_64-linux-gnu >/dev/null
-  "$bootlin" discover x86_64-linux-gnu
+  local description
+  description=$("$bootlin" discover x86_64-linux-gnu) || die 'unable to inspect pinned Bootlin collection'
+  [[ "$(value status "$description")" == ready ]] || die "Bootlin collection is not ready; run: $bootlin ensure x86_64-linux-gnu"
+  printf '%s\n' "$description"
+}
+
+require_bootlin_runtime() {
+  local description=$1
+  cpkt_afl_resolve_runtime "$(value cc "$description")" "$(value cxx "$description")" \
+    "$(value sysroot "$description")" "$(value root "$description")"
+}
+
+require_native_host() {
+  [[ "$(uname -s)" = Linux ]] || die 'AFL++ GCC-plugin fuzzing is native Linux-only'
+  case "$(uname -m)" in x86_64|amd64) ;; *) die "native x86_64 Linux is required; no cross, emulator, or QEMU runner is supported";; esac
 }
 
 ensure() {
-  [[ "$(uname -s)" = Linux ]] || die 'AFL++ GCC-plugin fuzzing is native Linux-only'
-  case "$(uname -m)" in x86_64|amd64) ;; *) die "native x86_64 Linux is required; no cross, emulator, or QEMU runner is supported";; esac
+  require_native_host
+  [[ -x "$bootlin" ]] || die "Bootlin resolver missing: $bootlin"
+  "$bootlin" ensure x86_64-linux-gnu >/dev/null
   local r c d br id
   d=$(bootlin_description); br=$(value root "$d"); id=$(collection_id "$br")
   r=$(root "$id"); c=$(cache)
-  ready "$r" "$id" && return
-  # `discover` and `env` are machine-readable command surfaces.  Keep every
-  # provisioning diagnostic off stdout so callers can safely consume exports.
-  with_cache_lock "$c/locks/aflplusplus-${version}-x86_64-linux-gnu.lock" ensure_locked >&2
+  if ready "$r" "$id"; then require_bootlin_runtime "$d"; return; fi
+  with_cache_lock "$c/locks/aflplusplus-${version}-x86_64-linux-gnu.lock" ensure_locked
 }
 
 ensure_locked() {
-  [[ "$(uname -s)" = Linux ]] || die 'AFL++ GCC-plugin fuzzing is native Linux-only'
-  case "$(uname -m)" in x86_64|amd64) ;; *) die "native x86_64 Linux is required; no cross, emulator, or QEMU runner is supported";; esac
-  local r c archive desc cc cxx br id tmp src dl include_flag library_flag rpath_flag
-  local sysroot loader libgcc runtime_flags tool
+  require_native_host
+  local r c archive desc cc cxx br id tmp src dl include_flag library_flag
+  local sysroot make_cc make_cxx link_flags compiler_bin
   c=$(cache); archive="$c/archives/$archive_name"
   desc=$(bootlin_description)
   cc=$(value cc "$desc"); cxx=$(value cxx "$desc"); br=$(value root "$desc")
-  id=$(collection_id "$br"); r=$(root "$id")
-  ready "$r" "$id" && return
+  compiler_bin=$(dirname -- "$cc")
   sysroot=$(value sysroot "$desc")
-  loader="$sysroot/lib/ld-linux-x86-64.so.2"
-  libgcc=$("$cc" -print-file-name=libgcc_s.so.1)
-  [[ -f "$loader" && -f "$libgcc" ]] || die 'Bootlin runtime is incomplete'
-  runtime_flags=("-Wl,--dynamic-linker,$loader" "-Wl,--disable-new-dtags,-rpath,$sysroot/lib:$sysroot/usr/lib:$(dirname -- "$libgcc")")
+  id=$(collection_id "$br"); r=$(root "$id")
+  require_bootlin_runtime "$desc"
+  ready "$r" "$id" && return
   [[ -x "$cc" && -x "$cxx" && -f "$br/include/gmp.h" ]] || die 'Bootlin GCC plugin headers are incomplete'
   mkdir -p "$c/archives"
-  if ! [[ -f "$archive" ]] || ! printf '%s  %s\n' "$archive_sha256" "$archive" | sha256sum -c - >/dev/null 2>&1; then
+  cpkt_restore_cached_archive "$archive" "$archive_sha256"
+  if [[ ! -f "$archive" ]]; then
     rm -f "$archive"; dl="$archive.tmp.$$"
     install_cleanup_trap -f "$dl"
     if command -v curl >/dev/null; then
@@ -99,36 +116,50 @@ ensure_locked() {
     mv "$dl" "$archive"
     trap - EXIT HUP INT TERM
   fi
-  tmp="$c/.aflplusplus.$$"; install_cleanup_trap -rf "$tmp"
+  tmp=$(mktemp -d "$c/.aflplusplus.XXXXXXXX")
+  install_cleanup_trap -rf "$tmp"
   mkdir -p "$tmp/extract" "$tmp/root/bin" "$tmp/root/lib/afl"
   tar -xzf "$archive" -C "$tmp/extract"; src="$tmp/extract/AFLplusplus-$version"
   [[ -d "$src" ]] || die "unexpected archive layout: $archive_name"
+  cpkt_afl_prepare_runtime "$tmp/root" "$cc" "$cxx" "$sysroot" "$br"
+  printf -v link_flags ' %q' "${cpkt_afl_runtime_link_options[@]}"
+  printf -v make_cc '%q' "$cpkt_afl_runtime_cc"
+  printf -v make_cxx '%q' "$cpkt_afl_runtime_cxx"
+  cc=$cpkt_afl_runtime_cc; cxx=$cpkt_afl_runtime_cxx
   (
     cd "$src"; local helper="$r/lib/afl"
-    printf -v rpath_flag '%q ' "${runtime_flags[@]}"
-    make -j1 NO_PYTHON=1 CC="$cc" CXX="$cxx" LDFLAGS="$rpath_flag" PREFIX="$tmp/root" HELPER_PATH="$helper" BIN_PATH="$tmp/root/bin" afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-cmin
-    "$cc" -O3 -funroll-loops -fPIC -Wall -g -Iinclude -Iinstrumentation "-DAFL_PATH=\"$helper\"" "-DBIN_PATH=\"$r/bin\"" '-DLLVM_BINDIR=""' "-DVERSION=\"++$version\"" '-DLLVM_LIBDIR=""' '-DLLVM_VERSION=""' '-DAFL_CLANG_FLTO=""' '-DAFL_REAL_LD=""' '-DAFL_CLANG_LDPATH=""' '-DAFL_CLANG_FUSELD=""' "-DCLANG_BIN=\"$cc\"" "-DCLANGPP_BIN=\"$cxx\"" -DUSE_BINDIR=1 -Wno-unused-function -Wno-deprecated -c src/afl-common.c -o instrumentation/afl-common.o
-    "$cc" "${runtime_flags[@]}" -O3 -funroll-loops -fPIC -Wall -g -Iinclude -Iinstrumentation "-DAFL_PATH=\"$helper\"" "-DBIN_PATH=\"$r/bin\"" '-DLLVM_BINDIR=""' "-DVERSION=\"++$version\"" '-DLLVM_LIBDIR=""' '-DLLVM_VERSION=""' '-DAFL_CLANG_FLTO=""' '-DAFL_REAL_LD=""' '-DAFL_CLANG_LDPATH=""' '-DAFL_CLANG_FUSELD=""' "-DCLANG_BIN=\"$cc\"" "-DCLANGPP_BIN=\"$cxx\"" -DUSE_BINDIR=1 -Wno-unused-function -Wno-deprecated "-DAFL_INCLUDE_PATH=\"$r/include/afl\"" src/afl-cc.c instrumentation/afl-common.o -o afl-cc -DLLVM_MINOR=0 -DLLVM_MAJOR=0 -DCFLAGS_OPT="" -lm
+    make -j1 NO_PYTHON=1 CC="$make_cc" CXX="$make_cxx" LDFLAGS="$link_flags" GCCBINDIR="$compiler_bin" PREFIX="$tmp/root" HELPER_PATH="$helper" BIN_PATH="$r/bin" afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-cmin
+    "$cc" -O3 -funroll-loops -fPIC -Wall -g -Iinclude -Iinstrumentation "-DAFL_PATH=\"$helper\"" "-DBIN_PATH=\"$r/bin\"" '-DLLVM_BINDIR=""' "-DVERSION=\"++$version\"" '-DLLVM_LIBDIR=""' '-DLLVM_VERSION=""' '-DAFL_CLANG_FLTO=""' '-DAFL_REAL_LD=""' '-DAFL_CLANG_LDPATH=""' '-DAFL_CLANG_FUSELD=""' "-DCLANG_BIN=\"$r/bin/bootlin-gcc\"" "-DCLANGPP_BIN=\"$r/bin/bootlin-g++\"" -DUSE_BINDIR=1 -Wno-unused-function -Wno-deprecated -c src/afl-common.c -o instrumentation/afl-common.o
+    "$cc" -O3 -funroll-loops -fPIC -Wall -g -Iinclude -Iinstrumentation "-DAFL_PATH=\"$helper\"" "-DBIN_PATH=\"$r/bin\"" '-DLLVM_BINDIR=""' "-DVERSION=\"++$version\"" '-DLLVM_LIBDIR=""' '-DLLVM_VERSION=""' '-DAFL_CLANG_FLTO=""' '-DAFL_REAL_LD=""' '-DAFL_CLANG_LDPATH=""' '-DAFL_CLANG_FUSELD=""' "-DCLANG_BIN=\"$r/bin/bootlin-gcc\"" "-DCLANGPP_BIN=\"$r/bin/bootlin-g++\"" -DUSE_BINDIR=1 -Wno-unused-function -Wno-deprecated "-DAFL_INCLUDE_PATH=\"$r/include/afl\"" src/afl-cc.c instrumentation/afl-common.o -o afl-cc "${cpkt_afl_runtime_link_options[@]}" -DLLVM_MINOR=0 -DLLVM_MAJOR=0 -DCFLAGS_OPT="" -lm
     ln -sf afl-cc afl-gcc-fast; ln -sf afl-cc afl-g++-fast
-    printf -v include_flag '%q' "-I$br/include"; printf -v library_flag '%q' "-L$br/lib"; printf -v rpath_flag '%q' "-Wl,-rpath,$br/lib"
-    make -j1 -f GNUmakefile.gcc_plugin CC="$cc" CXX="$cxx" PREFIX="$tmp/root" HELPER_PATH="$helper" BIN_PATH="$tmp/root/bin" CXXFLAGS="-O3 -g -funroll-loops $include_flag" LDFLAGS="$library_flag $rpath_flag"
+    printf -v include_flag '%q' "-I$br/include"; printf -v library_flag '%q' "-L$br/lib"
+    make -j1 -f GNUmakefile.gcc_plugin CC="$make_cc" CXX="$make_cxx" GCCBINDIR="$compiler_bin" PREFIX="$tmp/root" HELPER_PATH="$helper" BIN_PATH="$r/bin" CXXFLAGS="-O3 -g -funroll-loops $include_flag$link_flags" LDFLAGS="$library_flag$link_flags"
     install -m755 afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-cmin afl-cc "$tmp/root/bin/"
     ln -sf afl-cc "$tmp/root/bin/afl-gcc-fast"; ln -sf afl-cc "$tmp/root/bin/afl-g++-fast"
     install -m755 afl-gcc-pass.so afl-gcc-cmplog-pass.so afl-gcc-cmptrs-pass.so "$tmp/root/lib/afl/"; install -m644 afl-compiler-rt.o dynamic_list.txt "$tmp/root/lib/afl/"
   )
-  for tool in afl-fuzz afl-showmap afl-tmin afl-gotcpu afl-analyze afl-cc; do
-    cmake -DREADELF="$(value readelf "$desc")" -DEXECUTABLE="$tmp/root/bin/$tool" \
-      -DINTERPRETER="$loader" -DRUNTIME_DIR="$sysroot/lib" \
-      -P "$skill_dir/tests/assert_bootlin_runtime.cmake"
-  done
-  printf '#!/usr/bin/env bash\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexec %q "$@"\n' "$r/lib/afl" "$cc" "$r/bin/afl-gcc-fast" > "$tmp/root/bin/cpkt-afl-gcc"
-  printf '#!/usr/bin/env bash\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexport AFL_CXX=%q\nexec %q "$@"\n' "$r/lib/afl" "$cc" "$cxx" "$r/bin/afl-g++-fast" > "$tmp/root/bin/cpkt-afl-g++"
+  printf '#!/usr/bin/env bash\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexec %q "$@"\n' "$r/lib/afl" "$r/bin/bootlin-gcc" "$r/bin/afl-gcc-fast" > "$tmp/root/bin/cpkt-afl-gcc"
+  printf '#!/usr/bin/env bash\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexport AFL_CXX=%q\nexec %q "$@"\n' "$r/lib/afl" "$r/bin/bootlin-gcc" "$r/bin/bootlin-g++" "$r/bin/afl-g++-fast" > "$tmp/root/bin/cpkt-afl-g++"
   chmod +x "$tmp/root/bin/cpkt-afl-gcc" "$tmp/root/bin/cpkt-afl-g++"; touch "$tmp/root/.cpkt-aflpp-revision-$revision-$id"
   ready "$tmp/root" "$id" || die 'incomplete AFL++ build'; rm -rf "$r"; mv "$tmp/root" "$r"; rm -rf "$tmp"; trap - EXIT HUP INT TERM
 }
 
-report() { local d br id r; ensure; d=$(bootlin_description); br=$(value root "$d"); id=$(collection_id "$br"); r=$(root "$id"); printf 'version=%s\ncache=%s\nsource=aflplusplus\nroot=%s\nafl_fuzz=%s\nafl_showmap=%s\ncc=%s\ncxx=%s\nhelper=%s\n' "$version" "$(cache)" "$r" "$r/bin/afl-fuzz" "$r/bin/afl-showmap" "$r/bin/cpkt-afl-gcc" "$r/bin/cpkt-afl-g++" "$r/lib/afl"; }
-env_out() { local d cc cxx br id r; ensure; d=$(bootlin_description); cc=$(value cc "$d"); cxx=$(value cxx "$d"); br=$(value root "$d"); id=$(collection_id "$br"); r=$(root "$id"); printf 'export CPKT_AFLPP_ROOT=%q\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexport AFL_CXX=%q\nexport CC=%q\nexport CXX=%q\nexport PATH=%q\n' "$r" "$r/lib/afl" "$cc" "$cxx" "$r/bin/cpkt-afl-gcc" "$r/bin/cpkt-afl-g++" "$r/bin:$PATH"; }
+report() {
+  local d br id r
+  require_native_host
+  d=$(bootlin_description); br=$(value root "$d"); id=$(collection_id "$br"); r=$(root "$id")
+  ready "$r" "$id" || die "AFL++ is not ready for $id; run: $0 ensure"
+  require_bootlin_runtime "$d"
+  printf 'status=ready\nversion=%s\ncache=%s\nsource=aflplusplus\nroot=%s\nafl_fuzz=%s\nafl_showmap=%s\ncc=%s\ncxx=%s\nhelper=%s\n' "$version" "$(cache)" "$r" "$r/bin/afl-fuzz" "$r/bin/afl-showmap" "$r/bin/cpkt-afl-gcc" "$r/bin/cpkt-afl-g++" "$r/lib/afl"
+}
+env_out() {
+  local d br id r
+  require_native_host
+  d=$(bootlin_description); br=$(value root "$d"); id=$(collection_id "$br"); r=$(root "$id")
+  ready "$r" "$id" || die "AFL++ is not ready for $id; run: $0 ensure"
+  require_bootlin_runtime "$d"
+  printf 'export CPKT_AFLPP_ROOT=%q\nexport AFL_PATH=%q\nexport AFL_CC=%q\nexport AFL_CXX=%q\nexport CC=%q\nexport CXX=%q\nexport PATH=%q\n' "$r" "$r/lib/afl" "$r/bin/bootlin-gcc" "$r/bin/bootlin-g++" "$r/bin/cpkt-afl-gcc" "$r/bin/cpkt-afl-g++" "$r/bin:$PATH"
+}
 case "${1:-}" in
   ensure) [[ $# -eq 1 ]] || die 'usage: cpkt-aflpp.sh ensure'; ensure;;
   discover) [[ $# -eq 1 ]] || die 'usage: cpkt-aflpp.sh discover'; report;;

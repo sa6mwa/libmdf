@@ -1,236 +1,51 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-RESOLVER="$ROOT/scripts/cpkt-toolchains.sh"
-TARGET=${LIBMDF_TARGET_ID:-}
-PRESET=
-CACHE=
-
-usage() {
-  printf '%s\n' "usage: $0 [--root DIR] [--target TARGET] [--preset PRESET] [--cache CMakeCache.txt] <tool>" >&2
-}
-
-while [ "$#" -gt 0 ]; do
+#!/usr/bin/env bash
+# Target-specific tools: explicit selection, configured cache, matching sibling,
+# then the pinned resolver. Never inspect unrelated build trees or host binutils.
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+build_root=$root
+target=${LIBMDF_TARGET_ID:-}
+preset= cache=
+while [[ $# -gt 1 ]]; do
   case "$1" in
-    --root)
-      ROOT=$2
-      shift 2
-      ;;
-    --target)
-      TARGET=$2
-      shift 2
-      ;;
-    --preset)
-      PRESET=$2
-      shift 2
-      ;;
-    --cache)
-      CACHE=$2
-      shift 2
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    --*)
-      usage
-      exit 2
-      ;;
-    *)
-      break
-      ;;
+    --root) build_root=$2;;
+    --target) target=$2;;
+    --preset) preset=$2;;
+    --cache) cache=$2;;
+    *) printf 'Unknown tool selection option: %s\n' "$1" >&2; exit 2;;
   esac
+  shift 2
 done
-
-if [ "$#" -ne 1 ]; then
-  usage
-  exit 2
+[[ $# == 1 ]] || { printf 'usage: discover_target_tools.sh [--root DIR] [--target TARGET] [--preset PRESET] [--cache FILE] <tool>\n' >&2; exit 2; }
+tool=$1
+case "$tool" in cc|cxx|ld|ar|ranlib|strip|nm|objcopy|objdump|addr2line|readelf|otool|install_name_tool) ;; *) printf 'Unknown target tool: %s\n' "$tool" >&2; exit 2;; esac
+[[ -n $target || -z $preset ]] || target=${preset%-release}
+[[ -n $cache || -z $preset ]] || cache="$build_root/build/$preset/CMakeCache.txt"
+cache_value() { [[ ! -f $cache ]] || sed -n "s/^$1:[^=]*=//p" "$cache" | head -1; }
+emit() { [[ -n $1 && -x $1 && ! -d $1 ]] && { printf '%s\n' "$1"; return 0; }; return 1; }
+upper=${tool^^}
+for variable in "LIBMDF_$upper" "CPKT_$upper" "CMAKE_$upper"; do
+  if [[ -n ${!variable:-} ]]; then
+    emit "${!variable}" && exit 0
+    printf 'Selected %s is unavailable: %s\n' "$variable" "${!variable}" >&2
+    exit 1
+  fi
+done
+cached_target=$(cache_value LIBMDF_TARGET_ID)
+[[ -z $target || -z $cached_target || $target == "$cached_target" ]] || {
+  printf 'Configured target %s does not match selected target %s\n' "$cached_target" "$target" >&2; exit 1;
+}
+[[ -n $target ]] || target=$cached_target
+emit "$(cache_value "CMAKE_$upper")" && exit 0
+compiler=$(cache_value CMAKE_C_COMPILER)
+if [[ -n $compiler ]]; then
+  prefix=$(basename "$compiler")
+  prefix=${prefix%-clang}; prefix=${prefix%-gcc}; prefix=${prefix%-cc}
+  emit "$(dirname "$compiler")/$prefix-$tool" && exit 0
 fi
-
-TOOL=$1
-if [ -z "$TARGET" ] && [ -n "$PRESET" ]; then
-  TARGET=${PRESET%-release}
-fi
-
-cache_value() {
-  cache=$1
-  key=$2
-  sed -n "s/^$key:[^=]*=//p" "$cache" 2>/dev/null | sed -n '1p'
-}
-
-emit_if_tool() {
-  candidate=$1
-  if [ -n "$candidate" ] && [ -x "$candidate" ] && [ ! -d "$candidate" ]; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
-  return 1
-}
-
-env_value() {
-  name=$1
-  eval "printf '%s\n' \"\${$name:-}\""
-}
-
-tool_env_names() {
-  case "$TOOL" in
-    otool)
-      printf '%s\n' LIBMDF_OTOOL CPKT_OTOOL CMAKE_OTOOL
-      ;;
-    install_name_tool)
-      printf '%s\n' LIBMDF_INSTALL_NAME_TOOL CPKT_INSTALL_NAME_TOOL CMAKE_INSTALL_NAME_TOOL
-      ;;
-    strip)
-      printf '%s\n' LIBMDF_STRIP CPKT_STRIP CMAKE_STRIP
-      ;;
-    *)
-      upper=$(printf '%s\n' "$TOOL" | tr 'abcdefghijklmnopqrstuvwxyz' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-      printf '%s\n' "LIBMDF_$upper" "CPKT_$upper" "CMAKE_$upper"
-      ;;
-  esac
-}
-
-cache_tool_keys() {
-  case "$TOOL" in
-    otool)
-      printf '%s\n' CMAKE_OTOOL CPKT_OTOOL
-      ;;
-    install_name_tool)
-      printf '%s\n' CMAKE_INSTALL_NAME_TOOL CPKT_INSTALL_NAME_TOOL
-      ;;
-    strip)
-      printf '%s\n' CMAKE_STRIP CPKT_STRIP
-      ;;
-  esac
-}
-
-cache_files() {
-  if [ -n "$CACHE" ]; then
-    [ -f "$CACHE" ] && printf '%s\n' "$CACHE"
-    return 0
-  fi
-  if [ -n "$PRESET" ] && [ -f "$ROOT/build/$PRESET/CMakeCache.txt" ]; then
-    printf '%s\n' "$ROOT/build/$PRESET/CMakeCache.txt"
-    return 0
-  fi
-  if [ -n "$PRESET" ]; then
-    return 0
-  fi
-  for candidate in $(find "$ROOT/build" -name CMakeCache.txt -type f 2>/dev/null | sort); do
-    if [ -z "$TARGET" ] || [ "$(cache_value "$candidate" LIBMDF_TARGET_ID)" = "$TARGET" ]; then
-      printf '%s\n' "$candidate"
-    fi
-  done
-}
-
-compiler_prefix() {
-  compiler=$1
-  base=$(basename "$compiler")
-  case "$base" in
-    *-clang|*-clang++|*-gcc|*-cc)
-      printf '%s\n' "${base%-clang}" | sed 's/-clang++$//;s/-gcc$//;s/-cc$//'
-      ;;
-  esac
-}
-
-host_prefixes() {
-  for cache in $(cache_files); do
-    compiler=$(cache_value "$cache" CMAKE_C_COMPILER)
-    if [ -n "$compiler" ]; then
-      compiler_prefix "$compiler"
-    fi
-  done
-  case "$TARGET" in
-    *-apple-darwin)
-      if [ -n "${CPKT_OSXCROSS_HOST:-}" ]; then
-        printf '%s\n' "$CPKT_OSXCROSS_HOST"
-      else
-        "$RESOLVER" discover "$TARGET" 2>/dev/null |
-          sed -n 's/^prefix=//p'
-      fi
-      ;;
-  esac
-}
-
-is_cross_darwin() {
-  case "$TARGET" in
-    *-apple-darwin)
-      if [ "$(uname -s 2>/dev/null || printf unknown)" != "Darwin" ]; then
-        return 0
-      fi
-      ;;
-  esac
-  return 1
-}
-
-darwin_path_allowed() {
-  candidate=$1
-  base=$(basename "$candidate")
-  if ! is_cross_darwin; then
-    return 0
-  fi
-  case "$base" in
-    *-"$TOOL")
-      return 0
-      ;;
-  esac
-  case "$candidate" in
-    "${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}"/*)
-      return 0
-      ;;
-  esac
-  return 1
-}
-
-for name in $(tool_env_names); do
-  value=$(env_value "$name")
-  if emit_if_tool "$value"; then
-    exit 0
-  fi
-done
-
-for cache in $(cache_files); do
-  for key in $(cache_tool_keys); do
-    value=$(cache_value "$cache" "$key")
-    if emit_if_tool "$value"; then
-      exit 0
-    fi
-  done
-done
-
-for cache in $(cache_files); do
-  compiler=$(cache_value "$cache" CMAKE_C_COMPILER)
-  if [ -n "$compiler" ]; then
-    dir=$(dirname "$compiler")
-    prefix=$(compiler_prefix "$compiler")
-    emit_if_tool "$dir/$prefix-$TOOL" && exit 0
-    emit_if_tool "$dir/$TOOL" && exit 0
-  fi
-done
-
-case "$TARGET" in
-  *-apple-darwin)
-    OSXCROSS_ROOT=${OSXCROSS_ROOT:-$HOME/.local/cross/osxcross}
-    for prefix in $(host_prefixes); do
-      emit_if_tool "$OSXCROSS_ROOT/bin/$prefix-$TOOL" && exit 0
-    done
-    ;;
-esac
-
-for prefix in $(host_prefixes); do
-  if command -v "$prefix-$TOOL" >/dev/null 2>&1; then
-    command -v "$prefix-$TOOL"
-    exit 0
-  fi
-done
-
-if command -v "$TOOL" >/dev/null 2>&1; then
-  candidate=$(command -v "$TOOL")
-  if darwin_path_allowed "$candidate"; then
-    printf '%s\n' "$candidate"
-    exit 0
-  fi
-fi
-
+[[ -n $target ]] || { printf 'Select a target or configured preset before resolving %s\n' "$tool" >&2; exit 1; }
+description=$("$root/scripts/cpkt-toolchains.sh" discover "$target")
+grep -Fxq status=ready <<< "$description" || { printf 'Missing pinned target tools; prepare: %s/scripts/cpkt-toolchains.sh ensure %s\n' "$root" "$target" >&2; exit 1; }
+emit "$(sed -n "s/^$tool=//p" <<< "$description")" && exit 0
+printf 'The selected target does not provide %s: %s\n' "$tool" "$target" >&2
 exit 1

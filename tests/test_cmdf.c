@@ -82,7 +82,7 @@ static int make_input_file(char *path, size_t path_cap)
     const char *src;
 
     src = "abc\n";
-    strcpy(path, "/tmp/libmdf-cmdf-delay-XXXXXX");
+    strcpy(path, LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-delay-XXXXXX");
     fd = mkstemp(path);
     if (fd < 0) {
         return -1;
@@ -146,7 +146,7 @@ static int make_deck_input_file(char *path, size_t path_cap)
           "A,1\n"
           "B,2\n"
           "```\n";
-    strcpy(path, "/tmp/libmdf-cmdf-deck-XXXXXX");
+    strcpy(path, LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-deck-XXXXXX");
     fd = mkstemp(path);
     if (fd < 0) {
         return -1;
@@ -814,13 +814,13 @@ static int run_cmdf_trace(char *const cmdv[], const char *input_path, char **tra
 {
     int status;
     pid_t pid;
-    char trace_path[64];
+    char trace_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 64];
     char *argv[32];
     char *raw_trace;
     int devnull;
     int i;
 
-    strcpy(trace_path, "/tmp/libmdf-cmdf-trace-XXXXXX");
+    strcpy(trace_path, LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-trace-XXXXXX");
     status = mkstemp(trace_path);
     if (status < 0) {
         return -1;
@@ -914,28 +914,28 @@ static int count_substrings(const char *haystack, const char *needle)
 
 int main(int argc, char **argv)
 {
-    char input_path[64];
-    char deck_input_path[64];
-    char output_path[96];
-    char output_path_2[96];
-    char regular_font_path[96];
-    char italic_font_path[96];
-    char font_dir[64];
-    char bare_dump_dir[64];
-    char font_dir_uri[96];
-    char directory_regular_font_path[128];
-    char directory_italic_font_path[128];
-    char bare_dump_regular_font_path[128];
-    char bare_dump_italic_font_path[128];
-    char relative_font_output_dir[128];
-    char relative_font_output_path[160];
-    char relative_font_assets_dir[128];
-    char relative_font_output_assets_dir[160];
-    char relative_font_regular_path[160];
-    char relative_font_italic_path[160];
-    char stdout_font_assets_dir[128];
-    char stdout_font_regular_path[160];
-    char stdout_font_italic_path[160];
+    char input_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 64];
+    char deck_input_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 64];
+    char output_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char output_path_2[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char regular_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char italic_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char font_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 64];
+    char bare_dump_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 64];
+    char font_dir_uri[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char directory_regular_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char directory_italic_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char bare_dump_regular_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char bare_dump_italic_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char relative_font_output_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char relative_font_output_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char relative_font_assets_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char relative_font_output_assets_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char relative_font_regular_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char relative_font_italic_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char stdout_font_assets_dir[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char stdout_font_regular_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char stdout_font_italic_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
     char *ascii_html_args[8];
     char *help_args[3];
     char *chunk_args[8];
@@ -999,12 +999,12 @@ int main(int argc, char **argv)
 
     fails = 0;
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-cmdf-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-cmdf-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-italic-%ld.woff2", (long)getpid());
     unlink(regular_font_path);
     unlink(italic_font_path);
-    strcpy(font_dir, "/tmp/libmdf-cmdf-font-dir-XXXXXX");
+    strcpy(font_dir, LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-font-dir-XXXXXX");
     if (make_temp_dir(font_dir, sizeof(font_dir)) != 0) {
         unlink(input_path);
         unlink(deck_input_path);
@@ -1015,7 +1015,7 @@ int main(int argc, char **argv)
     snprintf(directory_italic_font_path, sizeof(directory_italic_font_path),
              "%s/JetBrainsMono-Italic.woff2", font_dir);
     snprintf(font_dir_uri, sizeof(font_dir_uri), "file://%s", font_dir);
-    strcpy(bare_dump_dir, "/tmp/libmdf-cmdf-bare-dump-XXXXXX");
+    strcpy(bare_dump_dir, LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-bare-dump-XXXXXX");
     if (make_temp_dir(bare_dump_dir, sizeof(bare_dump_dir)) != 0) {
         unlink(input_path);
         unlink(deck_input_path);
@@ -1256,7 +1256,7 @@ int main(int argc, char **argv)
     rmdir(relative_font_output_assets_dir);
     rmdir(relative_font_output_dir);
 
-    snprintf(output_path, sizeof(output_path), "/tmp/libmdf-cmdf-font-output-%ld.html", (long)getpid());
+    snprintf(output_path, sizeof(output_path), LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-font-output-%ld.html", (long)getpid());
     unlink(output_path);
     font_collision_args[0] = argv[1];
     font_collision_args[1] = "--html";
@@ -1720,8 +1720,8 @@ int main(int argc, char **argv)
     free(first_chunk);
     free(result.buf);
 
-    snprintf(output_path, sizeof(output_path), "/tmp/libmdf-cmdf-%ld.html", (long)getpid());
-    snprintf(output_path_2, sizeof(output_path_2), "/tmp/libmdf-cmdf-%ld-2.html", (long)getpid());
+    snprintf(output_path, sizeof(output_path), LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-%ld.html", (long)getpid());
+    snprintf(output_path_2, sizeof(output_path_2), LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-%ld-2.html", (long)getpid());
     unlink(output_path);
     unlink(output_path_2);
     infer_html_args[0] = argv[1];
@@ -2496,7 +2496,7 @@ int main(int argc, char **argv)
     html_trace_args[0] = argv[1];
     html_trace_args[1] = "-H";
     html_trace_args[2] = "--trace-writes";
-    html_trace_args[3] = "/tmp/libmdf-cmdf-html-trace.out";
+    html_trace_args[3] = LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-html-trace.out";
     html_trace_args[4] = input_path;
     html_trace_args[5] = NULL;
     if (run_cmdf(html_trace_args, &result) != 0) {
@@ -2507,12 +2507,12 @@ int main(int argc, char **argv)
     fails += expect(WIFEXITED(result.status) && WEXITSTATUS(result.status) != 0,
                     "cmdf rejects --trace-writes for html output");
     free(result.buf);
-    unlink("/tmp/libmdf-cmdf-html-trace.out");
+    unlink(LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-html-trace.out");
 
     deck_trace_args[0] = argv[1];
     deck_trace_args[1] = "--deck";
     deck_trace_args[2] = "--trace-writes";
-    deck_trace_args[3] = "/tmp/libmdf-cmdf-deck-trace.out";
+    deck_trace_args[3] = LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-deck-trace.out";
     deck_trace_args[4] = deck_input_path;
     deck_trace_args[5] = NULL;
     if (run_cmdf_stderr(deck_trace_args, &result) != 0) {
@@ -2527,7 +2527,7 @@ int main(int argc, char **argv)
                     strstr(result.buf, "--trace-writes is only supported for ANSI output") != NULL,
                     "cmdf deck trace rejection explains ANSI-only trace support");
     free(result.buf);
-    unlink("/tmp/libmdf-cmdf-deck-trace.out");
+    unlink(LIBMDF_TEST_SCRATCH_DIR "/libmdf-cmdf-deck-trace.out");
 
     ascii_html_args[0] = argv[1];
     ascii_html_args[1] = "-H";

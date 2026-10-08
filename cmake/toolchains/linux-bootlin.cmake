@@ -7,18 +7,21 @@ if(NOT DEFINED LIBMDF_BOOTLIN_TARGET)
 endif()
 
 get_filename_component(LIBMDF_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
-set(LIBMDF_BOOTLIN_RESOLVER "${LIBMDF_SOURCE_ROOT}/scripts/cpkt-toolchains.sh")
+set(CPKT_LIFECYCLE_SCRIPTS_DIR "${LIBMDF_SOURCE_ROOT}/scripts" CACHE PATH "Pinned lifecycle helper collection")
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CPKT_LIFECYCLE_SCRIPTS_DIR)
+set(LIBMDF_BOOTLIN_RESOLVER "${CPKT_LIFECYCLE_SCRIPTS_DIR}/cpkt-toolchains.sh")
 if(NOT EXISTS "${LIBMDF_BOOTLIN_RESOLVER}")
   message(FATAL_ERROR "libmdf Bootlin resolver is missing: ${LIBMDF_BOOTLIN_RESOLVER}")
 endif()
 
 execute_process(
-  COMMAND "${LIBMDF_BOOTLIN_RESOLVER}" ensure "${LIBMDF_BOOTLIN_TARGET}"
+  COMMAND "${LIBMDF_BOOTLIN_RESOLVER}" discover "${LIBMDF_BOOTLIN_TARGET}"
   RESULT_VARIABLE LIBMDF_BOOTLIN_RESULT
   OUTPUT_VARIABLE LIBMDF_BOOTLIN_DESCRIPTION
   ERROR_VARIABLE LIBMDF_BOOTLIN_ERROR)
-if(NOT LIBMDF_BOOTLIN_RESULT EQUAL 0)
-  message(FATAL_ERROR "Unable to provision the pinned Bootlin toolchain for ${LIBMDF_BOOTLIN_TARGET}: ${LIBMDF_BOOTLIN_ERROR}")
+if(NOT LIBMDF_BOOTLIN_RESULT EQUAL 0 OR
+   NOT LIBMDF_BOOTLIN_DESCRIPTION MATCHES "(^|[\r\n])status=ready([\r\n]|$)")
+  message(FATAL_ERROR "Pinned toolchain ${LIBMDF_BOOTLIN_TARGET} is unavailable: ${LIBMDF_BOOTLIN_ERROR}\nPrepare explicitly: ${LIBMDF_BOOTLIN_RESOLVER} ensure ${LIBMDF_BOOTLIN_TARGET}")
 endif()
 
 function(libmdf_bootlin_value key output)
@@ -59,6 +62,9 @@ file(GLOB LIBMDF_BOOTLIN_LOADER_CANDIDATES
   "${LIBMDF_BOOTLIN_sysroot}/lib/ld-linux*.so*"
   "${LIBMDF_BOOTLIN_sysroot}/lib/ld-musl-*.so*")
 list(SORT LIBMDF_BOOTLIN_LOADER_CANDIDATES)
+if(NOT LIBMDF_BOOTLIN_LOADER_CANDIDATES)
+  message(FATAL_ERROR "Bootlin sysroot has no ELF interpreter: ${LIBMDF_BOOTLIN_sysroot}")
+endif()
 list(GET LIBMDF_BOOTLIN_LOADER_CANDIDATES 0 LIBMDF_BOOTLIN_LOADER)
 if(NOT EXISTS "${LIBMDF_BOOTLIN_LOADER}")
   message(FATAL_ERROR "Bootlin sysroot has no ELF interpreter: ${LIBMDF_BOOTLIN_sysroot}")
@@ -83,7 +89,8 @@ function(libmdf_configure_development_runtime target)
   endif()
   target_link_options(${target} PRIVATE
     "-Wl,--dynamic-linker,${LIBMDF_BOOTLIN_LOADER}"
-    "-Wl,--disable-new-dtags,-rpath,${LIBMDF_BOOTLIN_RUNTIME_RPATH}")
+    "-Wl,--disable-new-dtags"
+    "-Wl,-rpath,${LIBMDF_BOOTLIN_RUNTIME_RPATH}")
   set_property(TARGET ${target} PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_RUNTIME TRUE)
   set_property(GLOBAL APPEND PROPERTY LIBMDF_BOOTLIN_DEVELOPMENT_TARGETS ${target})
 endfunction()

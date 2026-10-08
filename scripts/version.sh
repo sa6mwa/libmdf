@@ -1,62 +1,30 @@
 #!/usr/bin/env sh
 set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1 &&
-   [ "$(CDPATH= cd -- "$(git -C "$ROOT" rev-parse --show-toplevel)" && pwd)" = "$ROOT" ]; then
-  tag=$(
-    git -C "$ROOT" tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' |
-      while IFS= read -r candidate; do
-        case "$candidate" in
-          v[0-9]*.[0-9]*.[0-9]*)
-            version=${candidate#v}
-            if printf '%s\n' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$' &&
-               [ "$(git -C "$ROOT" cat-file -t "refs/tags/$candidate" 2>/dev/null || true)" = "commit" ]; then
-              printf '%s\n' "$version"
-            fi
-            ;;
-        esac
-      done |
-      awk -F. '
-        NF == 3 {
-          major = $1 + 0
-          minor = $2 + 0
-          patch = $3 + 0
-          if (!seen ||
-              major > best_major ||
-              (major == best_major && minor > best_minor) ||
-              (major == best_major && minor == best_minor && patch > best_patch)) {
-            seen = 1
-            best = $0
-            best_major = major
-            best_minor = minor
-            best_patch = patch
-          }
-        }
-        END {
-          if (seen) {
-            print best
-          }
-        }'
-  )
-  if [ -n "$tag" ]; then
-    printf '%s\n' "$tag"
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+valid_version() { printf '%s\n' "$1" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'; }
+fail() { printf 'libmdf version: %s\n' "$*" >&2; exit 1; }
+owner=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)
+if [ -n "$owner" ] && [ "$(CDPATH= cd -- "$owner" && pwd -P)" = "$ROOT" ]; then
+  if [ -n "${LIBMDF_RELEASE_VERSION:-}" ]; then
+    valid_version "$LIBMDF_RELEASE_VERSION" || fail 'LIBMDF_RELEASE_VERSION must be X.Y.Z'
+    printf '%s\n' "$LIBMDF_RELEASE_VERSION"
     exit 0
   fi
+  tags=$(git -C "$ROOT" tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*')
+  version=
+  for tag in $tags; do
+    valid_version "${tag#v}" || continue
+    [ "$(git -C "$ROOT" cat-file -t "refs/tags/$tag")" = commit ] || continue
+    if git -C "$ROOT" symbolic-ref -q "refs/tags/$tag" >/dev/null 2>&1; then continue; fi
+    [ -z "$version" ] || fail "ambiguous lightweight release tags on HEAD: v$version and $tag"
+    version=${tag#v}
+  done
+  printf '%s\n' "${version:-0.0.0}"
+elif [ -f "$ROOT/VERSION" ]; then
+  [ -f "$ROOT/RELEASE_MANIFEST" ] || fail 'extracted source VERSION requires RELEASE_MANIFEST'
+  version=$(cat "$ROOT/VERSION")
+  valid_version "$version" || fail 'source VERSION must be X.Y.Z'
+  printf '%s\n' "$version"
+else
   printf '%s\n' '0.0.0'
-  exit 0
 fi
-
-if [ -f "$ROOT/VERSION" ]; then
-  version=$(sed -n '1p' "$ROOT/VERSION" | tr -d '[:space:]')
-  case "$version" in
-    [0-9]*.[0-9]*.[0-9]*)
-      if printf '%s\n' "$version" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+$'; then
-        printf '%s\n' "$version"
-        exit 0
-      fi
-      ;;
-  esac
-fi
-
-printf '%s\n' '0.0.0'

@@ -1,30 +1,18 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-BUILD="$ROOT/build/lua-release"
-DIST="$ROOT/dist"
-NAME="libmdf-lua-$VERSION"
-ARCHIVE="$DIST/$NAME.tar.gz"
-ROCKSPEC="$DIST/libmdf-$VERSION-1.rockspec"
-SRCROCK="$DIST/libmdf-$VERSION-1.src.rock"
-SRCROCK_STAGE="$BUILD/srcrock"
-
-mkdir -p "$DIST" "$BUILD"
-"$ROOT/scripts/stage_lua_rock_sources.sh" "$VERSION" "$BUILD/stage" >/dev/null
-tar -C "$BUILD/stage" -czf "$ARCHIVE" "$NAME"
-
-"$ROOT/scripts/render_release_rockspec.sh" "$ROCKSPEC" "$VERSION" "file://$NAME.tar.gz" "$NAME"
-
-rm -rf "$SRCROCK_STAGE"
-mkdir -p "$SRCROCK_STAGE"
-cp "$ROCKSPEC" "$SRCROCK_STAGE/libmdf-$VERSION-1.rockspec"
-cp "$ARCHIVE" "$SRCROCK_STAGE/$NAME.tar.gz"
-rm -f "$SRCROCK"
-(
-  cd "$SRCROCK_STAGE"
-  zip -q "$SRCROCK" "libmdf-$VERSION-1.rockspec" "$NAME.tar.gz"
-)
-
-"$ROOT/scripts/package_checksums.sh"
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+version=$("$root/scripts/version.sh")
+build="$root/build/lua-release"
+dist=${LIBMDF_DIST_DIR:-$root/dist}
+name="libmdf-lua-$version"
+mkdir -p "$dist" "$build"
+"$root/scripts/stage_lua_rock_sources.sh" "$version" "$build/stage"
+"$root/scripts/archive.sh" "$build/stage" "$name" "$dist/$name.tar.gz"
+"$root/scripts/render_release_rockspec.sh" "$dist/libmdf-$version-1.rockspec" "$version"
+# zip -X removes host extras; normalize all member timestamps and permissions.
+mkdir -p "$build/srcrock"
+cp "$dist/libmdf-$version-1.rockspec" "$dist/$name.tar.gz" "$build/srcrock/"
+chmod 644 "$build/srcrock/"*
+TZ=UTC touch -t 198001010000 "$build/srcrock/"*
+rm -f "$dist/libmdf-$version-1.src.rock"
+(cd "$build/srcrock" && TZ=UTC zip -Xq "$dist/libmdf-$version-1.src.rock" "libmdf-$version-1.rockspec" "$name.tar.gz")

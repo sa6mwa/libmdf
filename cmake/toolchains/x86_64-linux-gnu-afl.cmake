@@ -3,7 +3,7 @@ set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(LIBMDF_BOOTLIN_TARGET x86_64-linux-gnu)
 include("${CMAKE_CURRENT_LIST_DIR}/linux-bootlin.cmake")
 
-set(LIBMDF_AFLPP_RESOLVER "${LIBMDF_SOURCE_ROOT}/scripts/cpkt-aflpp.sh")
+set(LIBMDF_AFLPP_RESOLVER "${CPKT_LIFECYCLE_SCRIPTS_DIR}/cpkt-aflpp.sh")
 if(NOT EXISTS "${LIBMDF_AFLPP_RESOLVER}")
   message(FATAL_ERROR "libmdf AFL++ resolver is missing: ${LIBMDF_AFLPP_RESOLVER}")
 endif()
@@ -14,7 +14,7 @@ execute_process(
   OUTPUT_VARIABLE LIBMDF_AFLPP_DESCRIPTION
   ERROR_VARIABLE LIBMDF_AFLPP_ERROR)
 if(NOT LIBMDF_AFLPP_RESULT EQUAL 0)
-  message(FATAL_ERROR "Unable to provision the pinned native AFL++ wrapper: ${LIBMDF_AFLPP_ERROR}")
+  message(FATAL_ERROR "Pinned native AFL++ is unavailable: ${LIBMDF_AFLPP_ERROR}\nPrepare explicitly: ${LIBMDF_AFLPP_RESOLVER} ensure")
 endif()
 
 function(libmdf_aflpp_value key output)

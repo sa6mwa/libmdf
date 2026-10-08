@@ -1,109 +1,25 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BASE="$ROOT/build/test-discover-target-tools"
-HELPER="$ROOT/scripts/discover_target_tools.sh"
-
-rm -rf "$BASE"
-mkdir -p "$BASE/root/build/preset" "$BASE/bin" "$BASE/path"
-
-make_tool() {
-  path=$1
-  mkdir -p "$(dirname "$path")"
-  printf '#!/usr/bin/env sh\nexit 0\n' > "$path"
-  chmod +x "$path"
-}
-
-expect_path() {
-  want=$1
-  shift
-  got=$("$@" 2>/dev/null)
-  if [ "$got" != "$want" ]; then
-    printf '%s\n' "expected $want, got ${got:-unset}" >&2
-    exit 1
-  fi
-}
-
-make_tool "$BASE/explicit/otool"
-LIBMDF_OTOOL="$BASE/explicit/otool" expect_path "$BASE/explicit/otool" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin otool
-
-make_tool "$BASE/cache/arm64-apple-darwin25-otool"
-cat > "$BASE/root/build/preset/CMakeCache.txt" <<EOF
-CMAKE_OTOOL:FILEPATH=$BASE/cache/arm64-apple-darwin25-otool
-EOF
-expect_path "$BASE/cache/arm64-apple-darwin25-otool" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset otool
-
-make_tool "$BASE/sibling/arm64-apple-darwin25-clang"
-make_tool "$BASE/sibling/arm64-apple-darwin25-strip"
-cat > "$BASE/root/build/preset/CMakeCache.txt" <<EOF
-CMAKE_C_COMPILER:FILEPATH=$BASE/sibling/arm64-apple-darwin25-clang
-EOF
-expect_path "$BASE/sibling/arm64-apple-darwin25-strip" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset strip
-
-rm -f "$BASE/sibling/arm64-apple-darwin25-strip"
-make_tool "$BASE/sibling/strip"
-expect_path "$BASE/sibling/strip" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset strip
-
-rm -f "$BASE/sibling/strip"
-make_tool "$BASE/osxcross/bin/arm64-apple-darwin25-install_name_tool"
-OSXCROSS_ROOT="$BASE/osxcross" expect_path "$BASE/osxcross/bin/arm64-apple-darwin25-install_name_tool" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset install_name_tool
-
-rm -f "$BASE/osxcross/bin/arm64-apple-darwin25-install_name_tool"
-make_tool "$BASE/path/arm64-apple-darwin25-otool"
-OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$BASE/path:$PATH" expect_path "$BASE/path/arm64-apple-darwin25-otool" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset otool
-
-rm -f "$BASE/path/arm64-apple-darwin25-otool"
-make_tool "$BASE/path/otool"
-# Keep the negative case independent of a developer's ambient osxcross PATH.
-# It must prove an unprefixed host otool is rejected only when no target tool
-# can be discovered from the configured compiler, osxcross root, or PATH.
-if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$BASE/path:/usr/bin:/bin" "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset otool >/dev/null 2>&1; then
-  printf '%s\n' 'unprefixed host otool was selected for cross-Darwin target' >&2
-  exit 1
-fi
-
-make_tool "$BASE/path/readelf"
-PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
-  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
-
-# A Darwin configuration must not change tools for Linux requests.
-make_tool "$BASE/osxcross/bin/arm64-apple-darwin25.4-readelf"
-make_tool "$BASE/osxcross/bin/arm64-apple-darwin25.4-strip"
-OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
-  PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
-  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
-
-# Unselected build trees must not supply either cached or sibling tools.
-make_tool "$BASE/sibling/arm64-apple-darwin25-readelf"
-cat >> "$BASE/root/build/preset/CMakeCache.txt" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+work="$root/build/test tool discovery"
+rm -rf -- "$work"
+mkdir -p "$work/root/build/preset" "$work/bin" "$work/path"
+helper="$root/scripts/discover_target_tools.sh"
+tool() { printf '#!/bin/sh\nexit 0\n' > "$1"; chmod +x "$1"; }
+tool "$work/bin/arm64-apple-darwin25-clang"
+tool "$work/bin/arm64-apple-darwin25-strip"
+tool "$work/bin/explicit-strip"
+tool "$work/path/readelf"
+cat > "$work/root/build/preset/CMakeCache.txt" <<CACHE
 LIBMDF_TARGET_ID:STRING=arm64-apple-darwin
-CMAKE_STRIP:FILEPATH=$BASE/osxcross/bin/arm64-apple-darwin25.4-strip
-EOF
-PATH="$BASE/path:$PATH" expect_path "$BASE/path/readelf" \
-  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu readelf
-
-make_tool "$BASE/linux/x86_64-linux-gcc"
-make_tool "$BASE/linux/x86_64-linux-strip"
-mkdir -p "$BASE/root/build/linux"
-cat > "$BASE/root/build/linux/CMakeCache.txt" <<EOF
-LIBMDF_TARGET_ID:STRING=x86_64-linux-gnu
-CMAKE_C_COMPILER:FILEPATH=$BASE/linux/x86_64-linux-gcc
-EOF
-OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
-  expect_path "$BASE/linux/x86_64-linux-strip" \
-  "$HELPER" --root "$BASE/root" --target x86_64-linux-gnu strip
-
-# Even a newer ambient Darwin prefix must not override compiler siblings.
-make_tool "$BASE/sibling/arm64-apple-darwin25-strip"
-sed '/CMAKE_STRIP:/d' "$BASE/root/build/preset/CMakeCache.txt" > "$BASE/cache.tmp"
-mv "$BASE/cache.tmp" "$BASE/root/build/preset/CMakeCache.txt"
-OSXCROSS_ROOT="$BASE/osxcross" CPKT_OSXCROSS_HOST=arm64-apple-darwin25.4 \
-  expect_path "$BASE/sibling/arm64-apple-darwin25-strip" \
-  "$HELPER" --root "$BASE/root" --target arm64-apple-darwin --preset preset strip
+CMAKE_C_COMPILER:FILEPATH=$work/bin/arm64-apple-darwin25-clang
+CMAKE_STRIP:FILEPATH=$work/bin/explicit-strip
+CACHE
+[[ $("$helper" --root "$work/root" --preset preset --target arm64-apple-darwin strip) == "$work/bin/explicit-strip" ]]
+[[ $(LIBMDF_STRIP="$work/bin/arm64-apple-darwin25-strip" "$helper" --root "$work/root" --preset preset --target arm64-apple-darwin strip) == "$work/bin/arm64-apple-darwin25-strip" ]]
+sed -i '/CMAKE_STRIP:/d' "$work/root/build/preset/CMakeCache.txt"
+[[ $("$helper" --root "$work/root" --preset preset --target arm64-apple-darwin strip) == "$work/bin/arm64-apple-darwin25-strip" ]]
+if "$helper" --root "$work/root" --preset preset --target x86_64-linux-gnu strip > "$work/mismatch.log" 2>&1; then exit 1; fi
+grep -q 'does not match selected target' "$work/mismatch.log"
+if CPKT_TOOLCHAIN_CACHE="$work/missing" PATH="$work/path:$PATH" "$helper" --target x86_64-linux-gnu readelf > "$work/missing.log" 2>&1; then printf 'Host binutils fallback was accepted\n' >&2; exit 1; fi
+[[ $("$helper" --target x86_64-linux-gnu readelf) == $("$root/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu | sed -n 's/^readelf=//p') ]]

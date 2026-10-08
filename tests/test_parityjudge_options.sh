@@ -2,14 +2,13 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-JUDGE="$ROOT/build/parityjudge-cgo"
-STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
+JUDGE=${LIBMDF_PARITYJUDGE:-$ROOT/build/debug/parityjudge}
 # Keep option comparisons under the same golden-backed behavioral exceptions
 # as scripts/parity.sh. The row trace case compares final output too.
 CASE_EXCLUDES=$(awk -v root="$ROOT/" '$1 == "ansi" { printf "%s%s@%s ", root, $2, $3 }' \
   "$ROOT/testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt")
 
-"$ROOT/scripts/build_parityjudge.sh" "$JUDGE" "libmdf_$STAMP"
+test -x "$JUDGE" || { printf "Missing parity runner; run make build-debug\n" >&2; exit 1; }
 
 run_case() {
   printf '%s\n' "parityjudge option case: $1" >&2

@@ -5,8 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
 BASE="$ROOT/build/test-verify-release-privacy-macho"
 DIST="$BASE/dist"
-TARGET=x86_64-apple-darwin
-HOST=x86_64-apple-darwin25
+TARGET=arm64-apple-darwin
+HOST=arm64-apple-darwin25
 # The fake collection is deliberately pinned; it is not an installed SDK.
 CPKT_OSXCROSS_HOST=$HOST
 export CPKT_OSXCROSS_HOST
@@ -26,7 +26,7 @@ printf '%s\n' 'Mach-O 64-bit dynamically linked shared library arm64'
 EOF
 chmod +x "$TOOLS/file"
 
-if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/no-otool.err"; then
+if OSXCROSS_ROOT="$BASE/no-osxcross" LIBMDF_OTOOL="$TOOLS/$HOST-otool" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/no-otool.err"; then
   printf '%s\n' 'privacy gate accepted Mach-O artifact without target otool' >&2
   exit 1
 fi
@@ -56,7 +56,7 @@ esac
 EOF
 chmod +x "$TOOLS/$HOST-otool"
 
-if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/bad-dep.err"; then
+if OSXCROSS_ROOT="$BASE/no-osxcross" LIBMDF_OTOOL="$TOOLS/$HOST-otool" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/bad-dep.err"; then
   printf '%s\n' 'privacy gate accepted non-system absolute Mach-O dependency' >&2
   exit 1
 fi
@@ -87,7 +87,7 @@ esac
 EOF
 chmod +x "$TOOLS/$HOST-otool"
 
-if OSXCROSS_ROOT="$BASE/no-osxcross" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/bad-rpath.err"; then
+if OSXCROSS_ROOT="$BASE/no-osxcross" LIBMDF_OTOOL="$TOOLS/$HOST-otool" PATH="$TOOLS:$PATH" LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" >/dev/null 2>"$BASE/bad-rpath.err"; then
   printf '%s\n' 'privacy gate accepted local Mach-O LC_RPATH' >&2
   exit 1
 fi

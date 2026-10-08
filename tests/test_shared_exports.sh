@@ -33,7 +33,7 @@ mdf_theme_exists
 mdf_theme_name
 mdf_write_token'
 
-actual=$($nm_tool -D --defined-only "$library" | awk '{print $3}' |
+actual=$("$nm_tool" -D --defined-only "$library" | awk '{print $3}' |
   sed -e 's/@@.*$//' -e '/^LIBMDF_[0-9][0-9_]*$/d' -e '/^$/d' | sort)
 if [ "$actual" != "$expected" ]; then
   printf '%s\n' 'libmdf shared export allowlist mismatch' >&2
