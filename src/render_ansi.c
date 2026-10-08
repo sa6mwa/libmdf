@@ -7499,6 +7499,37 @@ static int ansi_inline_emit_code(mdf_impl *impl, mdf_sink *sink)
     return 0;
 }
 
+/* Only an unescaped ')' outside nested parentheses closes a destination. */
+static int ansi_link_destination_closes(size_t *depth, int *escaped, char c)
+{
+    if (*escaped) {
+        *escaped = 0;
+    } else if (c == '\\') {
+        *escaped = 1;
+    } else if (c == '(') {
+        (*depth)++;
+    } else if (c == ')') {
+        if (*depth == 0) return 1;
+        (*depth)--;
+    }
+    return 0;
+}
+
+static int ansi_inline_append_link_destination(mdf_impl *impl, char c)
+{
+    int escaped;
+
+    escaped = impl->inline_url_escaped;
+    if (ansi_link_destination_closes(&impl->inline_url_paren_depth,
+                                    &impl->inline_url_escaped, c)) return 1;
+    /* Retain the escape until the following byte arrives, even across feeds. */
+    if (escaped && markdown_escapable_char(c)) {
+        impl->inline_url_len--;
+    }
+    return ansi_inline_append(impl, &impl->inline_url, &impl->inline_url_len,
+                              &impl->inline_url_cap, &c, 1);
+}
+
 static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, size_t reserve_cols)
 {
     const char *prefix;
@@ -7513,6 +7544,8 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
     size_t label_end;
     size_t url_start;
     size_t url_end;
+    size_t url_paren_depth;
+    int url_escaped;
     size_t first_word_reserve;
     size_t attached_word_cols;
     int emitted_link;
@@ -7820,7 +7853,10 @@ static int ansi_inline_emit_pending_emphasis(mdf_impl *impl, mdf_sink *sink, siz
         }
         url_start = label_end + 2;
         url_end = url_start;
-        while (url_end < text_len && text[url_end] != ')') {
+        url_paren_depth = 0;
+        url_escaped = 0;
+        while (url_end < text_len &&
+               !ansi_link_destination_closes(&url_paren_depth, &url_escaped, text[url_end])) {
             url_end++;
         }
         if (url_end >= text_len) {
@@ -9051,24 +9087,26 @@ reprocess_inline_char:
         case 2:
             if (c == '(') {
                 impl->inline_mode = 3;
+                impl->inline_url_paren_depth = 0;
+                impl->inline_url_escaped = 0;
             } else {
                 if (ansi_inline_flush_literal_char(impl, sink, c) != 0) return -1;
             }
             break;
-        case 3:
-            if (c == ')') {
-                if (ansi_inline_emit_link(impl, sink) != 0) return -1;
-            } else if (c == '\\' && i + 1 < len && markdown_escapable_char(src[i + 1])) {
-                c = src[++i];
-                if (ansi_inline_append(impl, &impl->inline_url, &impl->inline_url_len, &impl->inline_url_cap, &c, 1) != 0) {
-                    return -1;
-                }
-            } else if (c == '\n') {
+        case 3: {
+            int destination_end;
+
+            if (c == '\n') {
                 if (ansi_inline_flush_literal_char(impl, sink, c) != 0) return -1;
-            } else if (ansi_inline_append(impl, &impl->inline_url, &impl->inline_url_len, &impl->inline_url_cap, &c, 1) != 0) {
-                return -1;
+                break;
+            }
+            destination_end = ansi_inline_append_link_destination(impl, c);
+            if (destination_end < 0) return -1;
+            if (destination_end) {
+                if (ansi_inline_emit_link(impl, sink) != 0) return -1;
             }
             break;
+        }
         case 4:
             if (c == '`') {
                 impl->inline_mode = 9;
@@ -9391,12 +9429,22 @@ ansi_case5_reprocess:
         case 11:
             if (c == '(') {
                 impl->inline_mode = 12;
+                impl->inline_url_paren_depth = 0;
+                impl->inline_url_escaped = 0;
             } else {
                 if (ansi_inline_flush_literal_char(impl, sink, c) != 0) return -1;
             }
             break;
-        case 12:
-            if (c == ')') {
+        case 12: {
+            int destination_end;
+
+            if (c == '\n') {
+                if (ansi_inline_flush_literal_char(impl, sink, c) != 0) return -1;
+                break;
+            }
+            destination_end = ansi_inline_append_link_destination(impl, c);
+            if (destination_end < 0) return -1;
+            if (destination_end) {
                 const char *label_prefix;
                 const char *resume_prefix;
                 char resume_style_buf[160];
@@ -9435,17 +9483,9 @@ ansi_case5_reprocess:
                 impl->inline_emph_streaming = 2;
                 impl->inline_text_len = 0;
                 impl->inline_url_len = 0;
-            } else if (c == '\\' && i + 1 < len && markdown_escapable_char(src[i + 1])) {
-                c = src[++i];
-                if (ansi_inline_append(impl, &impl->inline_url, &impl->inline_url_len, &impl->inline_url_cap, &c, 1) != 0) {
-                    return -1;
-                }
-            } else if (c == '\n') {
-                if (ansi_inline_flush_literal_char(impl, sink, c) != 0) return -1;
-            } else if (ansi_inline_append(impl, &impl->inline_url, &impl->inline_url_len, &impl->inline_url_cap, &c, 1) != 0) {
-                return -1;
             }
             break;
+        }
         case 13:
             if (c == '>') {
                 if (autolink_likely(impl->inline_url, impl->inline_url_len)) {

@@ -71,6 +71,8 @@ static void mdf_impl_reset_render_state(mdf_impl *impl)
     impl->inline_text_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, inline_outer_paren_candidate, inline_outer_paren_pending);
     impl->inline_url_len = 0;
+    impl->inline_url_paren_depth = 0;
+    impl->inline_url_escaped = 0;
     impl->pending_fallback_url_len = 0;
     MDF_ZERO_IMPL_SPAN(impl, pending_fallback_exact, pending_wrapped_link_punct);
     impl->inline_code_len = 0;
