@@ -7,6 +7,8 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*" "${CMAKE_CURRENT_SOURCE_DIR}/testdata/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*")
   list(APPEND check_inputs "${CMAKE_CURRENT_SOURCE_DIR}/Makefile"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
+    "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakePresets.json" "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt")
   get_property(build_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
   set(check_binaries)
@@ -33,6 +35,7 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     set(binaries ${check_binaries})
     if(suite STREQUAL "memory")
       set(inputs "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Tests.cmake" "${CMAKE_CURRENT_LIST_FILE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt")
       set(binaries "$<TARGET_FILE:test_public_api>" "$<TARGET_FILE:test_contracts>")
     endif()

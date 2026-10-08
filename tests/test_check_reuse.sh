@@ -40,6 +40,13 @@ sleep 1
 printf changed > "$work/source/testdata/input"
 cmake --build "$work/build" --target check-native > "$work/changed.log"
 [[ $(wc -l < "$work/build/runs") == 2 ]]
+printf '\nadd_test(NAME introduced_failure COMMAND /bin/false)\n' >> "$work/source/CMakeLists.txt"
+if cmake --build "$work/build" --target check-native > "$work/definitions.log" 2>&1; then
+  printf 'Root CMake test definition changes left a stale success record\n' >&2; exit 1;
+fi
+grep -q introduced_failure "$work/definitions.log"
+test ! -f "$work/build/checks/native.pass"
+sed -i '/introduced_failure/d' "$work/source/CMakeLists.txt"
 sleep 1
 printf fail > "$work/source/testdata/input"
 if cmake --build "$work/build" --target check-native > "$work/failed.log" 2>&1; then exit 1; fi

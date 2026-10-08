@@ -175,6 +175,7 @@ if(LIBMDF_BUILD_BINARY)
   else()
     libmdf_configure_development_runtime(cmdf)
   endif()
+  include(cmake/LuaCli.cmake)
 endif()
 
 if(LIBMDF_BUILD_EXAMPLES)
@@ -238,10 +239,6 @@ if(LIBMDF_INSTALL)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT LIBMDF_CMDF_STATIC_RUNTIME)
       message(STATUS "Development cmdf is not installed: use LIBMDF_CMDF_STATIC_RUNTIME=ON for a portable Linux CLI")
     else()
-      add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cmdf.lua"
-        COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_cmdf_lua.sh" "${CMAKE_CURRENT_BINARY_DIR}/cmdf.lua"
-        DEPENDS scripts/generate_cmdf_lua.sh VERBATIM)
-      add_custom_target(cmdf-lua ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/cmdf.lua")
       install(TARGETS cmdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT cli)
       install(PROGRAMS "${CMAKE_CURRENT_BINARY_DIR}/cmdf.lua" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT cli)
       install(FILES LICENSE README.md src/html_embedded/OFL.txt DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/cmdf COMPONENT cli)

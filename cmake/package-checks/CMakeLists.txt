@@ -49,6 +49,7 @@ add_test(NAME verify_${LIBMDF_ARTIFACT_SCOPE} COMMAND "${CMAKE_COMMAND}" -E env 
 set_tests_properties(verify_${LIBMDF_ARTIFACT_SCOPE} PROPERTIES LABELS "packaging;e2e" TIMEOUT 600 RUN_SERIAL TRUE)
 file(GLOB scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
   "${LIBMDF_SOURCE_DIR}/tests/package-consumer/*")
+list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh")
 set(stamp "${CMAKE_CURRENT_BINARY_DIR}/artifacts.pass")
 add_custom_command(OUTPUT "${stamp}"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${stamp}"

@@ -9,6 +9,15 @@ cmake --build "$work/shared" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" \
   --target lua-sdk libmdf_lua_core lua test_destination_policy >> "$work/shared.log" 2>&1
 ctest --test-dir "$work/shared" -R '^lua_(destination_policy|runtime)$' \
   --output-on-failure --stop-on-failure --no-tests=error -j1 >> "$work/shared.log" 2>&1
+cmake --preset debug -S "$root" -B "$work/layout" -DLIBMDF_BUILD_HOST_TESTS=OFF \
+  -DCMAKE_INSTALL_LIBDIR=lib64 -DCMAKE_INSTALL_INCLUDEDIR=api/include \
+  -DLIBMDF_INSTALL_BINARY=ON -DLIBMDF_CMDF_STATIC_RUNTIME=ON > "$work/layout.log" 2>&1
+cmake --build "$work/layout" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" \
+  --target libmdf_lua_core lua lua-cli test_destination_policy cmdf >> "$work/layout.log" 2>&1
+ctest --test-dir "$work/layout" -R '^lua_(smoke|destination_policy|cli_destination_policy|runtime)$' \
+  --output-on-failure --stop-on-failure --no-tests=error -j1 >> "$work/layout.log" 2>&1
+cmake --install "$work/layout" --component cli --prefix "$work/cli-install" >> "$work/layout.log" 2>&1
+test -x "$work/cli-install/bin/cmdf.lua"
 # A local source copy lets the test edit a public input without changing the
 # checkout while a verification operation owns it. Release excludes test inputs.
 cp "$root/CMakeLists.txt" "$root/CMakePresets.json" "$root/LICENSE" "$root/README.md" "$work/source/"
