@@ -10,6 +10,7 @@ if(LIBMDF_INSTALL AND CMAKE_BUILD_TYPE STREQUAL "Release" AND LIBMDF_TARGET_ID)
     if(component STREQUAL "sdk")
       set(name "libmdf-${PROJECT_VERSION}-${LIBMDF_TARGET_ID}")
       set(dependencies ${LIBMDF_EXPORT_TARGETS}
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/libmdf.h"
         "${LIBMDF_GENERATED_INCLUDE_DIR}/libmdf/mdf.h"
         "${CMAKE_CURRENT_BINARY_DIR}/libmdfConfig.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/libmdfConfigVersion.cmake"
