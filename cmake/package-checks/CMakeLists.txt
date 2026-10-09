@@ -45,11 +45,21 @@ foreach(artifact IN LISTS artifacts)
     message(FATAL_ERROR "Missing prepared artifact prerequisite: ${artifact}")
   endif()
 endforeach()
+if(LIBMDF_ARTIFACT_SCOPE STREQUAL "complete")
+  file(GLOB release_members CONFIGURE_DEPENDS
+    "${LIBMDF_DIST_DIR}/libmdf-*.tar.gz" "${LIBMDF_DIST_DIR}/cmdf-*.tar.gz"
+    "${LIBMDF_DIST_DIR}/libmdf-*-1.rockspec" "${LIBMDF_DIST_DIR}/libmdf-*-1.src.rock"
+    "${LIBMDF_DIST_DIR}/libmdf-*-CHECKSUMS")
+  # Native glob regeneration observes membership; this content output makes a
+  # changed filename set invalidate success even when an added file is older.
+  file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/release-members.txt" CONTENT "${release_members}\n")
+  list(APPEND artifacts "${CMAKE_CURRENT_BINARY_DIR}/release-members.txt")
+endif()
 add_test(NAME verify_${LIBMDF_ARTIFACT_SCOPE} COMMAND "${CMAKE_COMMAND}" -E env ${environment} "${script}" ${arguments})
 set_tests_properties(verify_${LIBMDF_ARTIFACT_SCOPE} PROPERTIES LABELS "packaging;e2e" TIMEOUT 600 RUN_SERIAL TRUE)
 file(GLOB scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
   "${LIBMDF_SOURCE_DIR}/tests/package-consumer/*")
-list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh")
+list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh" "${LIBMDF_SOURCE_DIR}/CMakeLists.txt")
 set(stamp "${CMAKE_CURRENT_BINARY_DIR}/artifacts.pass")
 add_custom_command(OUTPUT "${stamp}"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${stamp}"
