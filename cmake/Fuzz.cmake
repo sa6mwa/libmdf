@@ -18,6 +18,8 @@ add_custom_command(OUTPUT "${stamp}"
   DEPENDS fuzz_smoke afl_gate_fixture ${fuzz_inputs}
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fuzz.sh" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_afl_gate.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cpkt-aflpp.sh" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_afl_gate.sh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Fuzz.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt"
   VERBATIM USES_TERMINAL)
 add_custom_target(check-fuzz DEPENDS "${stamp}")

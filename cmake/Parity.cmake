@@ -74,6 +74,8 @@ foreach(profile quick full)
         --output-on-failure --stop-on-failure --no-tests=error -j1 -R "^${test}$"
       COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
       DEPENDS "${LIBMDF_PARITYJUDGE}" mdf_shared ${parity_data} "${script}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Parity.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
         "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt"
       VERBATIM USES_TERMINAL)
     add_custom_target(${check} DEPENDS "${stamp}")
