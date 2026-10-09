@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
 project(libmdf_artifact_checks NONE)
 enable_testing()
+include("${CMAKE_CURRENT_LIST_DIR}/../StableInputs.cmake")
+libmdf_stable_input(CMakeCache.txt check_configuration)
 get_filename_component(default_source "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
 set(LIBMDF_SOURCE_DIR "${default_source}" CACHE PATH "Owning source checkout")
 set(LIBMDF_DIST_DIR "${LIBMDF_SOURCE_DIR}/dist" CACHE PATH "Artifact directory")
@@ -57,7 +59,7 @@ if(LIBMDF_ARTIFACT_SCOPE STREQUAL "complete")
 endif()
 add_test(NAME verify_${LIBMDF_ARTIFACT_SCOPE} COMMAND "${CMAKE_COMMAND}" -E env ${environment} "${script}" ${arguments})
 set_tests_properties(verify_${LIBMDF_ARTIFACT_SCOPE} PROPERTIES LABELS "packaging;e2e" TIMEOUT 600 RUN_SERIAL TRUE)
-file(GLOB scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
+file(GLOB_RECURSE scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
   "${LIBMDF_SOURCE_DIR}/tests/package-consumer/*")
 list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh" "${LIBMDF_SOURCE_DIR}/CMakeLists.txt")
 set(stamp "${CMAKE_CURRENT_BINARY_DIR}/artifacts.pass")
@@ -66,7 +68,7 @@ add_custom_command(OUTPUT "${stamp}"
   COMMAND "${CMAKE_CTEST_COMMAND}" --test-dir "${CMAKE_CURRENT_BINARY_DIR}"
     --output-on-failure --stop-on-failure --no-tests=error -j1
   COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-  DEPENDS ${artifacts} ${scripts} "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt"
+  DEPENDS ${artifacts} ${scripts} "${check_configuration}"
     "${CMAKE_CURRENT_LIST_FILE}"
   VERBATIM USES_TERMINAL)
 add_custom_target(verify DEPENDS "${stamp}")

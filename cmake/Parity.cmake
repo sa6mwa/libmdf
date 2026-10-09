@@ -1,4 +1,6 @@
 find_program(LIBMDF_GO go REQUIRED)
+include("${CMAKE_CURRENT_LIST_DIR}/StableInputs.cmake")
+libmdf_stable_input(CMakeCache.txt check_configuration)
 set(LIBMDF_PARITYJUDGE "${CMAKE_CURRENT_BINARY_DIR}/parityjudge")
 set(LIBMDF_PARITY_TEST "${CMAKE_CURRENT_BINARY_DIR}/parityjudge-test")
 file(GLOB parity_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/*.go" "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/*.c")
@@ -75,8 +77,7 @@ foreach(profile quick full)
       COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
       DEPENDS "${LIBMDF_PARITYJUDGE}" mdf_shared ${parity_data} "${script}"
         "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Parity.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt"
+        "${check_configuration}"
       VERBATIM USES_TERMINAL)
     add_custom_target(${check} DEPENDS "${stamp}")
   endforeach()

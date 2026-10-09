@@ -1,6 +1,8 @@
 # Suite-scoped success outputs use native timestamp dependencies. The checkout,
 # configured tools and execution modes remain stable while a check owns it.
 if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
+  include("${CMAKE_CURRENT_LIST_DIR}/StableInputs.cmake")
+  libmdf_stable_input(CMakeCache.txt check_configuration)
   file(GLOB_RECURSE check_inputs CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.[ch]" "${CMAKE_CURRENT_SOURCE_DIR}/include/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/*" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.sh"
@@ -8,8 +10,7 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*")
   list(APPEND check_inputs "${CMAKE_CURRENT_SOURCE_DIR}/Makefile"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
-    "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
-    "${CMAKE_CURRENT_SOURCE_DIR}/CMakePresets.json" "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt")
+    "${CMAKE_CURRENT_SOURCE_DIR}/CMakePresets.json" "${check_configuration}")
   get_property(build_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
   set(check_binaries)
   foreach(target IN LISTS build_targets)
@@ -35,8 +36,8 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     set(binaries ${check_binaries})
     if(suite STREQUAL "memory")
       set(inputs "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Tests.cmake" "${CMAKE_CURRENT_LIST_FILE}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
-        "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt")
+        "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
+        "${check_configuration}")
       set(binaries "$<TARGET_FILE:test_public_api>" "$<TARGET_FILE:test_contracts>")
     endif()
     add_custom_command(OUTPUT "${stamp}"

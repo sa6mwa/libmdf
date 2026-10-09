@@ -1,0 +1,15 @@
+# Resolved cache values are verification inputs; comments and cache UI types
+# can change on no-op configure without changing the configured operation.
+file(STRINGS "${INPUT}" entries REGEX "^[^/#][^:]*:[^=]*=")
+set(content "")
+foreach(entry IN LISTS entries)
+  string(REGEX REPLACE "^([^:]+):[^=]*=" "\\1=" entry "${entry}")
+  string(APPEND content "${entry}\n")
+endforeach()
+set(previous "")
+if(EXISTS "${OUTPUT}")
+  file(READ "${OUTPUT}" previous)
+endif()
+if(NOT EXISTS "${OUTPUT}" OR NOT content STREQUAL previous)
+  file(WRITE "${OUTPUT}" "${content}")
+endif()

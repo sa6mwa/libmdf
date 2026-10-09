@@ -1,4 +1,6 @@
 enable_testing()
+include("${CMAKE_CURRENT_LIST_DIR}/StableInputs.cmake")
+libmdf_stable_input(CMakeCache.txt check_configuration)
 add_executable(afl_gate_fixture tests/afl_gate_fixture.c)
 libmdf_configure_c89_target(afl_gate_fixture)
 libmdf_configure_development_runtime(afl_gate_fixture)
@@ -19,7 +21,6 @@ add_custom_command(OUTPUT "${stamp}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_fuzz.sh" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_afl_gate.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cpkt-aflpp.sh" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_afl_gate.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Fuzz.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/CTestTestfile.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/CMakeCache.txt"
+    "${check_configuration}"
   VERBATIM USES_TERMINAL)
 add_custom_target(check-fuzz DEPENDS "${stamp}")

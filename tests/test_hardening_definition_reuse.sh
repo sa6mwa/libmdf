@@ -9,6 +9,7 @@ for scope in fuzz parity; do
   build="$work/$scope/build"
   mkdir -p "$source/cmake" "$source/scripts" "$source/tests" "$source/fuzz/corpus" "$source/parityjudge" "$source/include/libmdf"
   cp "$root/cmake/Fuzz.cmake" "$root/cmake/Parity.cmake" "$source/cmake/"
+  cp "$root/cmake/StableInputs.cmake" "$root/cmake/CacheInput.cmake" "$source/cmake/"
   printf 'int fixture(void) { return 0; }\n' > "$source/fixture.c"
   printf 'int main(void) { return 0; }\n' > "$source/tests/afl_gate_fixture.c"
   printf '#define FIXTURE_HEADER 1\n' > "$source/include/libmdf/mdf.h"
@@ -53,6 +54,13 @@ CMAKE
   else target=check-quick-parity-ansi; stamp="$build/checks/quick-parity_ansi.pass"; fi
   cmake --build "$build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" --target "$target" > "$work/$scope-first.log" 2>&1
   test -f "$stamp"
+  cp "$build/CMakeCache.txt" "$work/$scope-first-cache.txt"
+  cmake -S "$source" -B "$build" > "$work/$scope-warm-configure.log"
+  cmake --build "$build" --target "$target" > "$work/$scope-warm.log"
+  if grep -q 'Test project' "$work/$scope-warm.log"; then
+    diff -u "$work/$scope-first-cache.txt" "$build/CMakeCache.txt" || true
+    printf 'No-op configuration reran the %s suite\n' "$scope" >&2; exit 1;
+  fi
   if [[ $scope == fuzz ]]; then
     printf '\nadd_test(NAME introduced_failure COMMAND /bin/false)\nset_tests_properties(introduced_failure PROPERTIES LABELS fuzz)\n' >> "$source/cmake/Fuzz.cmake"
   else

@@ -33,6 +33,7 @@ CMAKE
 cmake -S "$work/source" -B "$work/build" -G Ninja -DCHECKS_MODULE="$root/cmake/Checks.cmake" > "$work/configure.log"
 cmake --build "$work/build" --target check-native > "$work/first.log"
 [[ $(wc -l < "$work/build/runs") == 1 ]]
+cmake -S "$work/source" -B "$work/build" > "$work/warm-configure.log"
 cmake --build "$work/build" --target check-native > "$work/warm.log"
 [[ $(wc -l < "$work/build/runs") == 1 ]]
 # Ordinary edits create newer timestamps; no hash service or forced timestamp repair.
