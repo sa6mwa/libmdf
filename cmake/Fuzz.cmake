@@ -10,6 +10,8 @@ add_test(NAME fuzz_smoke COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run_f
   "$<TARGET_FILE:fuzz_smoke>" "${CMAKE_CURRENT_BINARY_DIR}" smoke 3)
 set_tests_properties(afl_gate fuzz_smoke PROPERTIES LABELS "hardening;fuzz" TIMEOUT 60 RUN_SERIAL TRUE)
 file(GLOB_RECURSE fuzz_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fuzz/corpus/*")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/inputs/fuzz-members.txt" CONTENT "${fuzz_inputs}\n")
+list(APPEND fuzz_inputs "${CMAKE_CURRENT_BINARY_DIR}/inputs/fuzz-members.txt")
 set(stamp "${CMAKE_CURRENT_BINARY_DIR}/checks/fuzz.pass")
 add_custom_command(OUTPUT "${stamp}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/checks"

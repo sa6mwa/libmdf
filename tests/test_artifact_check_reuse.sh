@@ -57,6 +57,13 @@ if cmake --build "$work/build" --target verify > "$work/toolchain-changed.log" 2
 fi
 test ! -f "$work/build/artifacts.pass"
 printf '# toolchain-valid\n' > "$work/source/cmake/toolchains/included.cmake"
+cmake --build "$work/build" --target verify > "$work/toolchain-restored.log"
+rm "$work/source/cmake/toolchains/included.cmake"
+if cmake --build "$work/build" --target verify > "$work/toolchain-deleted.log" 2>&1; then
+  printf 'Deleted consumer toolchain left a stale artifact success record\n' >&2; exit 1;
+fi
+test ! -f "$work/build/artifacts.pass"
+printf '# toolchain-valid\n' > "$work/source/cmake/toolchains/included.cmake"
 mkdir -p "$work/source/build/debug/lua-runtime/bin"
 touch "$work/source/build/debug/lua-runtime/bin/lua" "$work/dist/libmdf-0.0.0-CHECKSUMS"
 cmake -S "$root/cmake/package-checks" -B "$work/complete" -G Ninja \

@@ -7,7 +7,8 @@ rm -rf -- "$work"
 for scope in fuzz parity; do
   source="$work/$scope/source"
   build="$work/$scope/build"
-  mkdir -p "$source/cmake" "$source/scripts" "$source/tests" "$source/fuzz/corpus" "$source/parityjudge" "$source/include/libmdf"
+  mkdir -p "$source/cmake" "$source/scripts" "$source/tests" "$source/fuzz/corpus" "$source/parityjudge" "$source/include/libmdf" "$source/testdata"
+  touch "$source/fuzz/corpus/required" "$source/testdata/required"
   cp "$root/cmake/Fuzz.cmake" "$root/cmake/Parity.cmake" "$source/cmake/"
   cp "$root/cmake/StableInputs.cmake" "$root/cmake/CacheInput.cmake" "$source/cmake/"
   printf 'int fixture(void) { return 0; }\n' > "$source/fixture.c"
@@ -17,6 +18,17 @@ for scope in fuzz parity; do
     printf '#!/bin/sh\nprintf "fixture-parity\\n"\n' > "$source/scripts/$script.sh"
     chmod +x "$source/scripts/$script.sh"
   done
+  cat > "$source/scripts/run_fuzz.sh" <<'SCRIPT'
+#!/bin/sh
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+test -f "$root/fuzz/corpus/required"
+SCRIPT
+  cat > "$source/scripts/parity.sh" <<'SCRIPT'
+#!/bin/sh
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+test -f "$root/testdata/required" || exit 1
+printf 'fixture-parity\n'
+SCRIPT
   printf '#!/bin/sh\nexit 0\n' > "$source/tests/test_afl_gate.sh"
   printf 'module fixture.local/parity\n\ngo 1.26.4\n' > "$source/parityjudge/go.mod"
   touch "$source/parityjudge/go.sum"
@@ -60,6 +72,21 @@ CMAKE
   if grep -q 'Test project' "$work/$scope-warm.log"; then
     diff -u "$work/$scope-first-cache.txt" "$build/CMakeCache.txt" || true
     printf 'No-op configuration reran the %s suite\n' "$scope" >&2; exit 1;
+  fi
+  if [[ $scope == fuzz ]]; then input="$source/fuzz/corpus/required"; else input="$source/testdata/required"; fi
+  rm "$input"
+  if cmake --build "$build" --target "$target" > "$work/$scope-deleted.log" 2>&1; then
+    printf 'Deleted %s input left a stale success record\n' "$scope" >&2; exit 1;
+  fi
+  test ! -f "$stamp"
+  touch "$input"
+  cmake --build "$build" --target "$target" > "$work/$scope-restored.log" 2>&1
+  if [[ $scope == parity ]]; then
+    mv "$source/parityjudge/main.go" "$source/parityjudge/cli.go"
+    printf '\nfunc renamedSourceProbe() {}\n' >> "$source/parityjudge/cli.go"
+    cmake --build "$build" --target "$target" > "$work/parity-renamed.log" 2>&1
+    test ! -f "$build/parity-source/main.go"
+    test -f "$build/parity-source/cli.go"
   fi
   if [[ $scope == fuzz ]]; then
     printf '\nadd_test(NAME introduced_failure COMMAND /bin/false)\nset_tests_properties(introduced_failure PROPERTIES LABELS fuzz)\n' >> "$source/cmake/Fuzz.cmake"

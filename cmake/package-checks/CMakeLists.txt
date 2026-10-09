@@ -62,6 +62,8 @@ set_tests_properties(verify_${LIBMDF_ARTIFACT_SCOPE} PROPERTIES LABELS "packagin
 file(GLOB_RECURSE scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
   "${LIBMDF_SOURCE_DIR}/tests/package-consumer/*")
 list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh" "${LIBMDF_SOURCE_DIR}/CMakeLists.txt")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/verification-members.txt" CONTENT "${scripts}\n")
+list(APPEND scripts "${CMAKE_CURRENT_BINARY_DIR}/verification-members.txt")
 set(stamp "${CMAKE_CURRENT_BINARY_DIR}/artifacts.pass")
 add_custom_command(OUTPUT "${stamp}"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${stamp}"

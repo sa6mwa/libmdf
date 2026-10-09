@@ -13,6 +13,7 @@ cat > "$work/source/scripts/probe.sh" <<'PROBE'
 set -euo pipefail
 source=$1 build=$2
 printf 'run\n' >> "$build/runs"
+test -f "$source/testdata/input"
 [[ $(cat "$source/testdata/input") != fail ]]
 PROBE
 cat > "$work/source/CMakeLists.txt" <<'CMAKE'
@@ -41,6 +42,12 @@ sleep 1
 printf changed > "$work/source/testdata/input"
 cmake --build "$work/build" --target check-native > "$work/changed.log"
 [[ $(wc -l < "$work/build/runs") == 2 ]]
+rm "$work/source/testdata/input"
+if cmake --build "$work/build" --target check-native > "$work/deleted.log" 2>&1; then
+  printf 'Deleted verification input left a stale native success record\n' >&2; exit 1;
+fi
+test ! -f "$work/build/checks/native.pass"
+printf changed > "$work/source/testdata/input"
 printf '\nadd_test(NAME introduced_failure COMMAND /bin/false)\n' >> "$work/source/CMakeLists.txt"
 if cmake --build "$work/build" --target check-native > "$work/definitions.log" 2>&1; then
   printf 'Root CMake test definition changes left a stale success record\n' >&2; exit 1;
