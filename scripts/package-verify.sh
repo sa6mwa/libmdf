@@ -51,6 +51,11 @@ for artifact in "${artifacts[@]}"; do
   else
     binary="$package/bin/cmdf"
     test -x "$binary"; test -x "$package/bin/cmdf.lua"
+    for required in LICENSE README.md OFL.txt; do
+      test -f "$package/share/doc/cmdf/$required" || {
+        printf 'Missing mandatory CLI payload: share/doc/cmdf/%s\n' "$required" >&2; exit 1;
+      }
+    done
     grep -a -q 'JetBrains Mono' "$binary"
     grep -a -Fq 'require("libmdf")' "$package/bin/cmdf.lua"
   fi

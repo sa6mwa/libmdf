@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_DIST_DIR LIBMDF_NATIVE_RELEASE_BUILD LIBMDF_PACKAGE_WORK_DIR
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 work="$root/build/test-version-source"
 rm -rf -- "$work"
