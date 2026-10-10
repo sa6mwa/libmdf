@@ -100,6 +100,14 @@ CMAKE
     cmake --build "$build" --target "$target" > "$work/parity-renamed.log" 2>&1
     test ! -f "$build/parity-source/main.go"
     test -f "$build/parity-source/cli.go"
+    cp "$source/parityjudge/main_test.go" "$work/last-test.go"
+    rm "$source/parityjudge/main_test.go"
+    if cmake --build "$build" --target parity-tools > "$work/parity-empty-tests.log" 2>&1; then
+      printf 'Empty Go test suite reused a stale test executable\n' >&2; exit 1;
+    fi
+    test ! -f "$build/parityjudge-test"
+    cp "$work/last-test.go" "$source/parityjudge/main_test.go"
+    cmake --build "$build" --target parity-tools > "$work/parity-tests-restored.log" 2>&1
   fi
   if [[ $scope == fuzz ]]; then
     printf '\nadd_test(NAME introduced_failure COMMAND /bin/false)\nset_tests_properties(introduced_failure PROPERTIES LABELS fuzz)\n' >> "$source/cmake/Fuzz.cmake"

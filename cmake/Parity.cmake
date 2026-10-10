@@ -48,8 +48,12 @@ foreach(kind binary test)
     set(go_command test -c)
   endif()
   add_custom_command(OUTPUT "${output}"
+    # Go test -c succeeds without an output when the package has no test files.
+    # Clear stale executables and require this invocation to produce its runner.
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${output}"
     COMMAND "${CMAKE_COMMAND}" -E env ${parity_env} "${LIBMDF_GO}" ${go_command}
       -ldflags "${parity_link_flags}" -o "${output}" .
+    COMMAND test -x "${output}"
     DEPENDS ${parity_sources} mdf_shared
       "${CMAKE_CURRENT_BINARY_DIR}/inputs/parity-source-members.txt"
       "${LIBMDF_GENERATED_INCLUDE_DIR}/libmdf/mdf.h"
