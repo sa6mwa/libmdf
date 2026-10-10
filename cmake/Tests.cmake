@@ -284,6 +284,10 @@ if(LIBMDF_BUILD_TESTS)
   set_tests_properties(release_inventory PROPERTIES LABELS "host;packaging;lifecycle" TIMEOUT 10)
   add_test(NAME lua_package_reuse COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_package_reuse.sh")
   set_tests_properties(lua_package_reuse PROPERTIES LABELS "host;packaging;lifecycle;lua" TIMEOUT 15)
+  add_test(NAME export_list_relink COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_export_relink.sh")
+  set_tests_properties(export_list_relink PROPERTIES LABELS "host;lifecycle;exports" TIMEOUT 60)
+  add_test(NAME package_exports_darwin COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_package_exports_darwin.sh")
+  set_tests_properties(package_exports_darwin PROPERTIES LABELS "host;packaging;exports" TIMEOUT 10)
 
 
   add_test(NAME discover_target_tools COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_discover_target_tools.sh)

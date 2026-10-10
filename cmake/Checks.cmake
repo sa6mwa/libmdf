@@ -7,7 +7,9 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.[ch]" "${CMAKE_CURRENT_SOURCE_DIR}/include/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/*" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*" "${CMAKE_CURRENT_SOURCE_DIR}/testdata/*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*")
+    "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/README.md" "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libmdf-scm-1.rockspec.in")
   list(APPEND check_inputs "${CMAKE_CURRENT_SOURCE_DIR}/Makefile"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakePresets.json" "${check_configuration}")

@@ -148,9 +148,11 @@ if(LIBMDF_BUILD_SHARED)
     BUILD_RPATH ""
     INSTALL_RPATH "")
   if(UNIX AND NOT APPLE)
+    set_property(TARGET mdf_shared APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.map")
     target_link_options(mdf_shared PRIVATE
       "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.map")
   elseif(APPLE)
+    set_property(TARGET mdf_shared APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.darwin")
     target_link_options(mdf_shared PRIVATE
       "-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/cmake/libmdf.exports.darwin")
   endif()

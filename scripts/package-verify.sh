@@ -78,7 +78,10 @@ for artifact in "${artifacts[@]}"; do
     "$otool" -hv "$binary" > "$dir/header"
     grep -Eq 'ARM64|arm64' "$dir/header"
     "$otool" -L "$binary" > "$dir/dynamic"
-    if [[ $kind == sdk ]]; then grep -Fq "@rpath/libmdf.$abi.dylib" "$dir/dynamic";
+    if [[ $kind == sdk ]]; then
+      grep -Fq "@rpath/libmdf.$abi.dylib" "$dir/dynamic"
+      nm=$("$root/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" nm)
+      "$root/tests/test_shared_exports.sh" "$nm" "$binary" darwin
     elif sed '1d' "$dir/dynamic" | grep -q libmdf; then printf 'Darwin CLI must embed libmdf: %s\n' "$artifact" >&2; exit 1; fi
   fi
   if [[ $kind == sdk ]]; then

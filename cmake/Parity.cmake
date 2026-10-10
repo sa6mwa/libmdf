@@ -4,6 +4,7 @@ libmdf_stable_input(CMakeCache.txt check_configuration)
 set(LIBMDF_PARITYJUDGE "${CMAKE_CURRENT_BINARY_DIR}/parityjudge")
 set(LIBMDF_PARITY_TEST "${CMAKE_CURRENT_BINARY_DIR}/parityjudge-test")
 file(GLOB parity_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/*.go" "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/*.c")
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/inputs/parity-source-members.txt" CONTENT "${parity_sources}\n")
 set(parity_source_dir "${CMAKE_CURRENT_BINARY_DIR}/parity-source")
 set(parity_names go.mod go.sum mdf.h)
 foreach(source IN LISTS parity_sources)
@@ -50,6 +51,7 @@ foreach(kind binary test)
     COMMAND "${CMAKE_COMMAND}" -E env ${parity_env} "${LIBMDF_GO}" ${go_command}
       -ldflags "${parity_link_flags}" -o "${output}" .
     DEPENDS ${parity_sources} mdf_shared
+      "${CMAKE_CURRENT_BINARY_DIR}/inputs/parity-source-members.txt"
       "${LIBMDF_GENERATED_INCLUDE_DIR}/libmdf/mdf.h"
       "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/go.mod"
       "${CMAKE_CURRENT_SOURCE_DIR}/parityjudge/go.sum"

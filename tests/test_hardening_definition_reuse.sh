@@ -34,9 +34,12 @@ SCRIPT
   touch "$source/parityjudge/go.sum"
   cat > "$source/parityjudge/main.go" <<'GO'
 package main
+/* int requiredBridge(void); */
 import "C"
+func init() { C.requiredBridge() }
 func main() {}
 GO
+  printf 'int requiredBridge(void) { return 0; }\n' > "$source/parityjudge/bridge.c"
   cat > "$source/parityjudge/main_test.go" <<'GO'
 package main
 import "testing"
@@ -66,6 +69,9 @@ CMAKE
   else target=check-quick-parity-ansi; stamp="$build/checks/quick-parity_ansi.pass"; fi
   cmake --build "$build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" --target "$target" > "$work/$scope-first.log" 2>&1
   test -f "$stamp"
+  if [[ $scope == parity ]]; then
+    cmake --build "$build" --target parity-tools > "$work/parity-producers-first.log" 2>&1
+  fi
   cp "$build/CMakeCache.txt" "$work/$scope-first-cache.txt"
   cmake -S "$source" -B "$build" > "$work/$scope-warm-configure.log"
   cmake --build "$build" --target "$target" > "$work/$scope-warm.log"
@@ -82,6 +88,13 @@ CMAKE
   touch "$input"
   cmake --build "$build" --target "$target" > "$work/$scope-restored.log" 2>&1
   if [[ $scope == parity ]]; then
+    rm "$source/parityjudge/bridge.c"
+    if cmake --build "$build" --target parity-tools > "$work/parity-source-deleted.log" 2>&1; then
+      printf 'Deleted parity bridge reused stale Go executables\n' >&2; exit 1;
+    fi
+    test ! -f "$build/parity-source/bridge.c"
+    printf 'int requiredBridge(void) { return 0; }\n' > "$source/parityjudge/bridge.c"
+    cmake --build "$build" --target parity-tools > "$work/parity-source-restored.log" 2>&1
     mv "$source/parityjudge/main.go" "$source/parityjudge/cli.go"
     printf '\nfunc renamedSourceProbe() {}\n' >> "$source/parityjudge/cli.go"
     cmake --build "$build" --target "$target" > "$work/parity-renamed.log" 2>&1

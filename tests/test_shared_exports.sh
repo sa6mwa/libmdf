@@ -33,8 +33,16 @@ mdf_theme_exists
 mdf_theme_name
 mdf_write_token'
 
-actual=$("$nm_tool" -D --defined-only "$library" | awk '{print $3}' |
-  sed -e 's/@@.*$//' -e '/^LIBMDF_[0-9][0-9_]*$/d' -e '/^$/d' | sort)
+case ${3:-elf} in
+  elf)
+    symbols=$("$nm_tool" -D --defined-only "$library")
+    actual=$(printf '%s\n' "$symbols" | awk '{print $3}' |
+      sed -e 's/@@.*$//' -e '/^LIBMDF_[0-9][0-9_]*$/d' -e '/^$/d' | sort);;
+  darwin)
+    symbols=$("$nm_tool" -g -U -j "$library")
+    actual=$(printf '%s\n' "$symbols" | sed -e 's/^_//' -e '/^$/d' | sort);;
+  *) printf 'Unknown shared export format: %s\n' "$3" >&2; exit 2;;
+esac
 if [ "$actual" != "$expected" ]; then
   printf '%s\n' 'libmdf shared export allowlist mismatch' >&2
   printf '%s\n' 'expected:' >&2
