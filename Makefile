@@ -34,7 +34,7 @@ help:
 	  '  make package-verify          Verify the binary rehearsal through CTest' \
 	  '  make package-source-smoke    Reconstruct and test the committed source archive' \
 	  '  make prerelease              Incremental binary/Lua preparation; source smoke is explicit' \
-	  '  make release                 Require a clean exact tag, clean once and verify final bytes' \
+	  '  make release                 Require a verified signed commit and exact tag; clean and verify' \
 	  '  make clean                   Remove owned build/dist/extraction state; preserve shared caches'
 
 tools-native:

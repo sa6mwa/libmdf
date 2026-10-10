@@ -1040,7 +1040,10 @@ Bootlin collections; Darwin cross builds use the prepared osxcross SDK and pinne
 host MIG helper. Set `CPKT_TOOLCHAIN_CACHE` to select a prepared collection cache.
 The vendored lifecycle helper collection is kept together under `scripts/`;
 `CPKT_LIFECYCLE_SCRIPTS_DIR` can select another exact prepared copy. Shared toolchain
-and dependency archives survive `make clean`.
+and dependency archives survive `make clean`. Cleanup removes the entire local
+`build/`, `dist/` and `.cache/`, including hidden entries and local tools. Each
+checkout owns its generated state; another checkout's sources, tools, build state
+or caches cannot serve as shared prerequisites, even through overrides or symlinks.
 
 `make test` forces the native suite. `make check-native`, `make valgrind`,
 `make fuzz-smoke` and the parity targets reuse suite success only when their native
@@ -1065,9 +1068,13 @@ release identity. Extracted sources use their own injected `VERSION` and
 `RELEASE_MANIFEST`, including when extracted beneath another Git checkout.
 
 `make release` is a local final proof gate. Before cleaning or starting a producer,
-it requires a clean committed checkout, one exact lightweight tag on HEAD, no
+it requires a clean committed checkout, a verified signature on the final amended
+commit, one exact lightweight tag on HEAD, no
 candidate override and no partial target selection. Its preflight is also available
-as `make lifecycle-version-contract`; it never creates or removes tags. The final
+as `make lifecycle-version-contract`; it never creates or removes tags. Final
+artifacts and staging use the owned `dist/` and `build/package/` paths; redirected
+`LIBMDF_DIST_DIR` or `LIBMDF_PACKAGE_WORK_DIR` values are rejected before cleaning.
+Keep remote release refs unchanged until this entire local gate passes. The final
 gate cleans owned local state once, runs the required checks, reconstructs source
 and uses that native Release producer for the native SDK and CLI archives. Cross
 producers build their required configurations once. A failed phase stops the run;

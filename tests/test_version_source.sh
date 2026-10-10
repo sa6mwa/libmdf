@@ -25,7 +25,8 @@ git -C "$repo" tag -a v9.9.9 -m annotated
 if "$repo/scripts/lifecycle_version_contract.sh" > "$work/annotated.log" 2>&1; then exit 1; fi
 git -C "$repo" tag v2.3.4
 [[ $("$repo/scripts/version.sh") == 2.3.4 ]]
-"$repo/scripts/lifecycle_version_contract.sh"
+if "$repo/scripts/lifecycle_version_contract.sh" > "$work/unsigned.log" 2>&1; then exit 1; fi
+grep -q 'verified signature' "$work/unsigned.log"
 "$repo/scripts/package_source.sh" > "$work/package.log"
 tar -C "$work/extract" -xzf "$repo/dist/libmdf-2.3.4.tar.gz"
 # An enclosing repository must never own the extracted tree's source version.

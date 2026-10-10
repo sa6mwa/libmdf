@@ -25,4 +25,11 @@ when the ordinary timestamp/stable-input assumptions do not apply.
 A checkout using the previous tool cache may need one explicit
 `cmake --fresh --preset <preset>` when changing compiler collection paths. Normal
 entrypoints do not erase caches or worktrees. `make clean` removes owned generated
-state while shared verified archives and tool collections remain untouched.
+state, including hidden entries and local tools, while declared global verified
+archives and tool collections remain untouched. A checkout never borrows another
+checkout's generated state to bypass that cleanup.
+
+Final release preflight verifies the final amended commit's signature and its exact
+lightweight tag before cleaning or starting producers. Artifact/staging redirection
+cannot bypass the owned cleanup paths. Remote release refs remain unchanged until
+the complete local final gate passes; preparation does not authorize publication.
