@@ -1091,6 +1091,9 @@ for the final release manifest. `make package-verify` verifies that scope throug
 CTest. `make release-lua-artifacts` prepares the Lua archive, public rockspec and
 source rock; `make verify-lua-artifacts` proves the source rock against the extracted
 native SDK. The existing pinned interpreter is shared across these checks.
+Lua artifact generation also uses CMake output dependencies: unchanged preparation
+preserves artifact timestamps and matching verification results; changed sources
+or missing outputs regenerate the declared set.
 
 `make package-checksums` requires the complete declared target matrix, source archive
 and all three Lua artifacts. `make verify-release-archives` verifies that complete

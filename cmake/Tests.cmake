@@ -282,6 +282,8 @@ if(LIBMDF_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME release_inventory COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_release_inventory.sh")
   set_tests_properties(release_inventory PROPERTIES LABELS "host;packaging;lifecycle" TIMEOUT 10)
+  add_test(NAME lua_package_reuse COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_package_reuse.sh")
+  set_tests_properties(lua_package_reuse PROPERTIES LABELS "host;packaging;lifecycle;lua" TIMEOUT 15)
 
 
   add_test(NAME discover_target_tools COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_discover_target_tools.sh)
