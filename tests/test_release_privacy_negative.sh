@@ -45,7 +45,7 @@ reset_dist
 printf '%s\n' "$ROOT" > "$PKG/share/doc/libmdf/README.md"
 tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
 (cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
-expect_fail repo-path 'local paths or non-relocatable runtime paths leaked'
+expect_fail repo-path 'README.md'
 
 reset_dist
 TOOLCHAIN_ROOT=$("$ROOT/scripts/cpkt-toolchains.sh" discover x86_64-linux-gnu | sed -n 's/^root=//p')
@@ -75,3 +75,20 @@ grep -q 'no available target-correct readelf' "$BASE/missing-tool.err"
 tar -C "$BASE/pkg" -czf "$DIST/$ARTIFACT" "libmdf-$VERSION-x86_64-linux-gnu"
 (cd "$DIST" && sha256sum "$ARTIFACT" > "$MANIFEST")
 expect_fail mixed-origin-path 'non-\$ORIGIN RPATH/RUNPATH'
+
+# Required classification must fail closed rather than skip this ELF's bad path.
+mkdir -p "$BASE/classifier-tools"
+cat > "$BASE/classifier-tools/file" <<'EOF'
+#!/bin/sh
+exit "${TEST_FILE_EXIT:-17}"
+EOF
+chmod +x "$BASE/classifier-tools/file"
+for classifier_exit in 17 127; do
+  if TEST_FILE_EXIT="$classifier_exit" PATH="$BASE/classifier-tools:$PATH" \
+      LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh" \
+      > "$BASE/classifier-$classifier_exit.out" 2> "$BASE/classifier-$classifier_exit.err"; then
+    printf '%s\n' 'privacy gate accepted failed payload classification' >&2
+    exit 1
+  fi
+  grep -q 'could not classify payload' "$BASE/classifier-$classifier_exit.err"
+done

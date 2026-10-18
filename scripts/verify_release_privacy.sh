@@ -284,7 +284,10 @@ scan_runtime_paths() {
   failed=0
   find "$root" -type f |
   while IFS= read -r file; do
-    desc=$(file -b "$file" 2>/dev/null || true)
+    if ! desc=$(file -b "$file" 2>/dev/null); then
+      printf '%s\n' "file could not classify payload: $file" >> "$HITS"
+      exit 1
+    fi
     case "$desc" in
       *ELF*)
         scan_elf_rpath "$file" "$target" || failed=1
@@ -322,7 +325,7 @@ while IFS= read -r artifact_name; do
 done < "$artifact_list"
 
 if [ -s "$HITS" ]; then
-  printf '%s\n' "release privacy gate failed; local paths or non-relocatable runtime paths leaked:" >&2
+  printf '%s\n' "release privacy gate failed; payload inspection errors or local/non-relocatable paths:" >&2
   sort -u "$HITS" >&2
   exit 1
 fi
