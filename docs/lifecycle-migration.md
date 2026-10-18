@@ -29,7 +29,17 @@ state, including hidden entries and local tools, while declared global verified
 archives and tool collections remain untouched. A checkout never borrows another
 checkout's generated state to bypass that cleanup.
 
-Final release preflight verifies the final amended commit's signature and its exact
-lightweight tag before cleaning or starting producers. Artifact/staging redirection
+Implementation, testing and review stay on one development branch. For an
+authorized release, preserve it and squash the verified change onto the resolved
+local default branch before amendment/signing. Signing, tagging and the final gate
+use that default-branch commit; no intermediate release branch is created.
+
+Final release preflight requires HEAD attached to that branch and verifies the
+final amended commit's signature and its exact lightweight tag before full
+`make clean` or any producer. Artifact/staging redirection
 cannot bypass the owned cleanup paths. Remote release refs remain unchanged until
 the complete local final gate passes; preparation does not authorize publication.
+Cache overrides use this checkout's owned `build/` or `.cache/` paths or the
+declared global cpkt cache. Only that global cache and installed workstation
+prerequisites survive full cleanup. Documentation/skill-only updates need their
+normal verification and authorized commit/signing/push policy, without a release.

@@ -1037,10 +1037,14 @@ No pipeline step requires Python.
 Toolchain files and runtime discovery never provision tools. Prepare them explicitly
 with `make tools-native` or `make tools-cross`. Linux uses the pinned complete
 Bootlin collections; Darwin cross builds use the prepared osxcross SDK and pinned
-host MIG helper. Set `CPKT_TOOLCHAIN_CACHE` to select a prepared collection cache.
+host MIG helper. `CPKT_TOOLCHAIN_CACHE` and `CPKT_DEPENDENCY_CACHE` overrides use
+this checkout's owned `build/` or `.cache/` paths, or the declared global cpkt cache
+(default `~/.cache/cpkt`, with separate `toolchains/` and `deps/` directories).
 The vendored lifecycle helper collection is kept together under `scripts/`;
-`CPKT_LIFECYCLE_SCRIPTS_DIR` can select another exact prepared copy. Shared toolchain
-and dependency archives survive `make clean`. Cleanup removes the entire local
+`CPKT_LIFECYCLE_SCRIPTS_DIR` can select the installed skill's exact helper collection.
+The declared global cache and installed workstation prerequisites survive
+`make clean`. Repo-local cache overrides are disposable. Cleanup removes the entire
+local
 `build/`, `dist/` and `.cache/`, including hidden entries and local tools. Each
 checkout owns its generated state; another checkout's sources, tools, build state
 or caches cannot serve as shared prerequisites, even through overrides or symlinks.
@@ -1061,6 +1065,14 @@ checks for those artifacts. Source reconstruction is explicit during preparation
 `make package-source-smoke` packages committed inputs, extracts them and runs the
 native Release tests from that archive. Ordinary build and test targets never clean.
 
+Keep implementation, testing and review on one development branch. Once a release
+is authorized, preserve that branch and squash its verified change onto the local
+default branch. Present that squash commit for amendment and signing there; signing,
+the lightweight release tag and the final gate all use the default-branch commit.
+Create no intermediate release branch. The default branch is resolved from local
+`origin/HEAD`, with the project's local `trunk` as the fallback when that ref is
+unavailable. An unresolved default or detached HEAD cannot pass the final gate.
+
 Owned Git builds use one exact lightweight `vX.Y.Z` tag on HEAD, an explicit
 `LIBMDF_RELEASE_VERSION=X.Y.Z` candidate override, or `0.0.0`. Multiple exact
 lightweight release tags are an error. Annotated and symbolic tags do not supply
@@ -1068,17 +1080,22 @@ release identity. Extracted sources use their own injected `VERSION` and
 `RELEASE_MANIFEST`, including when extracted beneath another Git checkout.
 
 `make release` is a local final proof gate. Before cleaning or starting a producer,
-it requires a clean committed checkout, a verified signature on the final amended
-commit, one exact lightweight tag on HEAD, no
-candidate override and no partial target selection. Its preflight is also available
+it requires HEAD attached to the resolved default branch, a clean committed
+checkout, a verified signature on the final amended commit, one exact lightweight
+tag on HEAD, no candidate override and no partial target selection. Its preflight is also available
 as `make lifecycle-version-contract`; it never creates or removes tags. Final
 artifacts and staging use the owned `dist/` and `build/package/` paths; redirected
 `LIBMDF_DIST_DIR` or `LIBMDF_PACKAGE_WORK_DIR` values are rejected before cleaning.
-Keep remote release refs unchanged until this entire local gate passes. The final
-gate cleans owned local state once, runs the required checks, reconstructs source
+The final gate runs full `make clean` once, then runs the required checks, reconstructs source
 and uses that native Release producer for the native SDK and CLI archives. Cross
 producers build their required configurations once. A failed phase stops the run;
 there is no retagging, automatic repair or publication inside the gate.
+Prepare required release tools and archives in the declared global cache so they
+survive that clean. Keep remote default-branch and release-tag refs unchanged until
+the complete signed and tagged local release gate passes; never push to trigger CI.
+Updates limited to documentation or skill instructions use normal verification,
+commit/signing and explicitly authorized push policy, without release tags,
+artifacts or a release build.
 
 CMake install components `sdk` and `cli` stage each product. CMake archive outputs
 reuse unchanged producer inputs. Tarballs and source rocks have deterministic

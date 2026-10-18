@@ -14,12 +14,13 @@ set -euo pipefail
 phase=${@: -1}
 printf '%s\n' "$phase" >> "$TEST_PHASE_LOG"
 if [[ ${TEST_FAIL_PHASE:-} == "$phase" ]]; then exit 17; fi
+if [[ $phase == clean ]]; then "$TEST_RELEASE_ROOT/scripts/clean.sh"; fi
 if [[ $phase == package && -n ${LIBMDF_NATIVE_RELEASE_BUILD:-} ]]; then
   printf '%s\n' "$LIBMDF_NATIVE_RELEASE_BUILD" > "$TEST_NATIVE_RECORD"
 fi
 MAKE
 chmod +x "$repo/fixture/bin/make"
-git -C "$repo" init -q
+git -C "$repo" init -q -b release-line
 git -C "$repo" config user.email test@example.invalid
 git -C "$repo" config user.name 'libmdf test'
 git -C "$repo" config core.hooksPath /dev/null
@@ -27,7 +28,9 @@ git -C "$repo" config commit.gpgSign false
 git -C "$repo" config tag.gpgSign false
 git -C "$repo" add .
 git -C "$repo" commit -qm 'test(lifecycle): create release sequencing fixture'
-export TEST_PHASE_LOG="$repo/record/phases" TEST_NATIVE_RECORD="$repo/record/native" PATH="$repo/fixture/bin:$PATH"
+git -C "$repo" update-ref refs/remotes/origin/release-line HEAD
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/release-line
+export TEST_RELEASE_ROOT="$repo" TEST_PHASE_LOG="$repo/record/phases" TEST_NATIVE_RECORD="$repo/record/native" PATH="$repo/fixture/bin:$PATH"
 unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_NATIVE_RELEASE_BUILD LIBMDF_DIST_DIR LIBMDF_PACKAGE_WORK_DIR
 mkdir -p "$repo/build/.hidden" "$repo/dist/.hidden" "$repo/.cache/.hidden"
 touch "$repo/build/preserve" "$repo/dist/preserve" "$repo/.cache/.hidden/preserve"
@@ -59,6 +62,26 @@ if "$repo/scripts/release.sh" final > "$repo/record/untrusted.log" 2>&1; then ex
 grep -q 'verified signature' "$repo/record/untrusted.log"
 test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
 printf 'test@example.invalid %s\n' "$(cat "$repo/record/signing-key.pub")" > "$repo/record/allowed-signers"
+git -C "$repo" checkout -q -b fix/candidate
+if "$repo/scripts/release.sh" final > "$repo/record/topic.log" 2>&1; then exit 1; fi
+grep -q 'resolved default branch release-line' "$repo/record/topic.log"
+test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
+git -C "$repo" checkout -q --detach
+if "$repo/scripts/release.sh" final > "$repo/record/detached.log" 2>&1; then exit 1; fi
+grep -q 'attached to the resolved default branch' "$repo/record/detached.log"
+test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
+git -C "$repo" checkout -q release-line
+# No origin metadata and no declared local trunk is an unresolved default.
+git -C "$repo" symbolic-ref --delete refs/remotes/origin/HEAD
+if "$repo/scripts/release.sh" final > "$repo/record/unresolved.log" 2>&1; then exit 1; fi
+grep -q 'resolve the default branch' "$repo/record/unresolved.log"
+test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
+# The documented local trunk fallback remains read-only and needs no network.
+git -C "$repo" branch -m trunk
+"$repo/scripts/lifecycle_version_contract.sh" > "$repo/record/fallback.log" 2>&1
+test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
+git -C "$repo" branch -m release-line
+git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/release-line
 if LIBMDF_DIST_DIR="$work/redirected" "$repo/scripts/release.sh" final > "$repo/record/dist.log" 2>&1; then exit 1; fi
 if LIBMDF_PACKAGE_WORK_DIR="$work/redirected" "$repo/scripts/release.sh" final > "$repo/record/staging.log" 2>&1; then exit 1; fi
 grep -q 'owned dist directory' "$repo/record/dist.log"
@@ -73,18 +96,23 @@ mv "$repo/.cache" "$repo/record/local-cache"
 ln -s "$work/borrowed" "$repo/.cache"
 if "$repo/scripts/release.sh" final > "$repo/record/borrowed.log" 2>&1; then exit 1; fi
 grep -q 'Refusing to clean a borrowed directory' "$repo/record/borrowed.log"
-test -f "$work/borrowed/preserve"; test -f "$repo/build/preserve"; test ! -e "$TEST_PHASE_LOG"
+test -f "$work/borrowed/preserve"; test -f "$repo/build/preserve"
+printf 'clean\n' > "$repo/record/expected"
+cmp "$repo/record/expected" "$TEST_PHASE_LOG"
+rm "$TEST_PHASE_LOG"
 rm "$repo/.cache"
 mv "$repo/record/local-cache" "$repo/.cache"
 "$repo/scripts/release.sh" final > "$repo/record/final.log" 2>&1
 test ! -e "$repo/build/preserve"; test ! -e "$repo/dist/preserve"
 test ! -e "$repo/build/.hidden"; test ! -e "$repo/dist/.hidden"; test ! -e "$repo/.cache"
-printf '%s\n' format-check test-hardening package-source-smoke package release-lua-artifacts package-checksums verify-release-archives > "$repo/record/expected"
+printf '%s\n' clean format-check test-hardening package-source-smoke package release-lua-artifacts package-checksums verify-release-archives > "$repo/record/expected"
 cmp "$repo/record/expected" "$TEST_PHASE_LOG"
 grep -Fxq "$repo/build/package-source-smoke/build" "$TEST_NATIVE_RECORD"
 : > "$TEST_PHASE_LOG"
 mkdir -p "$repo/build"; touch "$repo/build/warm"
+git -C "$repo" checkout -q fix/candidate
 "$repo/scripts/release.sh" prepare > "$repo/record/prepare.log" 2>&1
+git -C "$repo" checkout -q release-line
 test -f "$repo/build/warm"
 printf '%s\n' format-check test-hardening package release-lua-artifacts package-verify verify-lua-artifacts > "$repo/record/expected"
 cmp "$repo/record/expected" "$TEST_PHASE_LOG"
@@ -96,5 +124,5 @@ if LIBMDF_RELEASE_VERSION=1.2.3 "$repo/scripts/release.sh" final > "$repo/record
 test -f "$repo/build/warm"
 : > "$TEST_PHASE_LOG"
 if TEST_FAIL_PHASE=package "$repo/scripts/release.sh" final > "$repo/record/final-failed.log" 2>&1; then exit 1; fi
-printf '%s\n' format-check test-hardening package-source-smoke package > "$repo/record/expected"
+printf '%s\n' clean format-check test-hardening package-source-smoke package > "$repo/record/expected"
 cmp "$repo/record/expected" "$TEST_PHASE_LOG"

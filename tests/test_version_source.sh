@@ -7,7 +7,7 @@ rm -rf -- "$work"
 mkdir -p "$work/repo/scripts" "$work/extract"
 repo="$work/repo"
 cp "$root/scripts/"{version.sh,package_source.sh,archive.sh,lifecycle_version_contract.sh} "$repo/scripts/"
-git -C "$repo" init -q
+git -C "$repo" init -q -b trunk
 git -C "$repo" config user.email test@example.invalid
 git -C "$repo" config user.name 'libmdf test'
 git -C "$repo" config core.hooksPath /dev/null

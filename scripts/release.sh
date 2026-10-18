@@ -6,7 +6,7 @@ mode=${1:-prepare}
 case "$mode" in
   final)
     "$root/scripts/lifecycle_version_contract.sh"
-    "$root/scripts/clean.sh";;
+    make --no-print-directory -C "$root" clean;;
   prepare) ;;
   *) printf 'usage: release.sh [prepare|final]\n' >&2; exit 2;;
 esac
