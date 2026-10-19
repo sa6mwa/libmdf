@@ -1,6 +1,6 @@
 package = "libmdf"
 version = "@VERSION@-1"
-source = { url = "git+file://." }
+source = { url = "git+https://github.com/sa6mwa/libmdf.git", tag = "v@VERSION@" }
 description = {
   summary = "Lua facade for libmdf",
   license = "MIT"

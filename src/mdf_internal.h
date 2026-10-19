@@ -207,6 +207,8 @@ typedef struct mdf_impl {
     char *inline_url;
     size_t inline_url_len;
     size_t inline_url_cap;
+    size_t inline_url_paren_depth;
+    int inline_url_escaped;
     char *pending_fallback_url;
     size_t pending_fallback_url_len;
     size_t pending_fallback_url_cap;

@@ -1,31 +1,42 @@
 {
-  "version": 2,
+  "version": 5,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
   "configurePresets": [
     {
-      "name": "base",
-      "hidden": true,
-      "generator": "Ninja",
+      "name": "base", "hidden": true, "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON", "CMAKE_INSTALL_LIBDIR": "lib", "CMAKE_INSTALL_INCLUDEDIR": "include", "CMAKE_INSTALL_BINDIR": "bin", "CMAKE_INSTALL_DATAROOTDIR": "share" }
+    },
+    {
+      "name": "development", "hidden": true, "inherits": "base",
       "cacheVariables": {
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "LIBMDF_BUILD_STATIC": "ON", "LIBMDF_BUILD_SHARED": "ON", "LIBMDF_BUILD_BINARY": "ON",
+        "LIBMDF_BUILD_TESTS": "ON", "LIBMDF_BUILD_HOST_TESTS": "ON", "LIBMDF_BUILD_LUA_TESTS": "ON", "LIBMDF_BUILD_EXAMPLES": "ON",
+        "LIBMDF_BUILD_FUZZERS": "OFF", "LIBMDF_INSTALL": "ON", "LIBMDF_INSTALL_BINARY": "OFF",
+        "LIBMDF_CMDF_STATIC_RUNTIME": "OFF"
       }
     },
-    { "name": "debug", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu", "LIBMDF_BUILD_TESTS": "ON", "LIBMDF_BUILD_EXAMPLES": "ON" } },
-    { "name": "debug-lua", "inherits": "debug" },
-    { "name": "valgrind", "inherits": "debug" },
-    { "name": "fuzz", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu-afl.cmake", "LIBMDF_BUILD_FUZZERS": "ON" } },
-    { "name": "x86_64-linux-gnu-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
-    { "name": "x86_64-linux-musl-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/x86_64-linux-musl.cmake", "LIBMDF_TARGET_ID": "x86_64-linux-musl", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
-    { "name": "aarch64-linux-gnu-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/aarch64-linux-gnu.cmake", "LIBMDF_TARGET_ID": "aarch64-linux-gnu", "LIBMDF_TARGET_ARCH": "aarch64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
-    { "name": "aarch64-linux-musl-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/aarch64-linux-musl.cmake", "LIBMDF_TARGET_ID": "aarch64-linux-musl", "LIBMDF_TARGET_ARCH": "aarch64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
-    { "name": "armhf-linux-gnu-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/armhf-linux-gnu.cmake", "LIBMDF_TARGET_ID": "armhf-linux-gnu", "LIBMDF_TARGET_ARCH": "armhf", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
-    { "name": "armhf-linux-musl-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/armhf-linux-musl.cmake", "LIBMDF_TARGET_ID": "armhf-linux-musl", "LIBMDF_TARGET_ARCH": "armhf", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
-    { "name": "arm64-apple-darwin-release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/arm64-apple-darwin.cmake", "LIBMDF_TARGET_ID": "arm64-apple-darwin", "LIBMDF_TARGET_ARCH": "arm64", "LIBMDF_TARGET_OS": "darwin", "LIBMDF_TARGET_LIBC": "darwin" } }
+    {
+      "name": "release", "hidden": true, "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release", "LIBMDF_BUILD_STATIC": "ON", "LIBMDF_BUILD_SHARED": "ON",
+        "LIBMDF_BUILD_BINARY": "ON", "LIBMDF_BUILD_TESTS": "OFF", "LIBMDF_BUILD_HOST_TESTS": "OFF", "LIBMDF_BUILD_LUA_TESTS": "OFF",
+        "LIBMDF_BUILD_EXAMPLES": "OFF", "LIBMDF_BUILD_FUZZERS": "OFF", "LIBMDF_INSTALL": "ON",
+        "LIBMDF_INSTALL_BINARY": "ON", "LIBMDF_CMDF_STATIC_RUNTIME": "ON"
+      }
+    },
+    { "name": "debug", "inherits": "development", "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
+    { "name": "fuzz", "inherits": "base", "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu-afl.cmake", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug", "LIBMDF_BUILD_STATIC": "ON", "LIBMDF_BUILD_SHARED": "OFF", "LIBMDF_BUILD_BINARY": "OFF", "LIBMDF_BUILD_TESTS": "OFF", "LIBMDF_BUILD_HOST_TESTS": "OFF", "LIBMDF_BUILD_LUA_TESTS": "OFF", "LIBMDF_BUILD_EXAMPLES": "OFF", "LIBMDF_BUILD_FUZZERS": "ON", "LIBMDF_INSTALL": "OFF", "LIBMDF_INSTALL_BINARY": "OFF" } },
+    { "name": "x86_64-linux-gnu-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-gnu.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "x86_64-linux-gnu", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
+    { "name": "x86_64-linux-musl-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/x86_64-linux-musl.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "x86_64-linux-musl", "LIBMDF_TARGET_ARCH": "x86_64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
+    { "name": "aarch64-linux-gnu-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/aarch64-linux-gnu.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "aarch64-linux-gnu", "LIBMDF_TARGET_ARCH": "aarch64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
+    { "name": "aarch64-linux-musl-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/aarch64-linux-musl.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "aarch64-linux-musl", "LIBMDF_TARGET_ARCH": "aarch64", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
+    { "name": "armhf-linux-gnu-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/armhf-linux-gnu.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "armhf-linux-gnu", "LIBMDF_TARGET_ARCH": "armhf", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "gnu" } },
+    { "name": "armhf-linux-musl-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/armhf-linux-musl.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "armhf-linux-musl", "LIBMDF_TARGET_ARCH": "armhf", "LIBMDF_TARGET_OS": "linux", "LIBMDF_TARGET_LIBC": "musl" } },
+    { "name": "arm64-apple-darwin-release", "inherits": "release", "toolchainFile": "${sourceDir}/cmake/toolchains/arm64-apple-darwin.cmake", "cacheVariables": { "LIBMDF_TARGET_ID": "arm64-apple-darwin", "LIBMDF_TARGET_ARCH": "arm64", "LIBMDF_TARGET_OS": "darwin", "LIBMDF_TARGET_LIBC": "darwin" } }
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
-    { "name": "debug-lua", "configurePreset": "debug-lua" },
-    { "name": "valgrind", "configurePreset": "valgrind" },
     { "name": "fuzz", "configurePreset": "fuzz" },
     { "name": "x86_64-linux-gnu-release", "configurePreset": "x86_64-linux-gnu-release" },
     { "name": "x86_64-linux-musl-release", "configurePreset": "x86_64-linux-musl-release" },
@@ -36,7 +47,6 @@
     { "name": "arm64-apple-darwin-release", "configurePreset": "arm64-apple-darwin-release" }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
-    { "name": "valgrind", "configurePreset": "valgrind", "output": { "outputOnFailure": true } }
+    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "memory|hardening|full-parity|quick-parity" } }, "execution": { "jobs": 1, "stopOnFailure": true, "noTestsAction": "error" } }
   ]
 }

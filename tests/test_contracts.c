@@ -1617,6 +1617,171 @@ static int test_fallback_link_punctuation_contract(void)
     return fails;
 }
 
+static int test_link_destination_parentheses_contract(void)
+{
+    static const struct {
+        const char *markdown;
+        const char *url;
+        const char *visible;
+        const char *fallback;
+    } cases[] = {
+        {"David Teece’s [*Profiting from Technological Innovation*](https://doi.org/10.1016/0048-7333(86)90027-2) offers a stronger explanation of the commercial outcome than...\n",
+         "https://doi.org/10.1016/0048-7333(86)90027-2",
+         "David Teece’s Profiting from Technological Innovation offers a stronger explanation of the commercial outcome than...\n",
+         "David Teece’s Profiting from Technological Innovation (https://doi.org/10.1016/0048-7333(86)90027-2) offers a stronger explanation of the commercial outcome than...\n"},
+        {"[docs](https://x/a(b(c)d)e) tail\n", "https://x/a(b(c)d)e",
+         "docs tail\n", "docs (https://x/a(b(c)d)e) tail\n"},
+        {"([docs](https://x/a(b)c(d)e)).\n", "https://x/a(b)c(d)e",
+         "(docs).\n", "(docs (https://x/a(b)c(d)e)).\n"},
+        {"*before [docs](https://x/a(b)c) after*\n", "https://x/a(b)c",
+         "before docs after\n", "before docs (https://x/a(b)c) after\n"},
+        {"**[docs](https://x/a(b)c)**\n", "https://x/a(b)c",
+         "docs\n", "docs (https://x/a(b)c)\n"},
+        {"[docs](https://x/a\\(b\\)c) tail\n", "https://x/a(b)c",
+         "docs tail\n", "docs (https://x/a(b)c) tail\n"},
+        {"[docs](https://x/a\\)b) tail\n", "https://x/a)b",
+         "docs tail\n", "docs (https://x/a)b) tail\n"},
+        {"[docs](https://x/a\\(b) tail\n", "https://x/a(b",
+         "docs tail\n", "docs (https://x/a(b) tail\n"},
+        {"*before [docs](https://x/a\\)b) after*\n", "https://x/a)b",
+         "before docs after\n", "before docs (https://x/a)b) after\n"},
+        {"[docs](https://x/a(b)c)", "https://x/a(b)c",
+         "docs\n", "docs (https://x/a(b)c)\n"},
+        {"[broken](https://x/a(b)\n\n[docs](https://x/ok)\n", "https://x/ok",
+         "[broken](https://x/a(b)\n\ndocs\n", "[broken](https://x/a(b)\n\ndocs (https://x/ok)\n"},
+        {"[docs](https://x/a\\\\(b)c) tail\n", "https://x/a\\(b)c",
+         "docs tail\n", "docs (https://x/a\\(b)c) tail\n"},
+        {"[docs](https://x/a%28b%29c) tail\n", "https://x/a%28b%29c",
+         "docs tail\n", "docs (https://x/a%28b%29c) tail\n"},
+        {"[broken](https://x/a(b)", NULL,
+         "[broken](https://x/a(b)\n", "[broken](https://x/a(b)\n"},
+    };
+    static const size_t chunks[] = {1, 2, 7};
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    char destination[256];
+    char *plain;
+    size_t i;
+    size_t j;
+    int variant;
+    int fails;
+
+    fails = 0;
+    for (variant = 0; variant < 4; variant++) {
+        mdf_options_init(&opts);
+        opts.width = 240;
+        opts.ansi_mode = MDF_ANSI_ON;
+        opts.boring = variant != 2;
+        opts.osc8 = variant != 0;
+        for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+            st = render_capture(variant == 3 ? MDF_FORMAT_HTML : MDF_FORMAT_ANSI,
+                                &opts, cases[i].markdown, 4096, &whole);
+            fails += expect(st == MDF_OK && whole.failed == 0,
+                            "parenthesized link destination renders successfully");
+            if (variant != 3) {
+                fails += expect_trace_matches_writes(&whole,
+                                                     "parenthesized link sink writes match traces");
+            }
+            if (cases[i].url != NULL && variant != 0) {
+                if (variant == 3) {
+                    sprintf(destination, "href=\"%s\"", cases[i].url);
+                } else {
+                    sprintf(destination, "\033]8;;%s\033\\", cases[i].url);
+                }
+                fails += expect_contains(whole.out, destination,
+                                         "hyperlink retains the complete parenthesized destination");
+            }
+            if (variant != 3) {
+                plain = whole.out == NULL ? NULL : strip_ansi(whole.out);
+                fails += expect(plain != NULL &&
+                                strcmp(plain, variant == 0 ? cases[i].fallback : cases[i].visible) == 0,
+                                "parenthesized link consumes only its closing delimiter");
+                free(plain);
+            }
+            for (j = 0; j < sizeof(chunks) / sizeof(chunks[0]); j++) {
+                st = render_capture(variant == 3 ? MDF_FORMAT_HTML : MDF_FORMAT_ANSI,
+                                    &opts, cases[i].markdown, chunks[j], &split);
+                fails += expect(st == MDF_OK && split.failed == 0,
+                                "fragmented parenthesized link renders successfully");
+                if (variant != 3) {
+                    fails += expect_trace_matches_writes(&split,
+                                                         "fragmented parenthesized link writes match traces");
+                }
+                fails += expect_capture_writes_equal(&split, &whole,
+                                                     "link destination decisions survive input fragmentation");
+                capture_free(&split);
+                if (variant != 3) {
+                    st = incremental_capture(&opts, cases[i].markdown, chunks[j], &split);
+                    fails += expect(st == MDF_OK && split.failed == 0,
+                                    "parenthesized link survives incremental flushes");
+                    fails += expect_trace_matches_writes(&split,
+                                                         "incremental parenthesized link writes match traces");
+                    fails += expect_capture_writes_equal(&split, &whole,
+                                                         "link destination decisions survive feed and flush boundaries");
+                    capture_free(&split);
+                }
+            }
+            capture_free(&whole);
+        }
+    }
+    return fails;
+}
+
+static int test_table_link_destination_parentheses_contract(void)
+{
+    static const char markdown[] =
+        "| Link | Text |\n| --- | --- |\n"
+        "| [*DOI*](https://doi.org/10.1016/0048-7333(86)90027-2) | first |\n"
+        "| [docs](https://x/a(b(c)d)e) | second |\n";
+    mdf_options opts;
+    capture whole;
+    capture split;
+    mdf_status st;
+    int mode;
+    int format;
+    int fails;
+
+    fails = 0;
+    for (mode = 0; mode < 2; mode++) {
+        for (format = 0; format < 2; format++) {
+            mdf_options_init(&opts);
+            opts.width = 120;
+            opts.ansi_mode = MDF_ANSI_ON;
+            opts.osc8 = 1;
+            opts.table_buffer_mode = mode == 0 ? MDF_TABLE_BUFFER_FULL : MDF_TABLE_BUFFER_ROW;
+            st = render_capture(format == 0 ? MDF_FORMAT_ANSI : MDF_FORMAT_HTML,
+                                &opts, markdown, 4096, &whole);
+            fails += expect(st == MDF_OK && whole.failed == 0,
+                            "table mode preserves parenthesized link destinations");
+            fails += expect_contains(whole.out,
+                                     format == 0 ? "\033]8;;https://doi.org/10.1016/0048-7333(86)90027-2\033\\" :
+                                                   "href=\"https://doi.org/10.1016/0048-7333(86)90027-2\"",
+                                     "table DOI hyperlink retains its complete destination");
+            fails += expect_contains(whole.out,
+                                     format == 0 ? "\033]8;;https://x/a(b(c)d)e\033\\" :
+                                                   "href=\"https://x/a(b(c)d)e\"",
+                                     "later table hyperlink retains nested parentheses");
+            st = render_capture(format == 0 ? MDF_FORMAT_ANSI : MDF_FORMAT_HTML,
+                                &opts, markdown, 1, &split);
+            fails += expect(st == MDF_OK && split.failed == 0,
+                            "fragmented table parenthesized link renders successfully");
+            if (format == 0) {
+                fails += expect_trace_matches_writes(&whole,
+                                                     "table parenthesized link writes match traces");
+                fails += expect_trace_matches_writes(&split,
+                                                     "fragmented table parenthesized link writes match traces");
+            }
+            fails += expect_capture_writes_equal(&split, &whole,
+                                                 "configured table mode is independent of input fragments");
+            capture_free(&whole);
+            capture_free(&split);
+        }
+    }
+    return fails;
+}
+
 static int test_osc8_link_wrapping_contract(void)
 {
     static const struct {
@@ -5253,6 +5418,8 @@ int main(int argc, char **argv)
     fails += test_chart_trace_contract();
     fails += test_runtime_width_autolink_contract();
     fails += test_fallback_link_punctuation_contract();
+    fails += test_link_destination_parentheses_contract();
+    fails += test_table_link_destination_parentheses_contract();
     fails += test_osc8_link_wrapping_contract();
     fails += test_osc8_link_allocation_contract();
     fails += test_osc8_split_link_buffer_contract();

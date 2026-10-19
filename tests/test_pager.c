@@ -769,9 +769,9 @@ static int write_fixture(char *path, size_t cap, const char *suffix, int markdow
     int fd;
     int i;
     char line[64];
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (markdown) {
@@ -802,10 +802,10 @@ static int write_osc8_fixture(char *path, size_t cap)
 {
     int fd;
     const char *source;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
     source = "Regeringens [molnpolicy f\303\266r Sverige](https://www.regeringen.se/contentassets/112463c2b5404f84826545ba01967f28/en-molnpolicy-for-sverige--for-okad-sakerhet-effektivitet-och-innovation-i-den-offentliga-forvaltningen1.pdf) f\303\266rbjuder inte Azure och kr\303\244ver inte ett svenskt eller suver\303\244nt moln. Den betonar d\303\244remot kontroll, portabilitet, ers\303\244ttningsstrategier, *exit* och kontinuitet.\n";
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-osc8-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-osc8-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, strlen(source)) != 0) {
@@ -823,10 +823,10 @@ static int write_osc8_fixture(char *path, size_t cap)
 static int write_osc8_reflow_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "[abc](https://example.com)\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-osc8-reflow-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-osc8-reflow-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -844,13 +844,13 @@ static int write_osc8_reflow_fixture(char *path, size_t cap)
 static int write_incremental_resize_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] =
         "| first column | second column |\n"
         "| --- | --- |\n"
         "| alpha beta gamma | delta epsilon zeta |\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-incremental-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-incremental-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -869,10 +869,10 @@ static int write_wide_fixture(char *path, size_t cap)
 {
     int fd;
     const char *source;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
     source = "\346\227\245\346\234\254\350\252\236\346\227\245\346\234\254\350\252\236\n";
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-wide-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-wide-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, strlen(source)) != 0) {
@@ -890,10 +890,10 @@ static int write_wide_fixture(char *path, size_t cap)
 static int write_wide_tab_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "\346\227\245\tX\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-wide-tab-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-wide-tab-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -911,10 +911,10 @@ static int write_wide_tab_fixture(char *path, size_t cap)
 static int write_utf8_search_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "abc\346\227\245\346\234\254\350\252\236 abc\346\227\245\346\234\254\350\252\236\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-utf8-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-utf8-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -932,10 +932,10 @@ static int write_utf8_search_fixture(char *path, size_t cap)
 static int write_unicode_casefold_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "\316\221\316\222\316\223\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-casefold-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-casefold-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -954,10 +954,10 @@ static int write_initial_resize_fixture(char *path, size_t cap)
 {
     int fd;
     int i;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char line[] = "0123456789012345678901234567890123456789 initial resize rendering payload\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-initial-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-initial-resize-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     for (i = 0; i < 500; i++) {
@@ -977,9 +977,9 @@ static int write_initial_resize_fixture(char *path, size_t cap)
 static int write_status_path_fixture(char *path, size_t cap, const char *suffix)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, "status fixture\n", strlen("status fixture\n")) != 0) {
@@ -997,9 +997,9 @@ static int write_status_path_fixture(char *path, size_t cap, const char *suffix)
 static int write_styled_search_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-styled-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-styled-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, "foo `bar` baz\n", strlen("foo `bar` baz\n")) != 0) {
@@ -1017,10 +1017,10 @@ static int write_styled_search_fixture(char *path, size_t cap)
 static int write_long_word_markdown_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-long-word-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-long-word-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -1038,11 +1038,11 @@ static int write_long_word_markdown_fixture(char *path, size_t cap)
 static int write_nul_markdown_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char before[] = "# Before NUL\n\n";
     static const char after[] = "After NUL\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-nul-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-nul-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, before, sizeof(before) - 1) != 0 || write_all(fd, "\0", 1) != 0 ||
@@ -1061,9 +1061,9 @@ static int write_nul_markdown_fixture(char *path, size_t cap)
 static int write_fifo_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-fifo-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-fifo-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (close(fd) != 0 || snprintf(path, cap, "%s.fifo", temporary) >= (int)cap) {
@@ -1080,10 +1080,10 @@ static int write_fifo_fixture(char *path, size_t cap)
 static int write_c1_text_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "before \23552;c;INJECT\a after\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-c1-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-c1-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -1101,10 +1101,10 @@ static int write_c1_text_fixture(char *path, size_t cap)
 static int write_carriage_return_text_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "crlf line\r\nstandalone\rreturn\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-cr-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-cr-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -1122,10 +1122,10 @@ static int write_carriage_return_text_fixture(char *path, size_t cap)
 static int write_control_markdown_fixture(char *path, size_t cap)
 {
     int fd;
-    char temporary[128];
+    char temporary[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     static const char source[] = "# Markdown controls\n\nbefore \033]52;c;INJECT\a and \23552;c;C1\a after\n";
 
-    if (snprintf(temporary, sizeof(temporary), "/tmp/libmdf-pager-markdown-control-XXXXXX") >= (int)sizeof(temporary)) return -1;
+    if (snprintf(temporary, sizeof(temporary), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-markdown-control-XXXXXX") >= (int)sizeof(temporary)) return -1;
     fd = mkstemp(temporary);
     if (fd < 0) return -1;
     if (write_all(fd, source, sizeof(source) - 1) != 0) {
@@ -1204,26 +1204,26 @@ static void sleep_ms(long milliseconds)
 
 int main(int argc, char **argv)
 {
-    char text_path[128];
-    char markdown_path[128];
-    char osc8_path[128];
-    char osc8_reflow_path[128];
-    char wide_path[128];
-    char wide_tab_path[128];
-    char utf8_search_path[128];
-    char unicode_casefold_path[128];
-    char initial_resize_path[128];
-    char incremental_resize_path[128];
-    char control_path[128];
-    char unicode_path[128];
-    char styled_path[128];
-    char long_word_path[128];
-    char nul_path[128];
-    char fifo_path[128];
-    char c1_path[128];
-    char carriage_return_path[128];
-    char control_markdown_path[128];
-    char missing_path[128];
+    char text_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char markdown_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char osc8_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char osc8_reflow_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char wide_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char wide_tab_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char utf8_search_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char unicode_casefold_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char initial_resize_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char incremental_resize_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char control_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char unicode_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char styled_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char long_word_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char nul_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char fifo_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char c1_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char carriage_return_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char control_markdown_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char missing_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
     capture out;
     pid_t pid;
     int fd;
@@ -1287,7 +1287,7 @@ int main(int argc, char **argv)
         write_c1_text_fixture(c1_path, sizeof(c1_path)) != 0 ||
         write_carriage_return_text_fixture(carriage_return_path, sizeof(carriage_return_path)) != 0 ||
         write_control_markdown_fixture(control_markdown_path, sizeof(control_markdown_path)) != 0) goto done;
-    if (snprintf(missing_path, sizeof(missing_path), "/tmp/libmdf-pager-missing-XXXXXX") >= (int)sizeof(missing_path) ||
+    if (snprintf(missing_path, sizeof(missing_path), LIBMDF_TEST_SCRATCH_DIR "/libmdf-pager-missing-XXXXXX") >= (int)sizeof(missing_path) ||
         (fd = mkstemp(missing_path)) < 0 || close(fd) != 0 || unlink(missing_path) != 0) goto done;
 
     stage = "text startup";
@@ -1831,7 +1831,9 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "control filename status";
-    pid = start_pager(argv[1], control_path, 1, 0, 0, &master);
+    /* Use the basename so the filename's controls remain inside the narrow
+     * status bar even when the owned build directory has a long path. */
+    pid = start_pager(argv[1], strrchr(control_path, '/') + 1, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
         wait_for_marker(master, &out, "^[]52;c") != 0 ||
         require_contains(&out, "^[]52;c") != 0 ||
@@ -1841,7 +1843,7 @@ int main(int argc, char **argv)
     clear_capture(&out);
 
     stage = "unicode filename status";
-    pid = start_pager(argv[1], unicode_path, 1, 0, 0, &master);
+    pid = start_pager(argv[1], strrchr(unicode_path, '/') + 1, 1, 0, 0, &master);
     if (pid < 0 || wait_for_marker(master, &out, "status fixture") != 0 ||
         wait_for_marker(master, &out, "\346\227\245\346\234\254\350\252\236\346\227\245") != 0 ||
         require_contains(&out, "\346\227\245\346\234\254\350\252\236\346\227\245") != 0 ||

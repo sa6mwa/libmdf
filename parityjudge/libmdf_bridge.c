@@ -3,14 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../src/mdf.c"
-#include "../src/render.c"
-#include "../src/render_ansi_blocks.c"
-#include "../src/render_html.c"
-#include "../src/render_ansi.c"
-#include "../src/render_parse.c"
-#include "../src/html_fonts.c"
-#include "../src/unicode_classify.c"
+#include "mdf.h"
 
 typedef struct bridge_source {
     const char *data;

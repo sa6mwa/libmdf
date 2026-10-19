@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 MODE=${1:-ansi}
-JUDGE="$ROOT/build/parityjudge-cgo"
+JUDGE=${LIBMDF_PARITYJUDGE:-$ROOT/build/debug/parityjudge}
 PROFILE=${LIBMDF_STREAM_PARITY_PROFILE:-full}
 
 case "$PROFILE" in
@@ -69,40 +69,7 @@ while read -r parity_kind parity_path parity_width extra; do
 done < "$ROOT/testdata/goldens/libmdf/PARITY_EXCLUSIONS.txt"
 EXCLUDES=${LIBMDF_STREAM_PARITY_EXCLUDES:-$DEFAULT_EXCLUDES}
 CASE_EXCLUDES=${LIBMDF_STREAM_PARITY_CASE_EXCLUDES:-$DEFAULT_CASE_EXCLUDES}
-STAMP=$(cksum "$ROOT/src/mdf.c" "$ROOT/src/html_fonts.c" "$ROOT/src/render.c" "$ROOT/src/render_"*.c "$ROOT/src/unicode_classify.c" "$ROOT/src/unicode_classify.h" "$ROOT/src/mdf_internal.h" "$ROOT/include/libmdf/mdf.h" "$ROOT/src/html_embedded/"*.h | cksum | awk '{print $1}')
-child_pid=
+test -x "$JUDGE" || { printf "Missing parity runner; run make build-debug\n" >&2; exit 1; }
 
-cleanup_child() {
-  if [ -n "$child_pid" ]; then
-    kill -TERM "$child_pid" 2>/dev/null || true
-  fi
-}
-
-run_child() {
-  "$@" &
-  child_pid=$!
-  if wait "$child_pid"; then
-    status=0
-  else
-    status=$?
-  fi
-  child_pid=
-  return "$status"
-}
-
-trap 'cleanup_child; exit 130' INT
-trap 'cleanup_child; exit 143' TERM HUP
-
-if [ "$MODE" != "ansi" ]; then
-  if [ "$MODE" = "html" ]; then
-    printf '%s\n' "html streaming parity is not a supported contract" >&2
-    exit 2
-  fi
-  printf '%s\n' "unknown stream parity mode: $MODE" >&2
-  exit 2
-fi
-
-"$ROOT/scripts/build_parityjudge.sh" "$JUDGE" "libmdf_$STAMP"
-
-run_child "$JUDGE" -mode ansi -compare-libmdf -trace-compare -suite "$ROOT/testdata" -exclude "$EXCLUDES" -exclude-cases "$CASE_EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
+"$JUDGE" -mode ansi -compare-libmdf -trace-compare -suite "$ROOT/testdata" -exclude "$EXCLUDES" -exclude-cases "$CASE_EXCLUDES" -chunks "$CHUNKS" -widths "$WIDTHS" \
   -themes "$THEMES" -borings "$BORINGS" -osc8s "$OSC8S" -table-buffers "$TABLE_BUFFERS" -table-wires "$TABLE_WIRES"

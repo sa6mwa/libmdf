@@ -3,7 +3,8 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 mkdir -p "$root/build"
 work=$(mktemp -d "$root/build/test-cmdf-install.XXXXXX")
-eval "$("$root/scripts/bootlin_x86_runtime.sh")"
+runtime_env=$("$root/scripts/bootlin_x86_runtime.sh")
+eval "$runtime_env"
 for mode in OFF ON; do
   build="$work/$mode"
   cmake -S "$root" -B "$build" -G Ninja \

@@ -1,80 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-DIST=${LIBMDF_DIST_DIR:-$ROOT/dist}
-ARCHIVE="$DIST/libmdf-lua-$VERSION.tar.gz"
-ROCKSPEC="$DIST/libmdf-$VERSION-1.rockspec"
-SRCROCK="$DIST/libmdf-$VERSION-1.src.rock"
-TMP="$ROOT/build/package-verify/lua"
-HOST_ARTIFACT="$DIST/libmdf-$VERSION-x86_64-linux-gnu.tar.gz"
-
-test -f "$ARCHIVE"
-test -f "$ROCKSPEC"
-test -f "$SRCROCK"
-test -f "$HOST_ARTIFACT"
-grep -F -q 'dependencies = { "lua >= 5.5, < 5.6" }' "$ROCKSPEC"
-
-if grep -R -n -e "$ROOT" -e '/home/' -e '/tmp/' "$ROCKSPEC" >/dev/null; then
-  printf '%s\n' "$ROCKSPEC contains local paths" >&2
-  exit 1
-fi
-
-rm -rf "$TMP"
-mkdir -p "$TMP/archive" "$TMP/srcrock" "$TMP/sdk" "$TMP/tree"
-tar -C "$TMP/archive" -xzf "$ARCHIVE"
-root_count=$(find "$TMP/archive" -mindepth 1 -maxdepth 1 -type d | wc -l)
-test "$root_count" -eq 1
-root=$(find "$TMP/archive" -mindepth 1 -maxdepth 1 -type d)
-test "$(basename "$root")" = "libmdf-lua-$VERSION"
-
-for required in \
-  LICENSE \
-  README.md \
-  VERSION \
-  RELEASE_MANIFEST \
-  libmdf-scm-1.rockspec.in \
-  lua/libmdf.lua \
-  lua/libmdf_core.c \
-  include/libmdf.h \
-  include/libmdf/mdf.h \
-  scripts/build_lua_rock.sh \
-  scripts/render_release_rockspec.sh \
-  scripts/stage_lua_rock_sources.sh
-do
-  test -f "$root/$required"
-done
-test "$(cat "$root/VERSION")" = "$VERSION"
-(
-  cd "$root"
-  find . -type f ! -name RELEASE_MANIFEST | sed 's#^\./##' | sort > "$TMP/manifest.actual"
-  sort RELEASE_MANIFEST > "$TMP/manifest.expected"
-)
-cmp "$TMP/manifest.actual" "$TMP/manifest.expected"
-
-unzip -q -d "$TMP/srcrock" "$SRCROCK"
-test -f "$TMP/srcrock/libmdf-$VERSION-1.rockspec"
-test -f "$TMP/srcrock/libmdf-lua-$VERSION.tar.gz"
-if grep -R -n -e "$ROOT" -e '/home/' -e '/tmp/' "$TMP/srcrock/libmdf-$VERSION-1.rockspec" >/dev/null; then
-  printf '%s\n' "$SRCROCK contains local paths in rockspec" >&2
-  exit 1
-fi
-grep -q "version = \"$VERSION-1\"" "$TMP/srcrock/libmdf-$VERSION-1.rockspec"
-grep -q "file://libmdf-lua-$VERSION.tar.gz" "$TMP/srcrock/libmdf-$VERSION-1.rockspec"
-grep -F -q 'dependencies = { "lua >= 5.5, < 5.6" }' "$TMP/srcrock/libmdf-$VERSION-1.rockspec"
-
-tar -C "$TMP/sdk" -xzf "$HOST_ARTIFACT"
-sdk_root=$(find "$TMP/sdk" -mindepth 1 -maxdepth 1 -type d)
-LUA_ROOT="$TMP/runtime"
-bash "$ROOT/scripts/build_lua_runtime.sh" "$sdk_root/lib" "$LUA_ROOT"
-eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
-CC="$LIBMDF_BOOTLIN_CC"
-(
-  cd "$DIST"
-  luarocks --lua-dir "$LUA_ROOT" --lua-version 5.5 --tree "$TMP/tree" install "$SRCROCK" \
-    MDF_DIR="$sdk_root" CC="$CC" LD="$CC" CFLAGS="-O2 -fPIC -Wall -Wextra -Werror" LUA_INCDIR="$LUA_ROOT/include"
-)
-LUA_PATH="$TMP/tree/share/lua/5.5/?.lua;$TMP/tree/share/lua/5.5/?/init.lua;;" \
-LUA_CPATH="$TMP/tree/lib/lua/5.5/?.so;;" \
-"$LUA_ROOT/bin/lua" -e 'local mdf = require("libmdf"); local out = mdf.render("# LuaRock\n", { boring = true }); assert(out:match("LuaRock"))'
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+version=$("$root/scripts/version.sh")
+dist=${LIBMDF_DIST_DIR:-$root/dist}
+work="$root/build/package-verify/lua"
+archive="$dist/libmdf-lua-$version.tar.gz"
+rockspec="$dist/libmdf-$version-1.rockspec"
+srcrock="$dist/libmdf-$version-1.src.rock"
+sdk_archive="$dist/libmdf-$version-x86_64-linux-gnu.tar.gz"
+lua_root="$root/build/debug/lua-runtime"
+test -x "$lua_root/bin/lua" || { printf 'Prepare the native Lua interpreter with make build-debug\n' >&2; exit 1; }
+for file in "$archive" "$rockspec" "$srcrock" "$sdk_archive"; do test -f "$file"; done
+rm -rf -- "$work"
+mkdir -p "$work/archive" "$work/srcrock" "$work/sdk" "$work/tree"
+mkdir -p "$work/scratch"
+export TMPDIR="$work/scratch"
+tar -C "$work/archive" -xzf "$archive"
+source="$work/archive/libmdf-lua-$version"
+test "$(cat "$source/VERSION")" = "$version"
+for required in LICENSE README.md VERSION RELEASE_MANIFEST libmdf-scm-1.rockspec.in lua/libmdf.lua lua/libmdf_core.c; do test -f "$source/$required"; done
+(cd "$source" && find . -type f ! -name RELEASE_MANIFEST | sed 's#^./##' | sort) > "$work/manifest.actual"
+sort "$source/RELEASE_MANIFEST" > "$work/manifest.expected"
+cmp "$work/manifest.actual" "$work/manifest.expected"
+unzip -q -d "$work/srcrock" "$srcrock"
+[[ $(find "$work/srcrock" -type f | wc -l) == 2 ]]
+cmp "$rockspec" "$work/srcrock/libmdf-$version-1.rockspec"
+cmp "$archive" "$work/srcrock/libmdf-lua-$version.tar.gz"
+grep -Fq "https://github.com/sa6mwa/libmdf/releases/download/v$version/libmdf-lua-$version.tar.gz" "$rockspec"
+grep -Fq 'dependencies = { "lua >= 5.5, < 5.6" }' "$rockspec"
+if grep -Fq 'file://' "$rockspec"; then printf 'Lua source acquisition URL must be public\n' >&2; exit 1; fi
+if grep -R -a -l -e "$root" -e /home/ -e /tmp/ "$work/archive" "$work/srcrock"; then printf 'Local paths in Lua release payload\n' >&2; exit 1; fi
+tar -C "$work/sdk" -xzf "$sdk_archive"
+sdk="$work/sdk/libmdf-$version-x86_64-linux-gnu"
+runtime_env=$("$root/scripts/bootlin_x86_runtime.sh")
+eval "$runtime_env"
+(cd "$dist" && luarocks --lua-dir "$lua_root" --lua-version 5.5 --tree "$work/tree" install "$srcrock" \
+  MDF_DIR="$sdk" CC="$LIBMDF_BOOTLIN_CC" LD="$LIBMDF_BOOTLIN_CC" CFLAGS='-O2 -fPIC -Wall -Wextra -Werror' \
+  LDFLAGS="-Wl,--disable-new-dtags,-rpath,$sdk/lib" LUA_INCDIR="$lua_root/include")
+LUA_PATH="$work/tree/share/lua/5.5/?.lua;;" LUA_CPATH="$work/tree/lib/lua/5.5/?.so;;" \
+  "$lua_root/bin/lua" - "$sdk/lib/" "$version" <<'LUA'
+local mdf = require("libmdf")
+assert(mdf.version == arg[2])
+assert(mdf.render("# LuaRock\n", { boring = true }):match("LuaRock"))
+local file = assert(io.open("/proc/self/maps"))
+local maps = file:read("*a"); file:close()
+local library = assert(maps:match("(/[^\n ]*/libmdf%.so[^\n ]*)"))
+assert(library:find(arg[1], 1, true), "source rock loaded a different SDK: " .. library)
+LUA

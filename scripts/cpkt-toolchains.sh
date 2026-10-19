@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source "$(dirname -- "${BASH_SOURCE[0]}")/cpkt-archive-cache.sh"
 
 # Resolve only lifecycle-pinned compiler collections. Linux must never fall
 # back to a host-installed compiler or binutils collection.
@@ -8,16 +9,12 @@ die() { printf 'cpkt-toolchains: %s\n' "$*" >&2; exit 1; }
 
 cache_root() {
   if [[ -n "${CPKT_TOOLCHAIN_CACHE:-}" ]]; then printf '%s\n' "$CPKT_TOOLCHAIN_CACHE"
-  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then printf '%s/c.pkt.systems/toolchains\n' "$XDG_CACHE_HOME"
-  elif [[ -n "${HOME:-}" ]]; then printf '%s/.cache/c.pkt.systems/toolchains\n' "$HOME"
+  elif [[ -n "${XDG_CACHE_HOME:-}" ]]; then printf '%s/cpkt/toolchains\n' "$XDG_CACHE_HOME"
+  elif [[ -n "${HOME:-}" ]]; then printf '%s/.cache/cpkt/toolchains\n' "$HOME"
   else die 'HOME, XDG_CACHE_HOME, or CPKT_TOOLCHAIN_CACHE is required'; fi
 }
 
-sha256_file() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
-  else die 'sha256sum or shasum is required'; fi
-}
+sha256_file() { cpkt_cached_archive_sha256 "$1"; }
 
 download_file() {
   local url=$1 destination=$2
@@ -86,31 +83,43 @@ bootlin_values() {
   local meta arch name sha256 prefix sysroot_rel
   meta=$(bootlin_meta "$1")
   IFS='|' read -r arch name sha256 prefix sysroot_rel <<<"$meta"
-  printf '%s|%s|%s|%s|%s|%s\n' "$arch" "$name" "$sha256" "$prefix" "$sysroot_rel" "$(cache_root)/roots/$name"
+  printf '%s|%s|%s|%s|%s|%s\n' "$arch" "$name" "$sha256" "$prefix" "$sysroot_rel" "${resolved_cache}/roots/$name"
 }
 
 compiler_file() { "$1" -print-file-name="$2"; }
 
+# The boundary is a physical directory; resolve the final file symlink too.
+collection_file() {
+  local root=$1 path
+  path=$(readlink -f -- "$2") || return 1
+  [[ -f "$path" && "$path" == "$root/"* ]] || return 1
+  printf '%s\n' "$path"
+}
+
 existing_compiler_file() {
-  local path dir
-  path=$(compiler_file "$1" "$2")
-  [[ "$path" != "$2" && -f "$path" ]] || return 1
-  dir=$(CDPATH= cd -- "$(dirname -- "$path")" && pwd -P)
-  printf '%s/%s\n' "$dir" "$(basename -- "$path")"
+  local path
+  path=$(compiler_file "$1" "$2") || return 1
+  [[ "$path" != "$2" ]] || return 1
+  collection_file "$3" "$path"
 }
 
 bootlin_ready() {
-  local root=$1 prefix=$2 sysroot=$3
-  [[ -x "$root/bin/$prefix-gcc" ]] && [[ -x "$root/bin/$prefix-g++" ]] &&
-    [[ -x "$root/bin/$prefix-ld" ]] && [[ -x "$root/bin/$prefix-ar" ]] &&
-    [[ -x "$root/bin/$prefix-ranlib" ]] && [[ -x "$root/bin/$prefix-strip" ]] &&
-    [[ -x "$root/bin/$prefix-nm" ]] && [[ -x "$root/bin/$prefix-objcopy" ]] &&
-    [[ -x "$root/bin/$prefix-objdump" ]] && [[ -x "$root/bin/$prefix-addr2line" ]] &&
-    [[ -x "$root/bin/$prefix-gdb" ]] && [[ -x "$root/bin/$prefix-readelf" ]] &&
-    { [[ -f "$sysroot/usr/include/stdio.h" ]] || [[ -f "$sysroot/include/stdio.h" ]]; } &&
-    { [[ -e "$sysroot/usr/lib/libc.so" ]] || [[ -e "$sysroot/lib/libc.so" ]] || [[ -e "$sysroot/lib/libc.so.6" ]]; } &&
-    existing_compiler_file "$root/bin/$prefix-g++" libstdc++.a >/dev/null &&
-    existing_compiler_file "$root/bin/$prefix-g++" libgcc.a >/dev/null
+  local root=$1 prefix=$2 sysroot=$3 tool
+  [[ -d "$root" && -d "$sysroot" ]] || return 1
+  root=$(CDPATH= cd -- "$root" && pwd -P) || return 1
+  sysroot=$(CDPATH= cd -- "$sysroot" && pwd -P) || return 1
+  [[ "$sysroot" == "$root/"* ]] || return 1
+  for tool in gcc g++ ld ar ranlib strip nm objcopy objdump addr2line gdb readelf; do
+    [[ -x "$root/bin/$prefix-$tool" ]] &&
+      collection_file "$root" "$root/bin/$prefix-$tool" >/dev/null || return 1
+  done
+  { collection_file "$sysroot" "$sysroot/usr/include/stdio.h" >/dev/null ||
+    collection_file "$sysroot" "$sysroot/include/stdio.h" >/dev/null; } &&
+  { collection_file "$sysroot" "$sysroot/usr/lib/libc.so" >/dev/null ||
+    collection_file "$sysroot" "$sysroot/lib/libc.so" >/dev/null ||
+    collection_file "$sysroot" "$sysroot/lib/libc.so.6" >/dev/null; } &&
+    existing_compiler_file "$root/bin/$prefix-g++" libstdc++.a "$root" >/dev/null &&
+    existing_compiler_file "$root/bin/$prefix-g++" libgcc.a "$root" >/dev/null
 }
 
 osxcross_candidate() {
@@ -143,14 +152,14 @@ osxcross_candidate() {
 
 host_mig_meta() {
   # PureDarwin's portable MIG is APSL-derived.  It is a host-only build
-  # toolchain component and is never installed into c.pkt.systems artifacts.
+  # toolchain component and is never installed into cpkt artifacts.
   printf '%s\n' '88753c478c97b9a08bcdb66cecc68ba5881ff3af|38a278e3e3ee2211bd859ee5ba764146c4b6e047c2ee4618e12d9d11e79a4774'
 }
 
 host_mig_values() {
   local revision sha256 root
   IFS='|' read -r revision sha256 <<<"$(host_mig_meta)"
-  root="$(cache_root)/roots/host-mig-puredarwin-${revision}-x86_64-linux-gnu"
+  root="${resolved_cache}/roots/host-mig-puredarwin-${revision}-x86_64-linux-gnu"
   printf '%s|%s|%s|%s\n' "$revision" "$sha256" "PureDarwin-${revision}.tar.gz" "$root"
 }
 
@@ -168,7 +177,7 @@ install_host_mig() {
   # MIG executes on this x86_64 Linux builder; it must not be compiled by
   # osxcross, which would produce an unusable Darwin executable.
   install_bootlin x86_64-linux-gnu
-  with_cache_lock "$(cache_root)/locks/host-mig-${revision}-x86_64-linux-gnu.lock" \
+  with_cache_lock "${resolved_cache}/locks/host-mig-${revision}-x86_64-linux-gnu.lock" \
     install_host_mig_locked "$revision" "$sha256" "$archive_name" "$root"
 }
 
@@ -183,12 +192,9 @@ install_host_mig_locked() {
   bootlin_cc="$bootlin_root/bin/$bootlin_prefix-gcc"
   [[ -x "$bootlin_cc" ]] || die "pinned Bootlin host compiler is missing: $bootlin_cc"
 
-  archive_dir="$(cache_root)/archives"; archive="$archive_dir/$archive_name"
-  mkdir -p "$archive_dir" "$(cache_root)/roots"
-  if [[ -f "$archive" ]] && [[ "$(sha256_file "$archive")" != "$sha256" ]]; then
-    printf 'cpkt-toolchains: discarding corrupt cached archive: %s\n' "$archive" >&2
-    rm -f -- "$archive"
-  fi
+  archive_dir="${resolved_cache}/archives"; archive="$archive_dir/$archive_name"
+  mkdir -p "$archive_dir" "${resolved_cache}/roots"
+  cpkt_restore_cached_archive "$archive" "$sha256"
   if [[ ! -f "$archive" ]]; then
     tmp="$archive.tmp.$$"; install_cleanup_trap "$tmp" -f
     download_file "https://codeload.github.com/PureDarwin/PureDarwin/tar.gz/$revision" "$tmp"
@@ -196,7 +202,7 @@ install_host_mig_locked() {
     mv "$tmp" "$archive"; trap - EXIT HUP INT TERM
   fi
 
-  extract="$(cache_root)/roots/.extract-host-mig-${revision}.$$"
+  extract=$(mktemp -d "${resolved_cache}/roots/.extract-host-mig-${revision}.XXXXXXXX")
   install_cleanup_trap "$extract" -rf
   mkdir -p "$extract"; tar -C "$extract" -xf "$archive"
   source_root="$extract/PureDarwin-$revision"
@@ -233,7 +239,7 @@ install_bootlin() {
   values=$(bootlin_values "$target")
   IFS='|' read -r arch name sha256 prefix sysroot_rel root <<<"$values"
   if bootlin_ready "$root" "$prefix" "$root/$sysroot_rel"; then return; fi
-  with_cache_lock "$(cache_root)/locks/bootlin-$name.lock" install_bootlin_locked "$target"
+  with_cache_lock "${resolved_cache}/locks/bootlin-$name.lock" install_bootlin_locked "$target"
 }
 
 install_bootlin_locked() {
@@ -241,15 +247,9 @@ install_bootlin_locked() {
   values=$(bootlin_values "$target")
   IFS='|' read -r arch name sha256 prefix sysroot_rel root <<<"$values"
   if bootlin_ready "$root" "$prefix" "$root/$sysroot_rel"; then return; fi
-  archive_dir="$(cache_root)/archives"; archive="$archive_dir/$name.tar.xz"
-  mkdir -p "$archive_dir" "$(cache_root)/roots"
-  if [[ -f "$archive" ]]; then
-    actual=$(sha256_file "$archive")
-    if [[ "$actual" != "$sha256" ]]; then
-      printf 'cpkt-toolchains: discarding corrupt cached archive: %s\n' "$archive" >&2
-      rm -f -- "$archive"
-    fi
-  fi
+  archive_dir="${resolved_cache}/archives"; archive="$archive_dir/$name.tar.xz"
+  mkdir -p "$archive_dir" "${resolved_cache}/roots"
+  cpkt_restore_cached_archive "$archive" "$sha256"
   if [[ ! -f "$archive" ]]; then
     tmp="$archive.tmp.$$"; install_cleanup_trap "$tmp" -f
     download_file "https://toolchains.bootlin.com/downloads/releases/toolchains/$arch/tarballs/$name.tar.xz" "$tmp"
@@ -257,7 +257,7 @@ install_bootlin_locked() {
     [[ "$actual" == "$sha256" ]] || die "checksum mismatch for $name.tar.xz: expected $sha256, got $actual"
     mv "$tmp" "$archive"; trap - EXIT HUP INT TERM
   fi
-  extract="$(cache_root)/roots/.extract-$name.$$"; install_cleanup_trap "$extract" -rf
+  extract=$(mktemp -d "${resolved_cache}/roots/.extract-$name.XXXXXXXX"); install_cleanup_trap "$extract" -rf
   mkdir -p "$extract"; tar -C "$extract" -xf "$archive"
   [[ -d "$extract/$name/bin" ]] || die "unexpected archive layout for $name.tar.xz"
   rm -rf "$root"; mv "$extract/$name" "$root"; rm -rf "$extract"; trap - EXIT HUP INT TERM
@@ -265,22 +265,25 @@ install_bootlin_locked() {
 }
 
 print_bootlin_target() {
-  local target=$1 values arch name sha256 prefix sysroot_rel root cc cxx
+  local target=$1 values arch name sha256 prefix sysroot_rel root cc cxx physical_root libstdcxx_a libgcc_a
   values=$(bootlin_values "$target"); IFS='|' read -r arch name sha256 prefix sysroot_rel root <<<"$values"
-  printf 'target=%s\ncache=%s\nsource=bootlin\narchive=%s.tar.xz\n' "$target" "$(cache_root)" "$name"
+  printf 'target=%s\ncache=%s\nsource=bootlin\narchive=%s.tar.xz\n' "$target" "${resolved_cache}" "$name"
   if ! bootlin_ready "$root" "$prefix" "$root/$sysroot_rel"; then
     printf 'status=missing\ndownloadable=yes\nurl=https://toolchains.bootlin.com/downloads/releases/toolchains/%s/tarballs/%s.tar.xz\n' "$arch" "$name"; return
   fi
   cc="$root/bin/$prefix-gcc"; cxx="$root/bin/$prefix-g++"
+  physical_root=$(CDPATH= cd -- "$root" && pwd -P)
+  libstdcxx_a=$(existing_compiler_file "$cxx" libstdc++.a "$physical_root") || die "invalid Bootlin C++ runtime; run: $0 ensure $target"
+  libgcc_a=$(existing_compiler_file "$cxx" libgcc.a "$physical_root") || die "invalid Bootlin GCC runtime; run: $0 ensure $target"
   printf 'status=ready\nroot=%s\nprefix=%s\nsysroot=%s\nlibc=%s\n' "$root" "$prefix" "$root/$sysroot_rel" "${target##*-}"
   printf 'cc=%s\ncxx=%s\nld=%s\nar=%s\nranlib=%s\nstrip=%s\nnm=%s\nobjcopy=%s\nobjdump=%s\naddr2line=%s\ngdb=%s\nreadelf=%s\n' \
     "$cc" "$cxx" "$root/bin/$prefix-ld" "$root/bin/$prefix-ar" "$root/bin/$prefix-ranlib" "$root/bin/$prefix-strip" "$root/bin/$prefix-nm" "$root/bin/$prefix-objcopy" "$root/bin/$prefix-objdump" "$root/bin/$prefix-addr2line" "$root/bin/$prefix-gdb" "$root/bin/$prefix-readelf"
-  printf 'target_triple=%s\nlibstdcxx_a=%s\nlibgcc_a=%s\n' "${sysroot_rel%/sysroot}" "$(existing_compiler_file "$cxx" libstdc++.a)" "$(existing_compiler_file "$cxx" libgcc.a)"
+  printf 'target_triple=%s\nlibstdcxx_a=%s\nlibgcc_a=%s\n' "${sysroot_rel%/sysroot}" "$libstdcxx_a" "$libgcc_a"
 }
 
 print_darwin_target() {
   local candidate source root prefix values revision sha256 archive_name mig_root
-  printf 'target=arm64-apple-darwin\ncache=%s\nsource=osxcross+bootlin-host-mig\ndownloadable=partially\n' "$(cache_root)"
+  printf 'target=arm64-apple-darwin\ncache=%s\nsource=osxcross+bootlin-host-mig\ndownloadable=partially\n' "${resolved_cache}"
   if ! candidate=$(osxcross_candidate); then printf 'status=missing\nnote=Configure OSXCROSS_ROOT with a complete local osxcross SDK toolchain, then run: %s ensure arm64-apple-darwin\n' "$0"; return; fi
   IFS='|' read -r source root prefix <<<"$candidate"
   values=$(host_mig_values)
@@ -299,8 +302,10 @@ report_target() { require_target "$1"; if is_linux_target "$1"; then print_bootl
 ensure_target() { require_target "$1"; if is_linux_target "$1"; then install_bootlin "$1"; else osxcross_candidate >/dev/null || die 'arm64-apple-darwin requires a complete local osxcross SDK toolchain'; install_host_mig; fi; report_target "$1"; }
 
 print_env() {
-  local target=$1 description key value
-  description=$(report_target "$target"); [[ "$description" == *$'status=ready'* ]] || die "target is missing; run: $0 ensure $target"
+  local target=$1 description status key value
+  description=$(report_target "$target")
+  status=$(printf '%s\n' "$description" | sed -n 's/^status=//p')
+  [[ "$status" == ready ]] || die "target is missing; run: $0 ensure $target"
   for key in source root prefix sysroot cc cxx ld ar ranlib strip nm objcopy objdump addr2line gdb readelf libstdcxx_a libgcc_a otool; do
     value=$(printf '%s\n' "$description" | sed -n "s/^${key}=//p"); [[ -z "$value" ]] || printf 'export %s=%q\n' "CPKT_TOOLCHAIN_${key^^}" "$value"
   done
@@ -327,11 +332,26 @@ using the x86_64 Bootlin collection; it is build machinery only, never shipped.
 USAGE
 }
 
+# Resolve once and check before any report, path construction or mutation.
+case "${1:-}" in
+  discover|ensure|env) resolved_cache=$(cache_root) || exit 1 ;;
+esac
+
 case "${1:-}" in
   -h|--help|'') usage ;;
   targets) target_ids ;;
   discover) if [[ $# -eq 2 ]]; then report_target "$2"; elif [[ $# -eq 1 ]]; then first=1; while IFS= read -r target; do [[ $first -eq 1 ]] || printf '\n'; first=0; report_target "$target"; done < <(target_ids); else die 'usage: cpkt-toolchains.sh discover [target]'; fi ;;
-  ensure) [[ $# -eq 2 ]] || die 'usage: cpkt-toolchains.sh ensure <target|all>'; if [[ "$2" == all ]]; then while IFS= read -r target; do if is_linux_target "$target"; then ensure_target "$target"; else report_target "$target"; fi; done < <(target_ids); else ensure_target "$2"; fi ;;
+  ensure)
+    [[ $# -eq 2 ]] || die 'usage: cpkt-toolchains.sh ensure <target|all>'
+    [[ "$2" == all ]] || require_target "$2"
+    if [[ "$2" == all ]]; then
+      while IFS= read -r target; do
+        if is_linux_target "$target"; then ensure_target "$target"; else report_target "$target"; fi
+      done < <(target_ids)
+    else
+      ensure_target "$2"
+    fi
+    ;;
   env) [[ $# -eq 2 ]] || die 'usage: cpkt-toolchains.sh env <target>'; print_env "$2" ;;
   *) die "unknown command: $1" ;;
 esac

@@ -718,9 +718,10 @@ navigation, even when its Markdown renderer uses `"off"`.
 Local tests and benchmarks build a pinned Lua 5.5.1 interpreter from the
 [official Lua source archive](https://www.lua.org/ftp/) using Bootlin. Its
 private loader and RPATH resolve both libc and the installed development SDK.
-`make lua-rock` builds this interpreter at `build/lua-runtime/bin/lua` and
-compiles the binding with the same compiler and Lua headers. Host LuaRocks
-remains package tooling. Use `make lua-env` for the local interpreter and module
+`make build-debug` builds this interpreter at `build/debug/lua-runtime/bin/lua`
+and compiles the facade against the SDK installed at `build/debug/lua-sdk`.
+Native CMake dependencies keep the interpreter, installed SDK, module and CLI
+wrapper current. `make lua-rock` separately exercises local LuaRocks packaging. Use `make lua-env` for the local interpreter and module
 paths; no dependency `LD_LIBRARY_PATH` export is needed. The Lua source archive
 is checksum-verified in the shared `CPKT_DEPENDENCY_CACHE`; the interpreter and
 its build files remain under `build/` and are not shipped.
@@ -984,7 +985,7 @@ make fuzz
 
 AFL++ tools and fuzz targets use the selected Bootlin loader and runtime.
 Fuzz gates fail when AFL++ saves a crash, even if its time limit ends normally;
-reproducers remain under `build/fuzz/afl-output`. `make fuzz-smoke` also tests
+each run and its reproducers remain under `build/fuzz/runs/`. `make fuzz-smoke` also tests
 the gate with a deliberately crashing target, a clean target, and a startup
 failure.
 
@@ -1004,9 +1005,9 @@ in styled and boring modes. Regenerate those snapshots deliberately with
 `make golden-update` only when the rendered library output change is
 intentional.
 
-`make lua-test` also writes `build/cmdf.sh`, a local developer wrapper with
-absolute paths to the current checkout's generated `cmdf.lua`, LuaRocks tree,
-and debug `libmdf` build. It is generated under `build/` intentionally and can
+`make build-debug` also writes `build/debug/cmdf.sh`, a developer wrapper with
+absolute paths to the generated `cmdf.lua`, local Lua module tree and pinned
+interpreter. It is generated under `build/` intentionally and can
 be run from another working directory while testing local Lua CLI UX.
 
 `make benchmark` measures direct C libmdf API and Lua binding ANSI/HTML paths
@@ -1028,42 +1029,112 @@ output against `testdata/deck-corpus/comprehensive.md`.
 
 ## Release Cycle
 
-`libmdf` follows the pkt.systems C/CMake lifecycle used by
-`c.pkt.systems`:
+The `pkt-systems-cmake-lifecycle` skill governs this checkout. Make exposes the
+commands, Bash sequences phases, CMake owns producers and CTest owns verification.
+`CMAKE_BUILD_PARALLEL_LEVEL` defaults to 2; Make and CTest run operations serially.
+No pipeline step requires Python.
 
-```text
-https://github.com/sa6mwa/c.pkt.systems/
-```
+Toolchain files and runtime discovery never provision tools. Prepare them explicitly
+with `make tools-native` or `make tools-cross`. Linux uses the pinned complete
+Bootlin collections; Darwin cross builds use the prepared osxcross SDK and pinned
+host MIG helper. `CPKT_TOOLCHAIN_CACHE` and `CPKT_DEPENDENCY_CACHE` overrides use
+this checkout's owned `build/` or `.cache/` paths, or the declared global cpkt cache
+(default `~/.cache/cpkt`, with separate `toolchains/` and `deps/` directories).
+The vendored lifecycle helper collection is kept together under `scripts/`;
+`CPKT_LIFECYCLE_SCRIPTS_DIR` can select the installed skill's exact helper collection.
+The declared global cache and installed workstation prerequisites survive
+`make clean`. Repo-local cache overrides are disposable. Cleanup removes the entire
+local
+`build/`, `dist/` and `.cache/`, including hidden entries and local tools. Each
+checkout owns its generated state; another checkout's sources, tools, build state
+or caches cannot serve as shared prerequisites, even through overrides or symlinks.
 
-The local lifecycle skill is the release authority for this repository.
-`make prerelease` runs the deterministic binary release proof graph without
-first removing generated state. `make release` first verifies the lightweight-tag version
-contract, then starts from a clean tree and runs that same proof graph:
-prerelease checks, Valgrind memory checking, native AFL++ fuzz smoke, Lua checks, full Go parity
-matrix, release matrix builds, package generation, Lua release artifact
-generation, source-archive reconstruction, checksum generation, package
-verification, and artifact privacy/relocatability checks. `make lifecycle-version-contract` is the
-focused pre-clean check for tag/version behavior; ordinary tests do not mutate
-tags, and `make release` is the only standard release target that invokes it.
-The release matrix runs the native x86_64 Linux release tests before packaging;
-cross targets are built and checked through their extracted artifacts.
+`make test` forces the native suite. `make check-native`, `make valgrind`,
+`make fuzz-smoke` and the parity targets reuse suite success only when their native
+CMake prerequisites are unchanged. Records live under `build/*/checks/`; failed
+runs remove their record and preserve CTest diagnostics. CMake does not cache
+individual CTest cases. Keep the checkout, configured tools and execution modes
+stable during a check. After restoring timestamps, changing unrepresented
+execution environment options, or replacing prepared tools, run `make check-clean`.
+If a compiler collection or its cache location changes, first reconfigure each
+affected build directory with `cmake --fresh --preset <preset>`. CMake's automatic
+compiler-change reset can discard preset options; a fresh configure reapplies them.
+Keep unrelated build directories and shared tool caches intact.
+The test fixtures own isolated build directories and do not reconfigure active
+Debug, Release or fuzz producers.
 
-Release artifacts are selected from the generated checksum manifest, not from a
-`dist/` glob.
+`make prerelease` performs incremental binary and Lua preparation: format checking,
+native tests, Valgrind, AFL++ smoke, complete parity, binary packaging and final-byte
+checks for those artifacts. Source reconstruction is explicit during preparation:
+`make package-source-smoke` packages committed inputs, extracts them and runs the
+native Release tests from that archive. Ordinary build and test targets never clean.
 
-Darwin release builds use osxcross by default. The lifecycle resolver selects
-the newest complete `arm64-apple-darwin25.x` collection and reads its SDK from
-the selected collection's `osxcross-conf`. Override the toolchain root with
-`OSXCROSS_ROOT` (default `$HOME/.local/cross/osxcross`) or pin an exact installed
-prefix with `CPKT_OSXCROSS_HOST`. No prefix override is needed for ordinary
-builds. The resolver also checks the lifecycle-provisioned host MIG tools.
-Package
-verification discovers target tools from explicit overrides, CMake cache
-entries, compiler siblings, osxcross target-prefixed tools, and `PATH` last.
-Darwin configure, build, and package commands prepend the osxcross `bin`
-directory to `PATH` and pass the target linker through `--ld-path` so `cmdf` and
-shared libraries do not accidentally link through a host `ld`. Darwin archives
-are verified with target-correct `otool` against the final extracted artifacts.
+Keep implementation, testing and review on one development branch. Once a release
+is authorized, preserve that branch and squash its verified change onto the local
+default branch. Present that squash commit for amendment and signing there; signing,
+the lightweight release tag and the final gate all use the default-branch commit.
+Create no intermediate release branch. The default branch is resolved from local
+`origin/HEAD`, with the project's local `trunk` as the fallback when that ref is
+unavailable. An unresolved default or detached HEAD cannot pass the final gate.
+
+Owned Git builds use one exact lightweight `vX.Y.Z` tag on HEAD, an explicit
+`LIBMDF_RELEASE_VERSION=X.Y.Z` candidate override, or `0.0.0`. Multiple exact
+lightweight release tags are an error. Annotated and symbolic tags do not supply
+release identity. Extracted sources use their own injected `VERSION` and
+`RELEASE_MANIFEST`, including when extracted beneath another Git checkout.
+
+`make release` is a local final proof gate. Before cleaning or starting a producer,
+it requires HEAD attached to the resolved default branch, a clean committed
+checkout, a verified signature on the final amended commit, one exact lightweight
+tag on HEAD, no candidate override and no partial target selection. Its preflight is also available
+as `make lifecycle-version-contract`; it never creates or removes tags. Final
+artifacts and staging use the owned `dist/` and `build/package/` paths; redirected
+`LIBMDF_DIST_DIR` or `LIBMDF_PACKAGE_WORK_DIR` values are rejected before cleaning.
+The final gate runs full `make clean` once, then runs the required checks, reconstructs source
+and uses that native Release producer for the native SDK and CLI archives. Cross
+producers build their required configurations once. A failed phase stops the run;
+there is no retagging, automatic repair or publication inside the gate.
+Prepare required release tools and archives in the declared global cache so they
+survive that clean. Keep remote default-branch and release-tag refs unchanged until
+the complete signed and tagged local release gate passes; never push to trigger CI.
+Updates limited to documentation or skill instructions use normal verification,
+commit/signing and explicitly authorized push policy, without release tags,
+artifacts or a release build.
+
+CMake install components `sdk` and `cli` stage each product. CMake archive outputs
+reuse unchanged producer inputs. Tarballs and source rocks have deterministic
+ordering, timestamps and metadata; intentional executable modes are preserved.
+GNU tar is required; on macOS select it with `LIBMDF_TAR=gtar`.
+
+`LIBMDF_TARGETS` selects a binary rehearsal without changing unrelated artifacts.
+Its checksum inventory lives at `build/package/binary-CHECKSUMS`; it cannot stand in
+for the final release manifest. `make package-verify` verifies that scope through
+CTest. `make release-lua-artifacts` prepares the Lua archive, public rockspec and
+source rock; `make verify-lua-artifacts` proves the source rock against the extracted
+native SDK. The existing pinned interpreter is shared across these checks.
+Lua artifact generation also uses CMake output dependencies: unchanged preparation
+preserves artifact timestamps and matching verification results; changed sources
+or missing outputs regenerate the declared set.
+
+`make package-checksums` requires the complete declared target matrix, source archive
+and all three Lua artifacts. `make verify-release-archives` verifies that complete
+inventory through CTest: SHA-256, layout, architecture, versions, public exports,
+licenses, relocatable metadata, installed static/shared/pkg-config consumers and
+privacy of actual delivered bytes. Native Linux consumers and CLIs execute before
+and after SDK relocation. Cross consumers are linked with their selected target
+compiler; execution is deferred because this project does not select cross runners.
+Extra or stale release-looking artifacts cause the complete privacy gate to fail.
+Publication must use the verified checksum inventory and its manifest, with explicit
+engineer authorization; these targets never push or publish.
+
+Darwin cross builds select the newest complete prepared `arm64-apple-darwin25.x`
+collection and its SDK. Override `OSXCROSS_ROOT` or `CPKT_OSXCROSS_HOST` to select a
+prepared collection. Links use the real osxcross linker through `--ld-path`.
+Target inspection uses explicit selected tools, the selected CMake cache, matching
+compiler siblings or the pinned resolver. There is no host-binutils fallback.
+Darwin artifacts are inspected as Mach-O bytes and keep their ABI-correct `@rpath`
+dylib identity. Packaging does not mutate their signatures with stripping or
+`install_name_tool`.
 
 ## License
 

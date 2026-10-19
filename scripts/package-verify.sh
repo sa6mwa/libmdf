@@ -1,151 +1,98 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-DIST=${LIBMDF_DIST_DIR:-$ROOT/dist}
-MANIFEST="$DIST/libmdf-$VERSION-CHECKSUMS"
-
-find_darwin_tool() {
-  target=$1
-  name=$2
-  "$ROOT/scripts/discover_target_tools.sh" --root "$ROOT" --target "$target" --preset "$target-release" "$name"
-}
-
-verify_cmdf_static() {
-  cmdf=$1
-  target=$2
-  dyn="$tmp/cmdf-dynamic.txt"
-  case "$target" in
-    *-linux-*)
-      if command -v readelf >/dev/null 2>&1; then
-        if readelf -l "$cmdf" 2>/dev/null | grep -q 'Requesting program interpreter'; then
-          printf '%s\n' "$cmdf is dynamically linked; Linux cmdf release binaries must be static" >&2
-          exit 1
-        fi
-        if readelf -d "$cmdf" > "$dyn" 2>/dev/null; then
-          if grep -q '(NEEDED)' "$dyn"; then
-            printf '%s\n' "$cmdf has dynamic dependencies; Linux cmdf release binaries must be static" >&2
-            exit 1
-          fi
-        fi
-      fi
-      ;;
-    *-apple-darwin)
-      otool=$(find_darwin_tool "$target" otool || true)
-      if [ -z "$otool" ]; then
-        printf '%s\n' "$cmdf is a Darwin release binary but no target-correct otool was found" >&2
-        exit 1
-      fi
-      if "$otool" -L "$cmdf" > "$dyn" 2>/dev/null; then
-        if sed '1d' "$dyn" | grep -q 'libmdf'; then
-          printf '%s\n' "$cmdf links project shared libmdf; cmdf must embed libmdf statically" >&2
-          exit 1
-        fi
-      else
-        printf '%s\n' "$otool could not inspect $cmdf" >&2
-        exit 1
-      fi
-      ;;
-  esac
-}
-
-test -f "$MANIFEST"
-(cd "$DIST" && sha256sum -c "$(basename "$MANIFEST")")
-for artifact in "$DIST"/libmdf-"$VERSION"-*.tar.gz; do
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+version=$("$root/scripts/version.sh")
+dist=${LIBMDF_DIST_DIR:-$root/dist}
+scope=${1:-binary}
+expected=$("$root/scripts/release_artifacts.sh" "$scope")
+case "$scope" in
+  binary) manifest="${LIBMDF_PACKAGE_WORK_DIR:-$root/build/package}/binary-CHECKSUMS";;
+  complete) manifest="$dist/libmdf-$version-CHECKSUMS";;
+esac
+test -f "$manifest"
+work="$root/build/package-verify/$scope"
+rm -rf -- "$work"
+mkdir -p "$work"
+printf '%s\n' "$expected" | sort > "$work/expected"
+awk '{print $2}' "$manifest" | sort > "$work/actual"
+cmp "$work/expected" "$work/actual"
+(cd "$dist" && sha256sum -c "$manifest")
+abi=$(sed -n 's/^set(LIBMDF_ABI_VERSION \([0-9]*\))$/\1/p' "$root/CMakeLists.txt")
+mapfile -t artifacts <<< "$expected"
+for artifact in "${artifacts[@]}"; do
   case "$artifact" in
-    *CHECKSUMS*) continue ;;
+    libmdf-"$version"-*-linux-*.tar.gz|libmdf-"$version"-*-apple-darwin.tar.gz) kind=sdk; target=${artifact#libmdf-$version-};;
+    cmdf-"$version"-*.tar.gz) kind=cli; target=${artifact#cmdf-$version-};;
+    *) continue;;
   esac
-  tmp="$ROOT/build/package-verify"
-  rm -rf "$tmp"
-  mkdir -p "$tmp"
-  tar -C "$tmp" -xzf "$artifact"
-  roots=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | wc -l)
-  test "$roots" -eq 1
-  root=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
-  test "$(basename "$artifact" .tar.gz)" = "$(basename "$root")"
-  target=$(basename "$artifact" .tar.gz)
-  target=${target#libmdf-$VERSION-}
-  test -d "$root/include"
-  test -d "$root/lib"
-  test -f "$root/lib/pkgconfig/libmdf.pc"
-  test -f "$root/lib/cmake/libmdf/libmdfConfig.cmake"
-  test -f "$root/lib/cmake/libmdf/libmdfConfigVersion.cmake"
-  test -f "$root/share/libmdf/package-metadata.txt"
-  test -f "$root/share/doc/libmdf/LICENSE"
-  test ! -e "$root/bin/cmdf"
-  test -f "$root/share/doc/libmdf/OFL.txt"
-  grep -q "^Name: libmdf$" "$root/lib/pkgconfig/libmdf.pc"
-  grep -q "^Version: $VERSION$" "$root/lib/pkgconfig/libmdf.pc"
-  grep -q '^prefix=${pcfiledir}/../..' "$root/lib/pkgconfig/libmdf.pc"
-  grep -q "^name=libmdf$" "$root/share/libmdf/package-metadata.txt"
-  grep -q "^version=$VERSION$" "$root/share/libmdf/package-metadata.txt"
-  grep -q "^target_id=$target$" "$root/share/libmdf/package-metadata.txt"
-  case "$target" in
-    *-linux-*)
-      grep -q '^target_os=linux$' "$root/share/libmdf/package-metadata.txt"
-      ;;
-    *-apple-darwin)
-      grep -q '^target_os=darwin$' "$root/share/libmdf/package-metadata.txt"
-      ;;
-  esac
-  if grep -R -a -F -e "$ROOT" -e "${HOME:-/dev/null}" "$root/lib/pkgconfig" "$root/lib/cmake" "$root/share/libmdf" >/dev/null 2>&1; then
-    printf '%s\n' "$artifact contains local paths in package metadata" >&2
-    exit 1
+  target=${target%.tar.gz}
+  dir="$work/$artifact"
+  mkdir -p "$dir"
+  tar -C "$dir" -xzf "$dist/$artifact"
+  name=${artifact%.tar.gz}
+  package="$dir/$name"
+  test -d "$package"
+  [[ $(find "$dir" -mindepth 1 -maxdepth 1 | wc -l) == 1 ]]
+  while IFS= read -r file; do
+    case "$kind:$file" in
+      sdk:include/libmdf.h|sdk:include/libmdf/mdf.h|sdk:lib/libmdf.a|sdk:lib/libmdf.so|sdk:lib/libmdf.so.*|sdk:lib/libmdf*.dylib|sdk:lib/cmake/libmdf/libmdfConfig.cmake|sdk:lib/cmake/libmdf/libmdfConfigVersion.cmake|sdk:lib/cmake/libmdf/libmdfTargets.cmake|sdk:lib/cmake/libmdf/libmdfTargets-release.cmake|sdk:lib/pkgconfig/libmdf.pc|sdk:share/libmdf/package-metadata.txt|sdk:share/doc/libmdf/LICENSE|sdk:share/doc/libmdf/README.md|sdk:share/doc/libmdf/OFL.txt|cli:bin/cmdf|cli:bin/cmdf.lua|cli:share/doc/cmdf/LICENSE|cli:share/doc/cmdf/README.md|cli:share/doc/cmdf/OFL.txt) ;;
+      *) printf 'Unexpected %s payload: %s\n' "$kind" "$file" >&2; exit 1;;
+    esac
+  done < <(cd "$package" && find . \( -type f -o -type l \) | sed 's#^./##')
+  if [[ $kind == sdk ]]; then
+    for required in include/libmdf.h include/libmdf/mdf.h lib/libmdf.a lib/pkgconfig/libmdf.pc lib/cmake/libmdf/libmdfConfig.cmake lib/cmake/libmdf/libmdfConfigVersion.cmake share/libmdf/package-metadata.txt share/doc/libmdf/LICENSE share/doc/libmdf/OFL.txt; do test -f "$package/$required"; done
+    grep -Fxq "#define LIBMDF_VERSION \"$version\"" "$package/include/libmdf/mdf.h"
+    grep -Fxq "Version: $version" "$package/lib/pkgconfig/libmdf.pc"
+    grep -Fxq "target_id=$target" "$package/share/libmdf/package-metadata.txt"
+    grep -Fxq "version=$version" "$package/share/libmdf/package-metadata.txt"
+    binary="$package/lib/libmdf.so"
+    [[ $target != *-apple-darwin ]] || binary="$package/lib/libmdf.dylib"
+    test -f "$binary"
+  else
+    binary="$package/bin/cmdf"
+    test -x "$binary"; test -x "$package/bin/cmdf.lua"
+    for required in LICENSE README.md OFL.txt; do
+      test -f "$package/share/doc/cmdf/$required" || {
+        printf 'Missing mandatory CLI payload: share/doc/cmdf/%s\n' "$required" >&2; exit 1;
+      }
+    done
+    grep -a -q 'JetBrains Mono' "$binary"
+    grep -a -Fq 'require("libmdf")' "$package/bin/cmdf.lua"
   fi
-  if find "$root" -name '*.inc' -print -quit | grep -q .; then
-    printf '%s\n' "$artifact contains .inc files" >&2
-    exit 1
+  if [[ $target == *-linux-* ]]; then
+    readelf=$("$root/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" readelf)
+    "$readelf" -h "$binary" > "$dir/header"
+    case "$target" in x86_64-*) machine='Advanced Micro Devices X86-64';; aarch64-*) machine=AArch64;; armhf-*) machine=ARM;; esac
+    grep -Eq "Machine:[[:space:]]+$machine$" "$dir/header"
+    "$readelf" -d "$binary" > "$dir/dynamic"
+    if [[ $kind == cli ]]; then
+      "$readelf" -l "$binary" > "$dir/program"
+      if grep -Eq '\(NEEDED\)|Requesting program interpreter' "$dir/dynamic" "$dir/program"; then printf 'Linux CLI must be static: %s\n' "$artifact" >&2; exit 1; fi
+    else
+      grep -Fq "[libmdf.so.$abi]" "$dir/dynamic"
+      nm=$("$root/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" nm)
+      "$root/tests/test_shared_exports.sh" "$nm" "$binary"
+    fi
+  else
+    otool=$("$root/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" otool)
+    "$otool" -hv "$binary" > "$dir/header"
+    grep -Eq 'ARM64|arm64' "$dir/header"
+    "$otool" -L "$binary" > "$dir/dynamic"
+    if [[ $kind == sdk ]]; then
+      grep -Fq "@rpath/libmdf.$abi.dylib" "$dir/dynamic"
+      nm=$("$root/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" nm)
+      "$root/tests/test_shared_exports.sh" "$nm" "$binary" darwin
+    elif sed '1d' "$dir/dynamic" | grep -q libmdf; then printf 'Darwin CLI must embed libmdf: %s\n' "$artifact" >&2; exit 1; fi
   fi
-  if find "$root" -name '*hack*' -print -quit | grep -q .; then
-    printf '%s\n' "$artifact contains old Hack font files" >&2
-    exit 1
-  fi
-  if ! find "$root/lib" -type f \( -name '*.a' -o -name '*.so*' \) -exec grep -a -l -e 'JetBrains Mono' -e 'libmdf_html_jetbrains' {} + | grep -q .; then
-    printf '%s\n' "$artifact does not embed JetBrains Mono font data in libmdf" >&2
-    exit 1
+  if [[ $kind == sdk ]]; then
+    "$root/scripts/verify_package_consumers.sh" "$package" "$target" "$dir/consumers"
+  else
+    case "$(uname -s):$(uname -m):$target" in
+      Linux:x86_64:x86_64-linux-*|Darwin:arm64:arm64-apple-darwin)
+        "$binary" --version | grep -Fq "$version"
+        printf '# Package\n' | "$binary" --ascii | grep -Fxq '# Package';;
+    esac
   fi
 done
-for artifact in "$DIST"/cmdf-"$VERSION"-*.tar.gz; do
-  tmp="$ROOT/build/package-verify"
-  rm -rf "$tmp"
-  mkdir -p "$tmp"
-  tar -C "$tmp" -xzf "$artifact"
-  roots=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | wc -l)
-  test "$roots" -eq 1
-  root=$(find "$tmp" -mindepth 1 -maxdepth 1 -type d)
-  test "$(basename "$artifact" .tar.gz)" = "$(basename "$root")"
-  target=$(basename "$artifact" .tar.gz)
-  target=${target#cmdf-$VERSION-}
-  test -x "$root/bin/cmdf"
-  verify_cmdf_static "$root/bin/cmdf" "$target"
-  test -x "$root/bin/cmdf.lua"
-  test ! -d "$root/include"
-  test ! -d "$root/lib"
-  test -f "$root/share/doc/cmdf/LICENSE"
-  test -f "$root/share/doc/cmdf/README.md"
-  test -f "$root/share/doc/cmdf/OFL.txt"
-  grep -a -q 'JetBrains Mono' "$root/bin/cmdf"
-  grep -a -q 'JetBrains Mono' "$root/bin/cmdf.lua"
-  grep -a -q 'require("libmdf")' "$root/bin/cmdf.lua"
-  if grep -a -q 'regular_b64 = "' "$root/bin/cmdf.lua"; then
-    printf '%s\n' "$artifact cmdf.lua embeds font data instead of using libmdf" >&2
-    exit 1
-  fi
-  if find "$root" \( -name '*.rockspec' -o -name 'libmdf_core.c' \) -print -quit | grep -q .; then
-    printf '%s\n' "$artifact contains LuaRocks source or rockspec files" >&2
-    exit 1
-  fi
-  if find "$root" -name '*.inc' -print -quit | grep -q .; then
-    printf '%s\n' "$artifact contains .inc files" >&2
-    exit 1
-  fi
-  if find "$root" -name '*hack*' -print -quit | grep -q .; then
-    printf '%s\n' "$artifact contains old Hack font files" >&2
-    exit 1
-  fi
-done
-if [ -f "$DIST/libmdf-$VERSION-1.src.rock" ] || [ -f "$DIST/libmdf-lua-$VERSION.tar.gz" ]; then
-  LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_lua_artifacts.sh"
-fi
-LIBMDF_DIST_DIR="$DIST" "$ROOT/scripts/verify_release_privacy.sh"
+if [[ $scope == complete ]]; then "$root/scripts/verify_lua_artifacts.sh"; fi
+LIBMDF_MANIFEST="$manifest" LIBMDF_PRIVACY_SCOPE="$scope" "$root/scripts/verify_release_privacy.sh"

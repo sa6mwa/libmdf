@@ -1,13 +1,16 @@
 set(CMAKE_SYSTEM_NAME Darwin)
 set(CMAKE_SYSTEM_PROCESSOR arm64)
 get_filename_component(_LIBMDF_SOURCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+set(CPKT_LIFECYCLE_SCRIPTS_DIR "${_LIBMDF_SOURCE_ROOT}/scripts" CACHE PATH "Pinned lifecycle helper collection")
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CPKT_LIFECYCLE_SCRIPTS_DIR)
 execute_process(
-  COMMAND "${_LIBMDF_SOURCE_ROOT}/scripts/cpkt-toolchains.sh" ensure arm64-apple-darwin
+  COMMAND "${CPKT_LIFECYCLE_SCRIPTS_DIR}/cpkt-toolchains.sh" discover arm64-apple-darwin
   RESULT_VARIABLE _LIBMDF_DARWIN_RESULT
   OUTPUT_VARIABLE _LIBMDF_DARWIN_DESCRIPTION
   ERROR_VARIABLE _LIBMDF_DARWIN_ERROR)
-if(NOT _LIBMDF_DARWIN_RESULT EQUAL 0)
-  message(FATAL_ERROR "Unable to resolve the Darwin toolchain: ${_LIBMDF_DARWIN_ERROR}")
+if(NOT _LIBMDF_DARWIN_RESULT EQUAL 0 OR
+   NOT _LIBMDF_DARWIN_DESCRIPTION MATCHES "(^|[\r\n])status=ready([\r\n]|$)")
+  message(FATAL_ERROR "Darwin toolchain unavailable: ${_LIBMDF_DARWIN_ERROR}\nPrepare explicitly: ${CPKT_LIFECYCLE_SCRIPTS_DIR}/cpkt-toolchains.sh ensure arm64-apple-darwin")
 endif()
 function(libmdf_darwin_value key output)
   string(REPLACE "\n" ";" lines "${_LIBMDF_DARWIN_DESCRIPTION}")

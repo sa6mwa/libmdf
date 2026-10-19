@@ -5,7 +5,8 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 RENDER=${LIBMDF_GOLDEN_RENDER:-"$ROOT/build/debug/golden_render"}
 MANIFEST_CMD="$ROOT/scripts/libmdf_golden_manifest.sh"
 GOLDEN_DIR="$ROOT/testdata/goldens/libmdf"
-TMP=${TMPDIR:-/tmp}/libmdf-golden-update.$$
+mkdir -p "$ROOT/build"
+TMP=$(mktemp -d "$ROOT/build/golden-update.XXXXXXXX")
 
 cleanup() {
   rm -rf "$TMP"

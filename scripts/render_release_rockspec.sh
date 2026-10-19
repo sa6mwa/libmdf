@@ -4,7 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT=${1:-"$ROOT/dist/libmdf-$(sh "$ROOT/scripts/version.sh")-1.rockspec"}
 VERSION=${2:-$(sh "$ROOT/scripts/version.sh")}
-SOURCE_URL=${3:-"file://libmdf-lua-$VERSION.tar.gz"}
+SOURCE_URL=${3:-"https://github.com/sa6mwa/libmdf/releases/download/v$VERSION/libmdf-lua-$VERSION.tar.gz"}
 SOURCE_DIR=${4:-"libmdf-lua-$VERSION"}
 
 mkdir -p "$(dirname "$OUT")"

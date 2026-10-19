@@ -3,9 +3,9 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 OUT=${1:-"$ROOT/build/cmdf.sh"}
-LUA_BIN="$ROOT/build/lua-runtime/bin/lua"
-TREE="$ROOT/build/luarocks/tree"
-CMDF_LUA="$ROOT/build/luarocks/cmdf.lua"
+LUA_BIN=${2:-"$ROOT/build/debug/lua-runtime/bin/lua"}
+TREE=${3:-"$ROOT/build/debug/lua-tree"}
+CMDF_LUA=${4:-"$ROOT/build/debug/cmdf.lua"}
 
 quote_sh() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"

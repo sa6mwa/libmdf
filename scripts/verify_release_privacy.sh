@@ -4,7 +4,9 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(sh "$ROOT/scripts/version.sh")
 DIST=${LIBMDF_DIST_DIR:-$ROOT/dist}
-MANIFEST="$DIST/libmdf-$VERSION-CHECKSUMS"
+MANIFEST=${LIBMDF_MANIFEST:-$DIST/libmdf-$VERSION-CHECKSUMS}
+SCOPE=${LIBMDF_PRIVACY_SCOPE:-complete}
+case "$SCOPE" in complete|binary) ;; *) printf 'Invalid privacy scope: %s\n' "$SCOPE" >&2; exit 2;; esac
 TMP="$ROOT/build/package-verify/privacy"
 HITS="$ROOT/build/package-verify/privacy-hits.txt"
 
@@ -13,12 +15,14 @@ rm -rf "$TMP"
 mkdir -p "$TMP"
 : > "$HITS"
 
+if [ "$SCOPE" = complete ]; then
 active_manifests="$TMP/active-manifests.txt"
 find "$DIST" -maxdepth 1 -type f -name 'libmdf-*-CHECKSUMS' -exec basename {} \; | sort > "$active_manifests"
 if [ "$(wc -l < "$active_manifests")" -ne 1 ] || ! grep -Fx "$(basename "$MANIFEST")" "$active_manifests" >/dev/null; then
   printf '%s\n' "exactly one active checksum manifest is required for $VERSION" >&2
   sed 's/^/manifest: /' "$active_manifests" >&2
   exit 1
+fi
 fi
 
 artifact_list="$TMP/artifacts.txt"
@@ -30,6 +34,7 @@ if grep -a -F -e "$ROOT" -e "file://$ROOT" "$MANIFEST" >/dev/null 2>&1 ||
   exit 1
 fi
 
+if [ "$SCOPE" = complete ]; then
 release_like="$TMP/release-like.txt"
 find "$DIST" -maxdepth 1 -type f \( \
   -name "libmdf-$VERSION.tar.gz" -o \
@@ -46,7 +51,14 @@ if ! cmp -s "$release_like" "$artifact_list.sorted"; then
   comm -13 "$release_like" "$artifact_list.sorted" | sed 's/^/missing: /' >&2
   exit 1
 fi
+fi
 
+while IFS= read -r artifact_name; do
+  case "$artifact_name" in ''|*/*|*\\*|..|.) printf 'Invalid artifact basename: %s\n' "$artifact_name" >&2; exit 1;; esac
+done < "$artifact_list"
+(cd "$DIST" && sha256sum -c "$MANIFEST")
+
+if [ "$SCOPE" = complete ]; then
 stale_release_like="$TMP/stale-release-like.txt"
 find "$DIST" -maxdepth 1 -type f \( \
   -name 'libmdf-*.tar.gz' -o \
@@ -66,6 +78,7 @@ if [ -s "$stale_release_like" ]; then
   printf '%s\n' "stale release-looking artifacts for another version remain under $DIST" >&2
   sed 's/^/stale: /' "$stale_release_like" >&2
   exit 1
+fi
 fi
 
 extract_artifact() {
@@ -159,7 +172,7 @@ scan_bootlin_toolchain_paths() {
   matches="$TMP/bootlin-toolchain-path-matches.txt"
 
   "$ROOT/scripts/cpkt-toolchains.sh" discover |
-    sed -n 's#^archive=\(.*\)\.tar\.xz$#/roots/\1#p' | sort -u > "$patterns"
+    sed -n 's/^root=//p' | sort -u > "$patterns"
   if [ ! -s "$patterns" ]; then
     printf '%s\n' 'could not derive pinned Bootlin collection paths' >&2
     exit 1
@@ -183,20 +196,27 @@ find_darwin_tool() {
 
 scan_elf_rpath() {
   file=$1
-  if ! command -v readelf >/dev/null 2>&1; then
-    return 0
-  fi
+  target=$2
+  readelf=$("$ROOT/scripts/discover_target_tools.sh" --target "$target" --preset "$target-release" readelf) || {
+    printf '%s\n' "$file has no available target-correct readelf" >> "$HITS"
+    return 1
+  }
   dyn="$TMP/elf-dynamic.txt"
-  if ! readelf -d "$file" > "$dyn" 2>/dev/null; then
-    return 0
-  fi
+  "$readelf" -d "$file" > "$dyn" || {
+    printf '%s\n' "$readelf could not inspect $file" >> "$HITS"
+    return 1
+  }
   if ! grep -E 'RPATH|RUNPATH' "$dyn" >/dev/null 2>&1; then
     return 0
   fi
-  if grep -E 'RPATH|RUNPATH' "$dyn" | grep -v '\$ORIGIN' >/dev/null 2>&1; then
-    printf '%s\n' "$file has non-\$ORIGIN RPATH/RUNPATH" >> "$HITS"
-    return 1
-  fi
+  paths="$TMP/elf-runtime-paths.txt"
+  sed -n '/RPATH\|RUNPATH/s/.*\[\([^]]*\)\].*/\1/p' "$dyn" | tr ':' '\n' > "$paths"
+  while IFS= read -r path; do
+    case "$path" in
+      '$ORIGIN'|'$ORIGIN/'*) ;;
+      *) printf '%s\n' "$file has non-\$ORIGIN RPATH/RUNPATH: $path" >> "$HITS"; return 1;;
+    esac
+  done < "$paths"
   if grep -E 'RPATH|RUNPATH' "$dyn" | grep -F -e "$ROOT" -e "${HOME:-/dev/null}" >/dev/null 2>&1; then
     printf '%s\n' "$file has local RPATH/RUNPATH" >> "$HITS"
     return 1
@@ -264,10 +284,13 @@ scan_runtime_paths() {
   failed=0
   find "$root" -type f |
   while IFS= read -r file; do
-    desc=$(file -b "$file" 2>/dev/null || true)
+    if ! desc=$(file -b "$file" 2>/dev/null); then
+      printf '%s\n' "file could not classify payload: $file" >> "$HITS"
+      exit 1
+    fi
     case "$desc" in
       *ELF*)
-        scan_elf_rpath "$file" || failed=1
+        scan_elf_rpath "$file" "$target" || failed=1
         ;;
       *Mach-O*)
         scan_macho_paths "$file" "$target" || failed=1
@@ -302,7 +325,7 @@ while IFS= read -r artifact_name; do
 done < "$artifact_list"
 
 if [ -s "$HITS" ]; then
-  printf '%s\n' "release privacy gate failed; local paths or non-relocatable runtime paths leaked:" >&2
+  printf '%s\n' "release privacy gate failed; payload inspection errors or local/non-relocatable paths:" >&2
   sort -u "$HITS" >&2
   exit 1
 fi

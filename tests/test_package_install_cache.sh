@@ -1,75 +1,44 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-
-unset CC CFLAGS CPPFLAGS LDFLAGS
-
-TARGET=x86_64-linux-gnu
-
-PRESET="$TARGET-release"
-CACHE="$ROOT/build/$PRESET/CMakeCache.txt"
-ARTIFACT="$ROOT/dist/libmdf-$VERSION-$TARGET.tar.gz"
-ROOT_NAME="libmdf-$VERSION-$TARGET"
-STALE_SOURCE="$ROOT/dist/libmdf-9.9.9.tar.gz"
-STALE_SDK="$ROOT/dist/libmdf-9.9.9-$TARGET.tar.gz"
-STALE_CMDF="$ROOT/dist/cmdf-9.9.9-$TARGET.tar.gz"
-STALE_MANIFEST="$ROOT/dist/libmdf-9.9.9-CHECKSUMS"
-STALE_ROCKSPEC="$ROOT/dist/libmdf-9.9.9-1.rockspec"
-STALE_SRC_ROCK="$ROOT/dist/libmdf-9.9.9-1.src.rock"
-HEADER_CHECK="$ROOT/build/package-install-cache-$TARGET-mdf.h"
-
-rm -rf "$ROOT/build/$PRESET"
-
-cmake --preset "$PRESET" \
-  -DLIBMDF_INSTALL=OFF \
-  -DLIBMDF_INSTALL_BINARY=OFF \
-  -DLIBMDF_BUILD_STATIC=OFF \
-  -DLIBMDF_BUILD_SHARED=ON \
-  -DLIBMDF_BUILD_BINARY=OFF \
-  -DLIBMDF_BUILD_TESTS=OFF \
-  -DLIBMDF_BUILD_EXAMPLES=OFF \
-  -DLIBMDF_BUILD_FUZZERS=OFF \
-  -DLIBMDF_CMDF_STATIC_RUNTIME=ON >/dev/null
-
-grep -q '^LIBMDF_INSTALL:BOOL=OFF$' "$CACHE"
-grep -q '^LIBMDF_BUILD_STATIC:BOOL=OFF$' "$CACHE"
-grep -q '^LIBMDF_BUILD_SHARED:BOOL=ON$' "$CACHE"
-grep -q '^LIBMDF_BUILD_BINARY:BOOL=OFF$' "$CACHE"
-
-mkdir -p "$ROOT/dist"
-: > "$STALE_SOURCE"
-: > "$STALE_SDK"
-: > "$STALE_CMDF"
-: > "$STALE_MANIFEST"
-: > "$STALE_ROCKSPEC"
-: > "$STALE_SRC_ROCK"
-
-LIBMDF_TARGETS="$TARGET" "$ROOT/scripts/package.sh" >/dev/null
-
-test -f "$ARTIFACT"
-test -f "$ROOT/dist/cmdf-$VERSION-$TARGET.tar.gz"
-test ! -e "$STALE_SOURCE"
-test ! -e "$STALE_SDK"
-test ! -e "$STALE_CMDF"
-test ! -e "$STALE_MANIFEST"
-test ! -e "$STALE_ROCKSPEC"
-test ! -e "$STALE_SRC_ROCK"
-grep -q '^LIBMDF_INSTALL:BOOL=ON$' "$CACHE"
-grep -q '^LIBMDF_BUILD_STATIC:BOOL=ON$' "$CACHE"
-grep -q '^LIBMDF_BUILD_SHARED:BOOL=ON$' "$CACHE"
-grep -q '^LIBMDF_BUILD_BINARY:BOOL=ON$' "$CACHE"
-grep -q '^LIBMDF_BUILD_TESTS:BOOL=OFF$' "$CACHE"
-grep -q '^LIBMDF_BUILD_EXAMPLES:BOOL=OFF$' "$CACHE"
-grep -q '^LIBMDF_BUILD_FUZZERS:BOOL=OFF$' "$CACHE"
-tar -tzf "$ARTIFACT" | grep -q "^$ROOT_NAME/include/libmdf/mdf.h$"
-tar -xOzf "$ARTIFACT" "$ROOT_NAME/include/libmdf/mdf.h" > "$HEADER_CHECK"
-grep -q "MDF_FORMAT_HTML_DECK" "$HEADER_CHECK"
-grep -q "standalone browser slide" "$HEADER_CHECK"
-grep -q "MDF_DECK_TRANSITION_CROSS" "$HEADER_CHECK"
-grep -q "mdf_deck_transition deck_transition" "$HEADER_CHECK"
-grep -q "int slide_numbers" "$HEADER_CHECK"
-grep -q "int deck_center_front_text" "$HEADER_CHECK"
-grep -q "Deck slide bodies are vertically centered" "$HEADER_CHECK"
-tar -tzf "$ROOT/dist/cmdf-$VERSION-$TARGET.tar.gz" | grep -q "^cmdf-$VERSION-$TARGET/bin/cmdf$"
+#!/usr/bin/env bash
+# Exercise the actual package entrypoint with an isolated native Release producer.
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+work="$root/build/test-package-native"
+mkdir -p "$work"
+version=$("$root/scripts/version.sh")
+export LIBMDF_TARGETS=x86_64-linux-gnu LIBMDF_DIST_DIR="$work/dist" LIBMDF_PACKAGE_WORK_DIR="$work/staging"
+export LIBMDF_NATIVE_RELEASE_BUILD="$work/build"
+cmake --preset x86_64-linux-gnu-release -S "$root" -B "$work/build" -DLIBMDF_DIST_DIR="$work/dist" > "$work/configure.log" 2>&1
+cmake --build "$work/build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" > "$work/build.log" 2>&1
+mkdir -p "$work/dist"
+printf 'keep sibling\n' > "$work/dist/unrelated-artifact.txt"
+printf 'keep stale candidate\n' > "$work/dist/libmdf-9.9.9-armhf-linux-gnu.tar.gz"
+"$root/scripts/package.sh" > "$work/package.log" 2>&1
+sdk="libmdf-$version-x86_64-linux-gnu"
+cp "$work/dist/$sdk.tar.gz" "$work/first.tar.gz"
+find "$work/build/package" -exec touch -t 203001010101 {} +
+(umask 077; "$root/scripts/archive.sh" "$work/build/package" "$sdk" "$work/changed-timestamps.tar.gz")
+cmp "$work/first.tar.gz" "$work/changed-timestamps.tar.gz"
+(umask 077; "$root/scripts/package.sh" >> "$work/package.log" 2>&1)
+cmp "$work/first.tar.gz" "$work/dist/$sdk.tar.gz"
+grep -Fxq 'keep sibling' "$work/dist/unrelated-artifact.txt"
+grep -Fxq 'keep stale candidate' "$work/dist/libmdf-9.9.9-armhf-linux-gnu.tar.gz"
+test ! -e "$work/dist/libmdf-$version-CHECKSUMS"
+"$root/scripts/package-verify.sh" binary > "$work/verify.log" 2>&1
+cli="cmdf-$version-x86_64-linux-gnu"
+cp "$work/dist/$cli.tar.gz" "$work/valid-cli.tar.gz"
+for notice in LICENSE OFL.txt; do
+  rm -rf "$work/notice-test"
+  mkdir -p "$work/notice-test"
+  tar -C "$work/notice-test" -xzf "$work/valid-cli.tar.gz"
+  rm "$work/notice-test/$cli/share/doc/cmdf/$notice"
+  "$root/scripts/archive.sh" "$work/notice-test" "$cli" "$work/dist/$cli.tar.gz"
+  "$root/scripts/package_checksums.sh" binary > "$work/notice-$notice-checksums.log"
+  if "$root/scripts/package-verify.sh" binary > "$work/notice-$notice.log" 2>&1; then
+    printf 'CLI verification accepted missing %s\n' "$notice" >&2; exit 1;
+  fi
+  grep -Fq "Missing mandatory CLI payload: share/doc/cmdf/$notice" "$work/notice-$notice.log"
+done
+cp "$work/valid-cli.tar.gz" "$work/dist/$cli.tar.gz"
+"$root/scripts/package_checksums.sh" binary > "$work/restored-checksums.log"
+if LIBMDF_TARGETS=unsupported "$root/scripts/package.sh" > "$work/invalid.log" 2>&1; then exit 1; fi
+test -f "$work/dist/unrelated-artifact.txt"

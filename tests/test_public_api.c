@@ -952,16 +952,16 @@ int main(void)
     mdf_sink sink;
     size_t before_allocs;
     mdf_html_font jetbrains_font;
-    char regular_font_path[128];
-    char italic_font_path[128];
-    char resolved_regular_font_path[128];
-    char resolved_italic_font_path[128];
-    char font_dump_dir_path[160];
-    char regular_font_uri[192];
-    char italic_font_uri[192];
-    char deck_regular_font_uri[96];
-    char deck_italic_font_uri[96];
-    char font_dump_alias_path[192];
+    char regular_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char italic_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char resolved_regular_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char resolved_italic_font_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 128];
+    char font_dump_dir_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 160];
+    char regular_font_uri[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 192];
+    char italic_font_uri[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 192];
+    char deck_regular_font_uri[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char deck_italic_font_uri[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 96];
+    char font_dump_alias_path[sizeof(LIBMDF_TEST_SCRATCH_DIR) + 192];
     struct stat regular_font_st;
     struct stat italic_font_st;
     FILE *font_fp;
@@ -1043,9 +1043,9 @@ int main(void)
                     jetbrains_font.italic.data_len > 0,
                     "built-in JetBrains Mono font descriptor exposes both WOFF2 faces");
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
     fails += expect(st == MDF_OK, "built-in JetBrains Mono fonts dump to explicit paths");
     font_fp = fopen(regular_font_path, "rb");
@@ -1084,9 +1084,9 @@ int main(void)
     remove(regular_font_path);
     remove(italic_font_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-fifo-%ld", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-fifo-%ld", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     remove(regular_font_path);
     remove(italic_font_path);
     fails += expect(mkfifo(regular_font_path, 0600) == 0,
@@ -1096,7 +1096,7 @@ int main(void)
                     "forced font dump refuses FIFO destinations without blocking");
     unlink(regular_font_path);
     snprintf(font_dump_alias_path, sizeof(font_dump_alias_path),
-             "/tmp/libmdf-html-font-force-target-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-force-target-%ld.woff2", (long)getpid());
     remove(font_dump_alias_path);
     font_fp = fopen(font_dump_alias_path, "wb");
     if (font_fp != NULL) {
@@ -1118,9 +1118,9 @@ int main(void)
     unlink(regular_font_path);
     remove(font_dump_alias_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-case-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-case-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/LIBMDF-HTML-FONT-CASE-%ld.WOFF2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/LIBMDF-HTML-FONT-CASE-%ld.WOFF2", (long)getpid());
     remove(regular_font_path);
     remove(italic_font_path);
     st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
@@ -1134,9 +1134,9 @@ int main(void)
     remove(regular_font_path);
     remove(italic_font_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/./libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/./libmdf-html-font-regular-%ld.woff2", (long)getpid());
     st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
     fails += expect(st == MDF_ERROR_INVALID,
                     "font dump rejects lexically aliased destinations");
@@ -1160,9 +1160,9 @@ int main(void)
     unlink(font_dump_alias_path);
     rmdir(font_dump_dir_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     fails += expect(mkdir(regular_font_path, 0700) == 0,
                     "font dump directory destination setup succeeds");
     st = mdf_dump_html_jetbrains_mono_font(regular_font_path, italic_font_path);
@@ -1170,9 +1170,9 @@ int main(void)
                     "font dump rejects an existing directory destination");
     rmdir(regular_font_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     mdf_options_init(&opts);
     opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_uri = "fonts";
@@ -1188,17 +1188,17 @@ int main(void)
     fails += expect(access(regular_font_path, F_OK) != 0 && access(italic_font_path, F_OK) != 0,
                     "public font dump preflight does not create font files");
     fails += expect(mdf_paths_alias(regular_font_path,
-                                    "/tmp/./libmdf-html-font-regular-placeholder.woff2") == 0,
+                                    LIBMDF_TEST_SCRATCH_DIR "/./libmdf-html-font-regular-placeholder.woff2") == 0,
                     "public path alias check distinguishes different absent destinations");
     fails += expect(mdf_paths_alias(NULL, regular_font_path) == 0 &&
                     mdf_paths_alias(regular_font_path, "") == 0,
                     "public path alias check rejects null and empty paths without probing them");
     snprintf(resolved_regular_font_path, sizeof(resolved_regular_font_path),
-             "/tmp/libmdf-html-font-missing-%ld/face.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-missing-%ld/face.woff2", (long)getpid());
     fails += expect(mdf_paths_alias(resolved_regular_font_path, resolved_regular_font_path),
                     "public path alias check detects identical absent paths with missing parent");
     snprintf(resolved_regular_font_path, sizeof(resolved_regular_font_path),
-             "/tmp/./libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/./libmdf-html-font-regular-%ld.woff2", (long)getpid());
     fails += expect(mdf_paths_alias(regular_font_path, resolved_regular_font_path),
                     "public path alias check detects equivalent absent destinations");
     opts.html_dump_font = 0;
@@ -1303,9 +1303,9 @@ int main(void)
     remove(italic_font_path);
     rmdir(font_dump_dir_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     snprintf(font_dump_dir_path, sizeof(font_dump_dir_path), "%s-uri-parent", regular_font_path);
     snprintf(regular_font_uri, sizeof(regular_font_uri), "%s/a:", font_dump_dir_path);
     if (join_path(font_dump_alias_path, sizeof(font_dump_alias_path), regular_font_uri, "/b") != 0) {
@@ -1347,9 +1347,9 @@ int main(void)
     rmdir(regular_font_uri);
     rmdir(font_dump_dir_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     snprintf(font_dump_dir_path, sizeof(font_dump_dir_path), "%s%%zz", regular_font_path);
     fails += expect(mkdir(font_dump_dir_path, 0700) == 0,
                     "font dump literal-percent directory setup succeeds");
@@ -1388,9 +1388,9 @@ int main(void)
     remove(italic_font_path);
     rmdir(font_dump_dir_path);
     snprintf(regular_font_path, sizeof(regular_font_path),
-             "/tmp/libmdf-html-font-regular-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-regular-%ld.woff2", (long)getpid());
     snprintf(italic_font_path, sizeof(italic_font_path),
-             "/tmp/libmdf-html-font-italic-%ld.woff2", (long)getpid());
+             LIBMDF_TEST_SCRATCH_DIR "/libmdf-html-font-italic-%ld.woff2", (long)getpid());
     mdf_options_init(&opts);
     opts.ansi_mode = MDF_ANSI_ON;
     opts.html_font_source = MDF_HTML_FONT_SOURCE_EXTERNAL;

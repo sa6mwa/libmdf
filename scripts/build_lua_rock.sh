@@ -1,41 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-PREFIX="$ROOT/build/luarocks/libmdf-prefix"
-mkdir -p "$ROOT/build/luarocks"
-WORK=$(mktemp -d "$ROOT/build/luarocks/work.XXXXXX")
-
-cleanup() {
-  rm -rf "$WORK"
-}
-trap cleanup EXIT HUP INT TERM
-
-if [ -e "$ROOT/libmdf" ]; then
-  printf '%s\n' "refusing source-tree Lua module directory: $ROOT/libmdf" >&2
-  exit 1
-fi
-
-mkdir -p "$WORK/lua"
-cp "$ROOT/lua/libmdf.lua" "$WORK/lua/libmdf.lua"
-cp "$ROOT/lua/libmdf_core.c" "$WORK/lua/libmdf_core.c"
-bash "$ROOT/scripts/build_lua_runtime.sh"
-LUA_ROOT="$ROOT/build/lua-runtime"
-(
-  cd "$ROOT"
-  "$ROOT/scripts/configure_preset.sh" debug lua -DCMAKE_INSTALL_PREFIX="$PREFIX"
-  cmake --build --preset debug
-)
-cmake --install "$ROOT/build/debug"
-ROCKSPEC="$WORK/libmdf-$VERSION-1.rockspec"
-sed "s/@VERSION@/$VERSION/g" "$ROOT/libmdf-scm-1.rockspec.in" > "$ROCKSPEC"
-eval "$("$ROOT/scripts/bootlin_x86_runtime.sh")"
-CC="$LIBMDF_BOOTLIN_CC"
-(
-  cd "$WORK"
-  luarocks --lua-dir "$LUA_ROOT" --lua-version 5.5 --tree "$ROOT/build/luarocks/tree" \
-    make "$ROCKSPEC" MDF_DIR="$PREFIX" \
-    CC="$CC" LD="$CC" CFLAGS="-O2 -fPIC -Wall -Wextra -Werror" \
-    LUA_INCDIR="$LUA_ROOT/include"
-)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+"$root/scripts/build.sh" debug
+version=$("$root/scripts/version.sh")
+runtime_env=$("$root/scripts/bootlin_x86_runtime.sh")
+eval "$runtime_env"
+work="$root/build/luarocks"
+mkdir -p "$work/source/lua"
+mkdir -p "$work/scratch"
+export TMPDIR="$work/scratch"
+cp "$root/lua/libmdf.lua" "$root/lua/libmdf_core.c" "$work/source/lua/"
+"$root/scripts/render_release_rockspec.sh" "$work/source/libmdf-$version-1.rockspec" "$version"
+cd "$work/source"
+luarocks --lua-dir "$root/build/debug/lua-runtime" --lua-version 5.5 --tree "$work/tree" \
+  make "libmdf-$version-1.rockspec" MDF_DIR="$root/build/debug/lua-sdk" \
+  CC="$LIBMDF_BOOTLIN_CC" LD="$LIBMDF_BOOTLIN_CC" CFLAGS='-O2 -fPIC -Wall -Wextra -Werror' \
+  LUA_INCDIR="$root/build/debug/lua-runtime/include"

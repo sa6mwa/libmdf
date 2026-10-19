@@ -1,35 +1,30 @@
-#!/usr/bin/env sh
-set -eu
-
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-VERSION=$(sh "$ROOT/scripts/version.sh")
-MANIFEST="$ROOT/dist/libmdf-$VERSION-CHECKSUMS"
-TMP="$ROOT/build/checksums"
-
-mkdir -p "$ROOT/dist" "$TMP"
-LIST="$TMP/artifacts.txt"
-: > "$LIST"
-
-for artifact in \
-  "$ROOT"/dist/libmdf-"$VERSION".tar.gz \
-  "$ROOT"/dist/libmdf-"$VERSION"-*.tar.gz \
-  "$ROOT"/dist/cmdf-"$VERSION"-*.tar.gz \
-  "$ROOT"/dist/libmdf-lua-"$VERSION".tar.gz \
-  "$ROOT"/dist/libmdf-"$VERSION"-1.rockspec \
-  "$ROOT"/dist/libmdf-"$VERSION"-1.src.rock
-do
-  if [ -f "$artifact" ]; then
-    basename "$artifact" >> "$LIST"
-  fi
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+version=$("$root/scripts/version.sh")
+dist=${LIBMDF_DIST_DIR:-$root/dist}
+scope=${1:-complete}
+inventory=$("$root/scripts/release_artifacts.sh" "$scope")
+mapfile -t artifacts <<< "$inventory"
+case "$scope" in
+  binary)
+    workspace=${LIBMDF_PACKAGE_WORK_DIR:-$root/build/package}
+    "$root/scripts/require_build_path.sh" "$workspace"
+    manifest="$workspace/binary-CHECKSUMS";;
+  complete)
+    [[ -z ${LIBMDF_TARGETS:-} ]] || { printf 'Complete manifest requires the full declared target matrix\n' >&2; exit 1; }
+    manifest="$dist/libmdf-$version-CHECKSUMS"
+    ;;
+  *) printf 'usage: package_checksums.sh [complete|binary]\n' >&2; exit 2;;
+esac
+for artifact in "${artifacts[@]}"; do
+  [[ -f $dist/$artifact ]] || { printf 'Missing required %s artifact: %s\n' "$scope" "$dist/$artifact" >&2; exit 1; }
 done
-
-sort -u "$LIST" > "$LIST.sorted"
-if [ ! -s "$LIST.sorted" ]; then
-  printf '%s\n' "no release artifacts found in dist for $VERSION" >&2
-  exit 1
+mkdir -p "$(dirname -- "$manifest")"
+(cd "$dist" && sha256sum "${artifacts[@]}") > "$manifest.tmp"
+if [[ -f $manifest ]] && cmp -s "$manifest.tmp" "$manifest"; then
+  rm "$manifest.tmp"
+else
+  mv "$manifest.tmp" "$manifest"
 fi
-
-(
-  cd "$ROOT/dist"
-  xargs sha256sum < "$LIST.sorted" > "$MANIFEST"
-)
+printf '%s\n' "$manifest"

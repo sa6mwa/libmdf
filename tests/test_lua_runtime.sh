@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-lua="$root/build/lua-runtime/bin/lua"
-eval "$("$root/scripts/bootlin_x86_runtime.sh")"
+lua=${1:-$root/build/debug/lua-runtime/bin/lua}
+tree=${2:-$root/build/debug/lua-tree}
+sdk_lib=${3:-$root/build/debug/lua-sdk/lib}
+runtime_env=$("$root/scripts/bootlin_x86_runtime.sh")
+eval "$runtime_env"
 cmake -DREADELF="$LIBMDF_BOOTLIN_READELF" -DEXECUTABLE="$lua" \
   -DINTERPRETER="$LIBMDF_BOOTLIN_INTERPRETER" -DRUNTIME_DIR="$LIBMDF_BOOTLIN_RUNTIME_DIR" \
   -P "$root/tests/assert_bootlin_runtime.cmake"
-LUA_PATH="$root/build/luarocks/tree/share/lua/5.5/?.lua;;" \
-LUA_CPATH="$root/build/luarocks/tree/lib/lua/5.5/?.so;;" \
+LUA_PATH="$tree/share/lua/5.5/?.lua;;" \
+LUA_CPATH="$tree/lib/lua/5.5/?.so;;" \
 "$lua" - "$(cd "$LIBMDF_BOOTLIN_RUNTIME_DIR" && pwd -P)" \
-  "$root/build/luarocks/libmdf-prefix/lib/" <<'LUA'
+  "$sdk_lib/" <<'LUA'
 assert(os.getenv("LD_LIBRARY_PATH") == nil, "test requires no LD_LIBRARY_PATH")
 local mdf = require("libmdf")
 assert(mdf.render("# runtime\n", { boring = true }):match("runtime"))

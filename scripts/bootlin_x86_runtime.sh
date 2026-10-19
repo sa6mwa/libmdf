@@ -8,7 +8,11 @@ fi
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 resolver="$root/scripts/cpkt-toolchains.sh"
-description=$("$resolver" ensure x86_64-linux-gnu)
+description=$("$resolver" discover x86_64-linux-gnu)
+grep -Fxq 'status=ready' <<< "$description" || {
+  printf 'Pinned runtime unavailable; prepare with: %s ensure x86_64-linux-gnu\n' "$resolver" >&2
+  exit 1
+}
 
 value() {
   local key=$1
