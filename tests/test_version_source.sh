@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
-unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_DIST_DIR LIBMDF_NATIVE_RELEASE_BUILD LIBMDF_PACKAGE_WORK_DIR
+unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_DIST_DIR LIBMDF_PACKAGE_WORK_DIR
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 work="$root/build/test-version-source"
 rm -rf -- "$work"
 mkdir -p "$work/repo/scripts" "$work/extract"
 repo="$work/repo"
-cp "$root/scripts/"{version.sh,package_source.sh,archive.sh,lifecycle_version_contract.sh} "$repo/scripts/"
+cp "$root/scripts/"{version.sh,package_source.sh,archive.sh,lifecycle_version_contract.sh,verify_source_archive.sh,require_build_path.sh} "$repo/scripts/"
 git -C "$repo" init -q -b trunk
 git -C "$repo" config user.email test@example.invalid
 git -C "$repo" config user.name 'libmdf test'
@@ -32,6 +32,30 @@ tar -C "$work/extract" -xzf "$repo/dist/libmdf-2.3.4.tar.gz"
 # An enclosing repository must never own the extracted tree's source version.
 [[ $("$work/extract/libmdf-2.3.4/scripts/version.sh") == 2.3.4 ]]
 cp "$repo/dist/libmdf-2.3.4.tar.gz" "$work/first.tar.gz"
+"$repo/scripts/verify_source_archive.sh" > "$work/verify-source.log" 2>&1
+LIBMDF_DIST_DIR="$repo/dist" "$work/extract/libmdf-2.3.4/scripts/verify_source_archive.sh" > "$work/verify-extracted.log" 2>&1
+for defect in content missing extra mode version manifest; do
+  rm -rf "$work/corrupt"
+  mkdir -p "$work/corrupt"
+  tar -C "$work/corrupt" -xzf "$work/first.tar.gz"
+  source="$work/corrupt/libmdf-2.3.4"
+  case "$defect" in
+    content) printf '\n# changed input\n' >> "$source/scripts/archive.sh";;
+    missing) rm "$source/scripts/archive.sh";;
+    extra) printf 'unexpected\n' > "$source/extra.txt";;
+    mode) chmod -x "$source/scripts/archive.sh";;
+    version) printf '9.9.9\n' > "$source/VERSION";;
+    manifest)
+      sed '/scripts\/archive.sh/d' "$source/RELEASE_MANIFEST" > "$work/manifest-edited"
+      mv "$work/manifest-edited" "$source/RELEASE_MANIFEST";;
+  esac
+  "$root/scripts/archive.sh" "$work/corrupt" libmdf-2.3.4 "$repo/dist/libmdf-2.3.4.tar.gz"
+  if "$repo/scripts/verify_source_archive.sh" > "$work/verify-$defect.log" 2>&1; then
+    printf 'Source verification accepted %s defect\n' "$defect" >&2; exit 1;
+  fi
+done
+cp "$work/first.tar.gz" "$repo/dist/libmdf-2.3.4.tar.gz"
+"$repo/scripts/verify_source_archive.sh" >> "$work/verify-source.log" 2>&1
 find "$repo/build/package-source" -exec touch -t 203001010101 {} +
 "$repo/scripts/package_source.sh" >> "$work/package.log"
 cmp "$work/first.tar.gz" "$repo/dist/libmdf-2.3.4.tar.gz"

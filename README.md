@@ -248,9 +248,11 @@ Important options:
 - `boring`: disable decoration independently of the escape policy. Boring
   terminal output may still use OSC8; combine it with OFF for no escapes.
 - `osc8`: enable OSC8 hyperlink output for ANSI.
-- `theme_name`: theme name. `default` is used when unset.
+- `theme_name`: theme name. `default` is used when unset, or `one-dark` for C89 HTML.
 - `html_content_width_ch`: HTML document content width in `ch`. Default is
   `96`.
+- `html_c89`: C89 Systems branding for HTML documents only (default off).
+  Embedded/external SVGs follow the font mode; font dumping includes both SVGs.
 - `html_font`: optional user-supplied HTML font data. HTML and deck output use
   the built-in JetBrains Mono regular and italic WOFF2 faces when this is unset.
   Each face is declared once with a CSS weight range of `400 700`, covering
@@ -370,8 +372,8 @@ title before the first feed because automatic title detection is a one-shot
 source feature.
 HTML deck renderers remain whole-source only.
 
-The shared library uses SONAME ABI version `5`, advanced from released ABI 4
-because the new ANSI destination/policy fields change the public options layout.
+The shared library uses SONAME ABI version `6`, advanced from released ABI 5
+because the C89 HTML branding option changes the public options layout.
 Lua facade and `cmdf.lua` changes do not themselves require a C ABI bump.
 
 For HTML, `mdf_set_html_title(renderer, title)` can set an optional document
@@ -552,6 +554,7 @@ Flags:
 -h, --help
 -V, --version
     --html
+    --c89                   C89 Systems branding for HTML documents
     --deck
     --ascii                 Escape-free UTF-8 output (ANSI renderer only)
     --ansi auto|on|off       Escape policy; default auto
@@ -616,6 +619,32 @@ leaves search mode without leaving the pager. Markdown views rerender only after
 HTML/deck output, `--output`, write tracing, or input simulation. It can be
 combined with `--incremental`; the pager starts after that document reaches
 EOD and rerenders its named Markdown source after a settled resize.
+
+`--c89` applies the [C89 Systems Lights Out](https://c89.systems/lights-out/)
+page design: a faint oversized background mark, sticky branded header with
+section navigation, company footer, and the reference page's `one-dark` palette
+(unless a theme is explicitly selected). It requires HTML document output;
+ANSI and decks reject it. Content width, font settings and Markdown theme
+remain configurable.
+
+```sh
+cmdf --html --c89 report.md > report.html  # self-contained fonts and SVGs
+cmdf -o report.html --c89 report.md        # infers HTML from the filename
+cmdf -o report.html --c89 --html-dump-font report.md
+```
+
+The last command writes the fonts plus `c89-mark.svg` and `c89-systems.svg`
+beside the HTML. SVGs follow `--html-dump-font-force` preservation/replacement
+rules. With custom font paths, SVG destinations and references are siblings
+of the regular font (including its URI query/fragment suffix). When external
+fonts use their default upstream URLs without dumping, SVGs reference the
+original C89 Systems URLs. CSS and section navigation stay inline in all modes.
+
+C callers set `opts.html_c89 = 1` before `mdf_create(MDF_FORMAT_HTML, ...)`.
+`mdf_html_c89_resolve_dump_paths` resolves enabled SVG dump destinations without
+writing files, so wrappers can protect their input/output paths before creation.
+Lua callers use `{html = true, c89 = true}` and
+`mdf.html_c89_dump_paths(opts)`; `cmdf.lua` also accepts `--c89`.
 
 For HTML, libmdf and `cmdf` embed JetBrains Mono variable WOFF2 data by
 default. `--html-disable-embedded-font` instead references byte-identical,
@@ -1065,9 +1094,10 @@ Debug, Release or fuzz producers.
 
 `make prerelease` performs incremental binary and Lua preparation: format checking,
 native tests, Valgrind, AFL++ smoke, complete parity, binary packaging and final-byte
-checks for those artifacts. Source reconstruction is explicit during preparation:
-`make package-source-smoke` packages committed inputs, extracts them and runs the
-native Release tests from that archive. Ordinary build and test targets never clean.
+checks for those artifacts. `make package-source` archives committed source inputs.
+Complete artifact verification extracts that archive and checks its version,
+file inventory, contents and executable modes against the release inputs.
+Ordinary build and test targets never clean.
 
 Keep implementation, testing and review on one development branch. Once a release
 is authorized, preserve that branch and squash its verified change onto the local
@@ -1090,9 +1120,12 @@ tag on HEAD, no candidate override and no partial target selection. Its prefligh
 as `make lifecycle-version-contract`; it never creates or removes tags. Final
 artifacts and staging use the owned `dist/` and `build/package/` paths; redirected
 `LIBMDF_DIST_DIR` or `LIBMDF_PACKAGE_WORK_DIR` values are rejected before cleaning.
-The final gate runs full `make clean` once, then runs the required checks, reconstructs source
-and uses that native Release producer for the native SDK and CLI archives. Cross
-producers build their required configurations once. A failed phase stops the run;
+The final gate runs full `make clean` once, then runs the required checks and builds
+every target through its normal Release preset. The glibc x86_64 producer lives at
+`build/x86_64-linux-gnu-release`, alongside the other target directories; SDK and CLI
+archives share those producers. `make test-release` runs the native Release tests
+there before final packaging. Source archive verification adds no second build.
+A failed phase stops the run;
 there is no retagging, automatic repair or publication inside the gate.
 Prepare required release tools and archives in the declared global cache so they
 survive that clean. Keep remote default-branch and release-tag refs unchanged until

@@ -23,7 +23,7 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 set_property(GLOBAL APPEND PROPERTY JOB_POOLS lifecycle=1)
 
-set(LIBMDF_ABI_VERSION 5)
+set(LIBMDF_ABI_VERSION 6)
 
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
 set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
@@ -87,12 +87,24 @@ if(NOT LIBMDF_BUILD_LIBRARIES)
   message(FATAL_ERROR "libmdf requires LIBMDF_BUILD_STATIC or LIBMDF_BUILD_SHARED")
 endif()
 
+set(LIBMDF_C89_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/c89_assets.h")
+add_custom_command(OUTPUT "${LIBMDF_C89_HEADER}"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  COMMAND "${CMAKE_COMMAND}"
+    "-DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/assets/c89"
+    "-DOUTPUT=${LIBMDF_C89_HEADER}" -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedC89.cmake"
+  DEPENDS cmake/EmbedC89.cmake assets/c89/c89-mark.svg assets/c89/c89-systems.svg
+          assets/c89/style.css assets/c89/navigation.js
+  VERBATIM)
+add_custom_target(libmdf-c89-assets DEPENDS "${LIBMDF_C89_HEADER}")
+
 set(LIBMDF_SOURCES
   src/mdf.c
   src/render.c
   src/render_ansi.c
   src/render_ansi_blocks.c
   src/html_fonts.c
+  src/html_c89.c
   src/pager.c
   src/path.c
   src/render_html.c
@@ -113,7 +125,9 @@ function(libmdf_configure_c89_target target)
 endfunction()
 
 function(libmdf_target_defaults target)
+  add_dependencies(${target} libmdf-c89-assets)
   target_include_directories(${target}
+    PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
     PUBLIC
       "$<BUILD_INTERFACE:${LIBMDF_GENERATED_INCLUDE_DIR}>"
       "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"

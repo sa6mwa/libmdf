@@ -13,9 +13,8 @@ esac
 make --no-print-directory -C "$root" format-check
 make --no-print-directory -C "$root" test-hardening
 if [[ $mode == final ]]; then
-  make --no-print-directory -C "$root" package-source-smoke
-  # The clean reconstruction is the native Release producer for this run.
-  export LIBMDF_NATIVE_RELEASE_BUILD="$root/build/package-source-smoke/build"
+  make --no-print-directory -C "$root" test-release
+  make --no-print-directory -C "$root" package-source
 fi
 make --no-print-directory -C "$root" package
 make --no-print-directory -C "$root" release-lua-artifacts

@@ -61,6 +61,18 @@ add_test(NAME verify_${LIBMDF_ARTIFACT_SCOPE} COMMAND "${CMAKE_COMMAND}" -E env 
 set_tests_properties(verify_${LIBMDF_ARTIFACT_SCOPE} PROPERTIES LABELS "packaging;e2e" TIMEOUT 600 RUN_SERIAL TRUE)
 file(GLOB_RECURSE scripts CONFIGURE_DEPENDS "${LIBMDF_SOURCE_DIR}/scripts/*.sh" "${LIBMDF_SOURCE_DIR}/cmake/*.cmake"
   "${LIBMDF_SOURCE_DIR}/tests/package-consumer/*")
+if(LIBMDF_ARTIFACT_SCOPE STREQUAL "complete")
+  # Source delivery is checked against checkout inputs as well as archive bytes.
+  file(GLOB root_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
+    "${LIBMDF_SOURCE_DIR}/*" "${LIBMDF_SOURCE_DIR}/.[!.]*")
+  list(FILTER root_inputs EXCLUDE REGEX "/\\.git$")
+  foreach(directory assets benchmarks cmake docs e2e examples fuzz include lua parityjudge scripts src testdata tests)
+    file(GLOB_RECURSE source_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES false
+      "${LIBMDF_SOURCE_DIR}/${directory}/*")
+    list(APPEND scripts ${source_inputs})
+  endforeach()
+  list(APPEND scripts ${root_inputs})
+endif()
 list(APPEND scripts "${LIBMDF_SOURCE_DIR}/tests/test_shared_exports.sh" "${LIBMDF_SOURCE_DIR}/CMakeLists.txt")
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/verification-members.txt" CONTENT "${scripts}\n")
 list(APPEND scripts "${CMAKE_CURRENT_BINARY_DIR}/verification-members.txt")

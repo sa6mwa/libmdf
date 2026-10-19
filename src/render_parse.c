@@ -1779,6 +1779,8 @@ static int table_render_cell_markdown_to_ansi(mdf_impl *impl,
     size_t cell_src_len;
 
     opts = impl->opts;
+    /* A table cell's ANSI helper does not render the HTML page shell. */
+    opts.html_c89 = 0;
     if (impl->format != MDF_FORMAT_ANSI) opts.ansi_mode = MDF_ANSI_ON;
     opts.width = MDF_TABLE_CELL_RENDER_WIDTH;
     opts.margin_left = 0;

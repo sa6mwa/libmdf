@@ -50,6 +50,9 @@ add_test(NAME lua_cli_destination_policy COMMAND test_destination_policy "${CMAK
   "${CMAKE_CURRENT_BINARY_DIR}/fixtures" --lua-cli)
 add_test(NAME lua_runtime COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_runtime.sh"
   "$<TARGET_FILE:lua>" "${tree}" "${sdk_lib}")
+add_test(NAME lua_c89_cli COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_c89_cli.sh"
+  "${CMAKE_CURRENT_BINARY_DIR}/cmdf.sh" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/fixtures")
+set_tests_properties(lua_c89_cli PROPERTIES LABELS "integration;lua;html" TIMEOUT 15)
 set_tests_properties(lua_smoke lua_destination_policy lua_cli_destination_policy lua_runtime PROPERTIES
   LABELS "integration;lua;e2e" TIMEOUT 60
   WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"

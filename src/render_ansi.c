@@ -11412,9 +11412,9 @@ mdf_status html_renderer_finish(mdf_renderer *self, mdf_impl *impl, mdf_sink *si
         }
         return MDF_OK;
     }
-    if (mdf_write_cstr(sink,
-                       footer_needs_newline ? "\n</main>\n</body>\n</html>\n"
-                                            : "</main>\n</body>\n</html>\n") != 0) {
+    if (mdf_write_cstr(sink, footer_needs_newline ? "\n</main>\n" : "</main>\n") != 0 ||
+        html_write_c89_footer(impl, sink) != 0 ||
+        mdf_write_cstr(sink, "</body>\n</html>\n") != 0) {
         return mdf_renderer_fail_sink_write(self);
     }
     return MDF_OK;

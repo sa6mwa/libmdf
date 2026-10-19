@@ -15,7 +15,7 @@ for preset in debug x86_64-linux-gnu-release fuzz; do
   cmake --preset "$preset" -B "$build" -DLIBMDF_BUILD_HOST_TESTS=OFF -DLIBMDF_BUILD_LUA_TESTS=OFF > "$work/$preset.log" 2>&1
   case "$preset" in
     debug) check_cache "$build" LIBMDF_BUILD_TESTS ON; check_cache "$build" LIBMDF_CMDF_STATIC_RUNTIME OFF;;
-    *-release) check_cache "$build" LIBMDF_BUILD_TESTS OFF; check_cache "$build" LIBMDF_CMDF_STATIC_RUNTIME ON; check_cache "$build" LIBMDF_INSTALL_BINARY ON;;
+    *-release) check_cache "$build" LIBMDF_BUILD_TESTS ON; check_cache "$build" LIBMDF_CMDF_STATIC_RUNTIME ON; check_cache "$build" LIBMDF_INSTALL_BINARY ON;;
     fuzz) check_cache "$build" LIBMDF_BUILD_FUZZERS ON; check_cache "$build" LIBMDF_BUILD_SHARED OFF;;
   esac
   touch "$build/preserve.marker"

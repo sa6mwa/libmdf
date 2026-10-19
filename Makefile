@@ -2,8 +2,9 @@ PREFIX ?= /usr/local
 CMAKE_BUILD_PARALLEL_LEVEL ?= 2
 export CMAKE_BUILD_PARALLEL_LEVEL
 .NOTPARALLEL:
+.PHONY: test-release
 
-.PHONY: help tools-native tools-cross build build-debug build-release install test test-debug check-native check-clean test-all test-hardening valgrind fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-lua lua-test lua-rock lua-env benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test format format-check shell-check package package-source package-source-smoke package-checksums package-verify verify-release-privacy verify-release-archives release-lua-artifacts verify-lua-artifacts cross-build release-matrix prerelease prerelease-hardening release lifecycle-version-contract print-release-version finalize-slice test-install-tree example-smoke-local clean clean-dist
+.PHONY: help tools-native tools-cross build build-debug build-release install test test-debug check-native check-clean test-all test-hardening valgrind fuzz fuzz-smoke fuzz-long parity parity-quick parity-full parity-ansi parity-ansi-quick parity-html parity-html-quick parity-stream parity-stream-quick parity-ansi-stream parity-ansi-stream-quick parity-lua lua-test lua-rock lua-env benchmark benchmark-cmdf bench-check golden-update golden-test cmdf-golden-update cmdf-golden-test format format-check shell-check package package-source package-checksums package-verify verify-release-privacy verify-release-archives release-lua-artifacts verify-lua-artifacts cross-build release-matrix prerelease prerelease-hardening release lifecycle-version-contract print-release-version finalize-slice test-install-tree example-smoke-local clean clean-dist
 
 help:
 	@printf '%s\n' \
@@ -15,6 +16,7 @@ help:
 	  '  make build-release           Build native Release libraries and static CLI' \
 	  '  make install                 Install static cmdf to DESTDIR/PREFIX/bin' \
 	  '  make test                    Force the native CTest suite' \
+	  '  make test-release            Test the canonical native Release build' \
 	  '  make check-native            Reuse unchanged native suite success' \
 	  '  make check-clean             Invalidate local suite success records' \
 	  '  make test-all                Native checks, memory, fuzz and quick parity' \
@@ -32,8 +34,8 @@ help:
 	  '  make shell-check             Validate lifecycle shell syntax' \
 	  '  make package                 Build/reuse selected binary archive producers' \
 	  '  make package-verify          Verify the binary rehearsal through CTest' \
-	  '  make package-source-smoke    Reconstruct and test the committed source archive' \
-	  '  make prerelease              Incremental binary/Lua preparation; source smoke is explicit' \
+	  '  make package-source          Archive committed source inputs' \
+	  '  make prerelease              Incremental binary/Lua preparation and verification' \
 	  '  make release                 Require signed/tagged default-branch HEAD; clean and verify' \
 	  '  make clean                   Remove owned build/dist/extraction state; preserve shared caches'
 
@@ -58,6 +60,10 @@ install:
 
 test test-debug:
 	@scripts/test.sh debug
+
+test-release:
+	@scripts/build.sh x86_64-linux-gnu-release
+	@ctest --test-dir build/x86_64-linux-gnu-release --output-on-failure --stop-on-failure --no-tests=error -j1 -LE memory
 
 check-native:
 	@scripts/build.sh debug --target check-native
@@ -148,9 +154,6 @@ package:
 
 package-source:
 	@scripts/package_source.sh
-
-package-source-smoke: package-source
-	@scripts/test_release_from_source.sh
 
 package-checksums:
 	@scripts/package_checksums.sh complete

@@ -1701,3 +1701,13 @@ do
   assert_equal(run_capture(shell_quote(cmdf_lua), text), plain, "Lua CLI defaults to plain output")
   assert_equal(run_capture(shell_quote(cmdf_lua) .. " --ascii --osc8 on", text), plain, "Lua CLI ASCII overrides OSC8")
 end
+
+-- C89 branding is the same library option exposed by the C CLI.
+local c89 = mdf.new({html = true, c89 = true})
+local c89_html = c89:render("# Brand\n\nBody.\n")
+assert(c89_html:find('data:image/svg+xml;base64,', 1, true))
+assert(c89_html:find('class="lights-out-banner"', 1, true))
+assert(c89_html:find('class="lights-out-footer"', 1, true))
+c89:close()
+assert(not pcall(mdf.new, {c89 = true}))
+assert(not pcall(mdf.new, {deck = true, c89 = true}))

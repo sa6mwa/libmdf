@@ -443,6 +443,7 @@ static void usage(FILE *fp)
     fprintf(fp, "  -h, --help                 Show help\n");
     fprintf(fp, "  -V, --version              Show version\n");
     fprintf(fp, "      --html                 Render HTML\n");
+    fprintf(fp, "      --c89                  C89 Systems branding (HTML only); font dumps include SVGs\n");
     fprintf(fp, "      --deck                 Render HTML slide deck\n");
     fprintf(fp, "      --ascii                UTF-8 output without escape sequences (ANSI renderer)\n");
     fprintf(fp, "      --ansi MODE            Escape policy: auto|on|off (default auto)\n");
@@ -699,6 +700,8 @@ int main(int argc, char **argv)
     const char *html_font_path;
     const char *html_font_regular_path;
     const char *html_font_italic_path;
+    char resolved_c89_mark_path[4096];
+    char resolved_c89_logo_path[4096];
     char resolved_regular_font_path[4096];
     char resolved_italic_font_path[4096];
     char default_font_dump_path[4096];
@@ -715,6 +718,7 @@ int main(int argc, char **argv)
         {"help", no_argument, NULL, 'h'},
         {"version", no_argument, NULL, 'V'},
         {"html", no_argument, NULL, 'H'},
+        {"c89", no_argument, NULL, 1024},
         {"deck", no_argument, NULL, 1009},
         {"ascii", no_argument, NULL, 1022},
         {"ansi", required_argument, NULL, 1023},
@@ -897,6 +901,9 @@ int main(int argc, char **argv)
         case 1014:
             html_font_italic_uri = optarg;
             break;
+        case 1024:
+            opts.html_c89 = 1;
+            break;
         case 1015:
             html_dump_font = 1;
             break;
@@ -997,6 +1004,10 @@ int main(int argc, char **argv)
         if (width_flag > 0 && !html_content_width_flag) {
             opts.html_content_width_ch = (double)width_flag;
         }
+    }
+    if (opts.html_c89 && format != MDF_FORMAT_HTML) {
+        fprintf(stderr, "cmdf: --c89 requires HTML output (--html or -o file.html)\n");
+        return 2;
     }
     if ((html_disable_embedded_font || html_font_uri != NULL || html_font_regular_uri != NULL || html_font_italic_uri != NULL ||
          html_dump_font || html_font_path != NULL || html_font_regular_path != NULL || html_font_italic_path != NULL) &&
@@ -1136,6 +1147,22 @@ int main(int argc, char **argv)
             return 2;
         }
     }
+    if (html_font_dump_requested && opts.html_c89) {
+        st = mdf_html_c89_resolve_dump_paths(&opts, resolved_c89_mark_path, sizeof(resolved_c89_mark_path),
+                                            resolved_c89_logo_path, sizeof(resolved_c89_logo_path));
+        if (st != MDF_OK) {
+            fprintf(stderr, "cmdf: invalid C89 SVG dump destinations\n");
+            return 2;
+        }
+        if ((in_path != NULL && (mdf_paths_alias(resolved_c89_mark_path, in_path) ||
+                                 mdf_paths_alias(resolved_c89_logo_path, in_path))) ||
+            (out_path != NULL && (mdf_paths_alias(resolved_c89_mark_path, out_path) ||
+                                  mdf_paths_alias(resolved_c89_logo_path, out_path))) ||
+            path_aliases_stdout(resolved_c89_mark_path) || path_aliases_stdout(resolved_c89_logo_path)) {
+            fprintf(stderr, "cmdf: C89 SVG dump destination aliases input, output, or stdout\n");
+            return 2;
+        }
+    }
     in_fp = stdin;
     out_fp = stdout;
     trace_fp = NULL;
@@ -1204,7 +1231,9 @@ int main(int argc, char **argv)
      * again before opening it for truncating output. */
     if (html_font_dump_requested && out_path != NULL &&
         (mdf_paths_alias(resolved_regular_font_path, out_path) ||
-         mdf_paths_alias(resolved_italic_font_path, out_path))) {
+         mdf_paths_alias(resolved_italic_font_path, out_path) ||
+         (opts.html_c89 && (mdf_paths_alias(resolved_c89_mark_path, out_path) ||
+                            mdf_paths_alias(resolved_c89_logo_path, out_path))))) {
         fprintf(stderr, "cmdf: HTML font dump destination aliases input, output, or stdout\n");
         renderer->destroy(renderer);
         if (trace_fp != NULL && trace_fp != stderr) fclose(trace_fp);

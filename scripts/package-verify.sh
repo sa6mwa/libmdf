@@ -94,5 +94,8 @@ for artifact in "${artifacts[@]}"; do
     esac
   fi
 done
-if [[ $scope == complete ]]; then "$root/scripts/verify_lua_artifacts.sh"; fi
+if [[ $scope == complete ]]; then
+  "$root/scripts/verify_source_archive.sh"
+  "$root/scripts/verify_lua_artifacts.sh"
+fi
 LIBMDF_MANIFEST="$manifest" LIBMDF_PRIVACY_SCOPE="$scope" "$root/scripts/verify_release_privacy.sh"

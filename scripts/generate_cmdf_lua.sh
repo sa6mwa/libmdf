@@ -51,6 +51,7 @@ local function usage()
   io.stderr:write("  -8, --osc8 MODE            OSC8 mode: auto|on|off\\n")
   io.stderr:write("      --list-themes          List available themes\\n")
   io.stderr:write("      --html-content-width N HTML content max width in ch\\n")
+  io.stderr:write("      --c89                  C89 Systems branding (HTML only); font dumps include SVGs\\n")
   io.stderr:write("      --html-disable-embedded-font Use external JetBrains Mono web fonts\\n")
   io.stderr:write("      --html-font-uri URI    External JetBrains Mono font URI base\\n")
   io.stderr:write("      --html-font-regular-uri URI Override external regular font URI\\n")
@@ -189,6 +190,8 @@ while i <= #arg do
     opts.html_content_width_ch = tonumber(arg[i])
     if not opts.html_content_width_ch or opts.html_content_width_ch <= 0 then error("cmdf.lua: invalid html content width", 0) end
     html_content_width_seen = true
+  elseif a == "--c89" then
+    opts.c89 = true
   elseif a == "--html-disable-embedded-font" then
     opts.disable_embedded_font = true
   elseif a == "--html-font-uri" then
@@ -312,6 +315,10 @@ local function output_relative_path(output_dir, path)
   return output_dir .. "/" .. path
 end
 
+if opts.c89 and (not opts.html or opts.deck) then
+  error("cmdf.lua: --c89 requires HTML output (--html or -o file.html)", 0)
+end
+
 if (opts.disable_embedded_font or opts.font_uri or opts.font_regular_uri or opts.font_italic_uri or opts.dump_font or opts.dump_font_force or
     opts.font_path or opts.font_regular_path or opts.font_italic_path) and not html_like then
   error("cmdf.lua: HTML font options require HTML or deck output", 0)
@@ -347,12 +354,20 @@ end
 
 local dump_regular_path
 local dump_italic_path
+local dump_mark_path
+local dump_logo_path
 if opts.dump_font then
   dump_regular_path, dump_italic_path = mdf.html_font_dump_paths(opts)
   local function dump_path_aliases(path)
     return (input_path and mdf.paths_alias(path, input_path)) or
            (output_path and mdf.paths_alias(path, output_path)) or
            mdf.path_aliases_stdout(path)
+  end
+  if opts.c89 then
+    dump_mark_path, dump_logo_path = mdf.html_c89_dump_paths(opts)
+    if dump_path_aliases(dump_mark_path) or dump_path_aliases(dump_logo_path) then
+      error("cmdf.lua: C89 SVG dump destination aliases input, output, or stdout", 0)
+    end
   end
   if dump_path_aliases(dump_regular_path) or dump_path_aliases(dump_italic_path) then
     error("cmdf.lua: HTML font dump destination aliases input, output, or stdout", 0)
@@ -424,7 +439,8 @@ local renderer = mdf.new(opts)
 
 if opts.dump_font and
    ((input_path and (mdf.paths_alias(dump_regular_path, input_path) or mdf.paths_alias(dump_italic_path, input_path))) or
-    (output_path and (mdf.paths_alias(dump_regular_path, output_path) or mdf.paths_alias(dump_italic_path, output_path))) ) then
+    (output_path and (mdf.paths_alias(dump_regular_path, output_path) or mdf.paths_alias(dump_italic_path, output_path) or
+                     (opts.c89 and (mdf.paths_alias(dump_mark_path, output_path) or mdf.paths_alias(dump_logo_path, output_path))))) ) then
   renderer:close()
   error("cmdf.lua: HTML font dump destination aliases input, output, or stdout", 0)
 end

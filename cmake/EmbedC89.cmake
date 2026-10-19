@@ -1,0 +1,7 @@
+file(WRITE "${OUTPUT}" "/* Generated from assets/c89; do not edit. */\n")
+foreach(asset c89-mark.svg c89-systems.svg style.css navigation.js)
+  string(MAKE_C_IDENTIFIER "${asset}" identifier)
+  file(READ "${SOURCE}/${asset}" bytes HEX)
+  string(REGEX REPLACE "(..)" "0x\\1,\n" bytes "${bytes}")
+  file(APPEND "${OUTPUT}" "static const unsigned char ${identifier}[] = {\n${bytes}};\n")
+endforeach()

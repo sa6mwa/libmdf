@@ -2507,6 +2507,8 @@ static void mdf_impl_release_heap_state(mdf_impl *impl)
     mdf_free_mem(allocator, impl->html_title, impl->html_title_cap);
     mdf_free_mem(allocator, impl->html_font_regular_uri, impl->html_font_regular_uri_cap);
     mdf_free_mem(allocator, impl->html_font_italic_uri, impl->html_font_italic_uri_cap);
+    mdf_free_mem(allocator, impl->html_c89_mark_uri, impl->html_c89_mark_uri_cap);
+    mdf_free_mem(allocator, impl->html_c89_logo_uri, impl->html_c89_logo_uri_cap);
     if (impl->emit_owns_buf && impl->emit_buf != NULL && impl->emit_workspace_owned) {
         mdf_free_mem(allocator, impl->emit_buf, impl->emit_cap);
     } else if (impl->emit_owns_buf && impl->emit_buf != NULL) {
@@ -2668,6 +2670,9 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
     }
     theme_name_explicit = opts != NULL && opts->theme_name != NULL;
     mdf_options_resolve(opts, &defaults);
+    if (defaults.html_c89 && format != MDF_FORMAT_HTML) {
+        return MDF_ERROR_INVALID;
+    }
     if (defaults.ansi_mode != MDF_ANSI_AUTO && defaults.ansi_mode != MDF_ANSI_ON &&
         defaults.ansi_mode != MDF_ANSI_OFF) {
         return MDF_ERROR_INVALID;
@@ -2700,6 +2705,7 @@ mdf_status mdf_create(mdf_format format, const mdf_options *opts, mdf **out)
          defaults.margin_right > defaults.width - MDF_MIN_ANSI_CONTENT_WIDTH - defaults.margin_left)) {
         return MDF_ERROR_INVALID;
     }
+    if (defaults.html_c89 && defaults.theme_name == NULL) defaults.theme_name = "one-dark";
     theme = mdf_theme_resolve(defaults.theme_name);
     if (theme == NULL) {
         return MDF_ERROR_INVALID;

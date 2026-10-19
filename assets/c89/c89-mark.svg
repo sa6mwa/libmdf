@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1371 1536" role="img" aria-labelledby="title desc">
+  <title id="title">C89 SYSTEMS white-colour logomark with black hexagonal backing</title>
+  <desc id="desc">C89 logomark with a blue 8, pale C and 9, and a black hexagonal backing on a transparent outer canvas.</desc>
+  <defs><linearGradient id="c89-blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6F94E0"/><stop offset="100%" stop-color="#4F76CC"/></linearGradient></defs>
+  <path fill="#000000" d="M686 20 1351 404 1351 1132 686 1516 20 1132 20 404Z"/>
+  <path fill="url(#c89-blue)" fill-rule="evenodd" d="M676 337 L524 424 L296 562 L296 601 L567 760 L570 766 L297 932 L294 936 L294 976 L401 1042 L682 1204 L788 1146 L789 1024 L781 1024 L686 1080 L681 1080 L463 949 L568 881 L670 820 L780 885 L788 887 L789 806 L737 773 L789 741 L790 708 L794 702 L1040 556 L1042 552 L1008 529 L682 337 Z M677 457 L880 576 L882 581 L674 704 L468 580 Z"/>
+  <g fill="#E8E8E8"><path fill-rule="evenodd" d="M1279 509 L884 745 L885 1111 L1184 939 L1190 938 L1193 941 L1193 1081 L887 1259 L885 1357 L888 1358 L1033 1275 L1278 1130 Z M1190 661 L1193 664 L1192 839 L994 956 L968 968 L968 788 Z"/><path d="M676 76 L357 264 L72 437 L72 1099 L74 1103 L645 1440 L684 1459 L787 1399 L786 1283 L682 1339 L194 1053 L179 1041 L181 495 L675 200 L688 204 L1144 475 L1248 418 L1254 412 L1126 335 L682 77 Z"/></g>
+</svg>

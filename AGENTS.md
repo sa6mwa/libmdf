@@ -113,3 +113,11 @@ accumulating compatibility shims.
 
 When parity and local inferred behavior disagree, parity wins unless the user
 explicitly changes the contract.
+
+## Release Build Ownership
+
+Build every Release target from this checkout in `build/<target>-release`.
+Native Release tests and SDK/CLI packaging share `build/x86_64-linux-gnu-release`.
+Do not introduce a separate source-smoke build or an alternate native producer.
+Source archive verification checks the shipped inventory, version, bytes and
+executable modes against the committed release inputs without another build.

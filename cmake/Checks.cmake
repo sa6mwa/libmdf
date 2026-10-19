@@ -5,12 +5,13 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
   libmdf_stable_input(CMakeCache.txt check_configuration)
   file(GLOB_RECURSE check_inputs CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/*.[ch]" "${CMAKE_CURRENT_SOURCE_DIR}/include/*"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/*" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/*.sh"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*" "${CMAKE_CURRENT_SOURCE_DIR}/testdata/*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*"
-    "${CMAKE_CURRENT_SOURCE_DIR}/README.md" "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
-    "${CMAKE_CURRENT_SOURCE_DIR}/libmdf-scm-1.rockspec.in")
+    "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*")
   list(APPEND check_inputs "${CMAKE_CURRENT_SOURCE_DIR}/Makefile"
+    "${CMAKE_CURRENT_SOURCE_DIR}/README.md" "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libmdf-scm-1.rockspec.in"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakePresets.json" "${check_configuration}")
   get_property(build_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
@@ -43,7 +44,7 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
       set(inputs "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Tests.cmake" "${CMAKE_CURRENT_LIST_FILE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
         "${check_configuration}")
-      set(binaries "$<TARGET_FILE:test_public_api>" "$<TARGET_FILE:test_contracts>")
+      set(binaries "$<TARGET_FILE:test_public_api>" "$<TARGET_FILE:test_contracts>" "$<TARGET_FILE:test_c89>")
     endif()
     add_custom_command(OUTPUT "${stamp}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/checks"

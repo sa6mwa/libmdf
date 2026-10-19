@@ -597,6 +597,65 @@ int html_write_default_css(mdf_renderer *self, mdf_sink *sink)
     return 0;
 }
 
+static int html_write_c89_uri(mdf_impl *impl, mdf_sink *sink, int logo, int css)
+{
+    const char *uri;
+    const unsigned char *data;
+    size_t len;
+
+    uri = logo ? impl->html_c89_logo_uri : impl->html_c89_mark_uri;
+    if (uri != NULL) {
+        return css ? html_write_css_quoted(sink, uri) : html_escape_attr(sink, uri, strlen(uri));
+    }
+    if (css && mdf_write_cstr(sink, "\"") != 0) return -1;
+    if (mdf_write_cstr(sink, "data:image/svg+xml;base64,") != 0) return -1;
+    data = mdf_html_c89_asset(logo ? MDF_C89_LOGO : MDF_C89_MARK, &len);
+    if (html_write_base64(sink, data, len) != 0) return -1;
+    return css ? mdf_write_cstr(sink, "\"") : 0;
+}
+
+static int html_write_c89_css(mdf_impl *impl, mdf_sink *sink)
+{
+    const unsigned char *data;
+    size_t len;
+
+    if (!impl->opts.html_c89) return 0;
+    data = mdf_html_c89_asset(MDF_C89_CSS, &len);
+    if (mdf_write_all(sink, (const char *)data, len) != 0 ||
+        mdf_write_cstr(sink, "body::before{background-image:url(") != 0 ||
+        html_write_c89_uri(impl, sink, 0, 1) != 0 ||
+        mdf_write_cstr(sink, ");}\n") != 0) return -1;
+    return 0;
+}
+
+static int html_write_c89_header(mdf_impl *impl, mdf_sink *sink)
+{
+    if (mdf_write_cstr(sink, "<header class=\"lights-out-banner\"><nav aria-label=\"Article navigation\">\n"
+                       "<a class=\"banner-brand\" href=\"https://c89.systems/\" aria-label=\"C89 Systems home\"><img src=\"") != 0 ||
+        html_write_c89_uri(impl, sink, 1, 0) != 0 ||
+        mdf_write_cstr(sink, "\" alt=\"C89 Systems\"></a>\n<div class=\"banner-controls\">"
+                       "<button type=\"button\" id=\"previous-heading\" aria-label=\"Previous section\" title=\"Previous section\">&#8593;</button>") != 0 ||
+        mdf_write_cstr(sink, "<button type=\"button\" id=\"next-heading\" aria-label=\"Next section\" title=\"Next section\">&#8595;</button>"
+                       "<a href=\"#top\">Back to top</a></div></nav></header>\n<main class=\"mdf-document\" id=\"top\">") != 0) return -1;
+    return 0;
+}
+
+int html_write_c89_footer(mdf_impl *impl, mdf_sink *sink)
+{
+    const unsigned char *data;
+    size_t len;
+
+    if (!impl->opts.html_c89) return 0;
+    if (mdf_write_cstr(sink, "<footer class=\"lights-out-footer\">\n<a class=\"lights-out-footer-mark\" href=\"https://c89.systems/\" aria-label=\"C89 Systems home\"><img src=\"") != 0 ||
+        html_write_c89_uri(impl, sink, 0, 0) != 0 ||
+        mdf_write_cstr(sink, "\" alt=\"C89 Systems\"></a>\n<span class=\"lights-out-footer-copy\">(C) 2026 C89 Systems AB</span>\n"
+                       "<a class=\"lights-out-footer-email\" href=\"mailto:info@c89.systems\">info@c89.systems</a>\n</footer>\n<script>\n") != 0) return -1;
+    data = mdf_html_c89_asset(MDF_C89_JS, &len);
+    if (mdf_write_all(sink, (const char *)data, len) != 0 ||
+        mdf_write_cstr(sink, "</script>\n") != 0) return -1;
+    return 0;
+}
+
 int html_start(mdf_renderer *self, mdf_sink *sink)
 {
     mdf_impl *impl;
@@ -618,10 +677,12 @@ int html_start(mdf_renderer *self, mdf_sink *sink)
     if (html_escape(sink, title, strlen(title)) != 0 ||
         mdf_write_cstr(sink, "</title>\n<style>\n") != 0 ||
         html_write_default_css(self, sink) != 0 ||
-        mdf_write_cstr(sink, "</style>\n</head>\n<body>\n<main class=\"mdf-document\">") != 0) {
+        html_write_c89_css(impl, sink) != 0 ||
+        mdf_write_cstr(sink, "</style>\n</head>\n<body>\n") != 0) {
         return -1;
     }
-    return 0;
+    if (impl->opts.html_c89) return html_write_c89_header(impl, sink);
+    return mdf_write_cstr(sink, "<main class=\"mdf-document\">");
 }
 
 typedef struct html_bridge_scope {
@@ -807,6 +868,7 @@ static int html_state_append_text(mdf_impl *impl, html_state *state, const char 
     if (src_len == 0) {
         return 0;
     }
+    if (impl->heading_open) state->line_heading_level = impl->heading_level;
     if (html_buf_append(&impl->allocator, &state->line_plain, &state->line_plain_len, &state->line_plain_cap, src, src_len) != 0) {
         return -1;
     }
@@ -828,6 +890,7 @@ static void html_state_clear_line(mdf_impl *impl, html_state *state)
     }
     state->segment_count = 0;
     state->line_plain_len = 0;
+    state->line_heading_level = 0;
     if (state->line_plain != NULL) {
         state->line_plain[0] = '\0';
     }
@@ -2028,6 +2091,19 @@ static int html_line_stream_kind(const html_state *state, int *heading_level)
     return 1;
 }
 
+static int html_write_heading_open(mdf_impl *impl, html_state *state, mdf_sink *sink)
+{
+    char attributes[96];
+
+    if (mdf_write_cstr(sink, "<span class=\"mdf-heading\"") != 0) return -1;
+    if (impl->opts.html_c89 && state->line_heading_level > 0) {
+        snprintf(attributes, sizeof(attributes), " role=\"heading\" aria-level=\"%d\" data-mdf-heading=\"%d\"",
+                 state->line_heading_level, state->line_heading_level);
+        if (mdf_write_cstr(sink, attributes) != 0) return -1;
+    }
+    return mdf_write_cstr(sink, " style=\"");
+}
+
 static int html_maybe_start_stream_line(mdf_renderer *self, mdf_sink *sink)
 {
     mdf_impl *impl;
@@ -2054,7 +2130,7 @@ static int html_maybe_start_stream_line(mdf_renderer *self, mdf_sink *sink)
         if (base_seg == NULL) {
             return 0;
         }
-        if (mdf_write_cstr(sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
+        if (html_write_heading_open(impl, state, sink) != 0 ||
             html_write_style(impl, sink, base_seg, 0) != 0 ||
             html_write_heading_suffix(sink, heading_level) != 0 ||
             mdf_write_cstr(sink, "\">") != 0) {
@@ -2476,7 +2552,7 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         span.allocator = &impl->allocator;
         span_sink.userdata = &span;
         span_sink.write = html_buf_sink_write;
-        if (mdf_write_cstr(&span_sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
+        if (html_write_heading_open(impl, state, &span_sink) != 0 ||
             html_write_style(impl, &span_sink, content_seg, 0) != 0 ||
             html_write_heading_suffix(&span_sink, inner_level) != 0 ||
             mdf_write_cstr(&span_sink, "\">") != 0 ||
@@ -2515,7 +2591,7 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         span.allocator = &impl->allocator;
         span_sink.userdata = &span;
         span_sink.write = html_buf_sink_write;
-        if (mdf_write_cstr(&span_sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
+        if (html_write_heading_open(impl, state, &span_sink) != 0 ||
             html_write_style(impl, &span_sink, content_seg, 0) != 0 ||
             html_write_heading_indent_suffix(&span_sink, inner_level) != 0 ||
             mdf_write_cstr(&span_sink, "\">") != 0 ||
@@ -2540,7 +2616,7 @@ static int html_flush_line(mdf_renderer *self, mdf_sink *sink, int final_line, c
         span.allocator = &impl->allocator;
         span_sink.userdata = &span;
         span_sink.write = html_buf_sink_write;
-        if (mdf_write_cstr(&span_sink, "<span class=\"mdf-heading\" style=\"") != 0 ||
+        if (html_write_heading_open(impl, state, &span_sink) != 0 ||
             html_write_style(impl, &span_sink, base_seg, 0) != 0 ||
             html_write_heading_suffix(&span_sink, heading_level) != 0 ||
             mdf_write_cstr(&span_sink, "\">") != 0 ||

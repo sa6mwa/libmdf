@@ -36,7 +36,7 @@ void mdf_html_jetbrains_mono_font(mdf_html_font *out)
     out->italic.data_len = (size_t)libmdf_html_jetbrains_italic_len;
 }
 
-static mdf_status mdf_write_html_font_file(const char *path,
+static mdf_status mdf_write_html_asset_file(const char *path,
                                            const unsigned char *data,
                                            size_t data_len,
                                            int force)
@@ -182,7 +182,7 @@ static mdf_status mdf_dump_html_jetbrains_mono_font_impl(const char *regular_pat
         mdf_paths_alias(regular_path, italic_path)) {
         return MDF_ERROR_INVALID;
     }
-    st = mdf_write_html_font_file(regular_path,
+    st = mdf_write_html_asset_file(regular_path,
                                   libmdf_html_jetbrains_regular,
                                   (size_t)libmdf_html_jetbrains_regular_len,
                                   force);
@@ -195,7 +195,7 @@ static mdf_status mdf_dump_html_jetbrains_mono_font_impl(const char *regular_pat
     if (mdf_paths_alias(regular_path, italic_path)) {
         return MDF_ERROR_INVALID;
     }
-    return mdf_write_html_font_file(italic_path,
+    return mdf_write_html_asset_file(italic_path,
                                     libmdf_html_jetbrains_italic,
                                     (size_t)libmdf_html_jetbrains_italic_len,
                                     force);
@@ -566,6 +566,110 @@ mdf_status mdf_html_font_resolve_dump_paths(const mdf_options *opts,
     return MDF_OK;
 }
 
+/* SVGs are siblings of the resolved regular font, including URI suffixes.
+ * Filesystem paths keep literal query/fragment characters. */
+static int mdf_html_asset_sibling(char *dst, size_t cap, const char *reference,
+                                  const char *name, int uri)
+{
+    const char *end;
+    const char *scan;
+    const char *slash;
+    const char *authority;
+    const char *suffix;
+    size_t prefix_len;
+    size_t name_len;
+    size_t suffix_len;
+    int need_slash;
+
+    suffix = uri ? strpbrk(reference, "?#") : NULL;
+    end = suffix != NULL ? suffix : reference + strlen(reference);
+    slash = NULL;
+    for (scan = reference; scan < end; scan++) {
+        if (*scan == '/') slash = scan;
+    }
+    authority = NULL;
+    if (uri && mdf_html_font_uri_has_scheme(reference)) {
+        const char *colon;
+
+        colon = strchr(reference, ':');
+        if (colon < end && end - colon >= 3 && colon[1] == '/' && colon[2] == '/') {
+            authority = colon + 3;
+        }
+    }
+    if (authority == NULL && uri && reference[0] == '/' && reference[1] == '/') authority = reference + 2;
+    need_slash = authority != NULL && (slash == NULL || slash < authority);
+    prefix_len = need_slash ? (size_t)(end - reference) :
+        (slash != NULL ? (size_t)(slash - reference) + 1 : 0);
+    name_len = strlen(name);
+    suffix_len = suffix != NULL ? strlen(suffix) : 0;
+    if (prefix_len + (size_t)need_slash + name_len + suffix_len + 1 > cap) return -1;
+    memcpy(dst, reference, prefix_len);
+    if (need_slash) dst[prefix_len++] = '/';
+    memcpy(dst + prefix_len, name, name_len);
+    if (suffix != NULL) memcpy(dst + prefix_len + name_len, suffix, suffix_len);
+    dst[prefix_len + name_len + suffix_len] = '\0';
+    return 0;
+}
+
+mdf_status mdf_html_c89_resolve_dump_paths(const mdf_options *opts,
+                                         char *mark_path, size_t mark_path_cap,
+                                         char *logo_path, size_t logo_path_cap)
+{
+    char regular[4096];
+    char italic[4096];
+    mdf_status st;
+
+    if (opts == NULL || !opts->html_c89 || mark_path == NULL || logo_path == NULL ||
+        mark_path_cap == 0 || logo_path_cap == 0) return MDF_ERROR_INVALID;
+    st = mdf_html_font_resolve_dump_paths(opts, regular, sizeof(regular), italic, sizeof(italic));
+    if (st != MDF_OK) return st;
+    if (mdf_html_asset_sibling(mark_path, mark_path_cap, regular, "c89-mark.svg", 0) != 0 ||
+        mdf_html_asset_sibling(logo_path, logo_path_cap, regular, "c89-systems.svg", 0) != 0 ||
+        mdf_paths_alias(regular, italic) || mdf_paths_alias(mark_path, logo_path) ||
+        mdf_paths_alias(mark_path, regular) || mdf_paths_alias(mark_path, italic) ||
+        mdf_paths_alias(logo_path, regular) || mdf_paths_alias(logo_path, italic)) return MDF_ERROR_INVALID;
+    return MDF_OK;
+}
+
+static mdf_status mdf_configure_html_c89(mdf_impl *impl)
+{
+    char uri[4096];
+    char mark_path[4096];
+    char logo_path[4096];
+    const unsigned char *data;
+    size_t len;
+    mdf_status st;
+
+    if (!impl->opts.html_c89) return MDF_OK;
+    if (impl->opts.html_dump_font || impl->opts.html_dump_font_force) {
+        st = mdf_html_c89_resolve_dump_paths(&impl->opts, mark_path, sizeof(mark_path),
+                                           logo_path, sizeof(logo_path));
+        if (st != MDF_OK) return st;
+        data = mdf_html_c89_asset(MDF_C89_MARK, &len);
+        st = mdf_write_html_asset_file(mark_path, data, len, impl->opts.html_dump_font_force);
+        if (st != MDF_OK) return st;
+        data = mdf_html_c89_asset(MDF_C89_LOGO, &len);
+        st = mdf_write_html_asset_file(logo_path, data, len, impl->opts.html_dump_font_force);
+        if (st != MDF_OK) return st;
+    }
+    if (impl->html_font_regular_uri == NULL) return MDF_OK;
+    if (impl->opts.html_font_uri == NULL && impl->opts.html_font_regular_uri == NULL &&
+        !(impl->opts.html_dump_font || impl->opts.html_dump_font_force)) {
+        strcpy(uri, "https://c89.systems/lights-out/assets/c89-mark-white-colour-black-hexagon-transparent.svg");
+    } else if (mdf_html_asset_sibling(uri, sizeof(uri), impl->html_font_regular_uri, "c89-mark.svg", 1) != 0) {
+        return MDF_ERROR_INVALID;
+    }
+    st = mdf_html_font_uri_copy(impl, &impl->html_c89_mark_uri, &impl->html_c89_mark_uri_cap, uri);
+    if (st != MDF_OK) return st;
+    if (impl->opts.html_font_uri == NULL && impl->opts.html_font_regular_uri == NULL &&
+        !(impl->opts.html_dump_font || impl->opts.html_dump_font_force)) {
+        strcpy(uri, "https://c89.systems/assets/logos/c89-systems.svg");
+    } else if (mdf_html_asset_sibling(uri, sizeof(uri), impl->html_font_regular_uri, "c89-systems.svg", 1) != 0) {
+        return MDF_ERROR_INVALID;
+    }
+    return mdf_html_font_uri_copy(impl, &impl->html_c89_logo_uri, &impl->html_c89_logo_uri_cap, uri);
+}
+
 mdf_status mdf_configure_html_font(mdf_impl *impl)
 {
     const char *regular_uri;
@@ -674,6 +778,14 @@ mdf_status mdf_configure_html_font(mdf_impl *impl)
         if (st != MDF_OK) {
             return st;
         }
+        if (impl->opts.html_c89) {
+            char mark_path[4096];
+            char logo_path[4096];
+
+            st = mdf_html_c89_resolve_dump_paths(&impl->opts, mark_path, sizeof(mark_path),
+                                               logo_path, sizeof(logo_path));
+            if (st != MDF_OK) return st;
+        }
         st = mdf_dump_html_jetbrains_mono_font_impl(dump_regular_buf, dump_italic_buf,
                                                     impl->opts.html_dump_font_force);
         if (st != MDF_OK) {
@@ -710,5 +822,5 @@ mdf_status mdf_configure_html_font(mdf_impl *impl)
         impl->html_font_regular_uri_cap = 0;
         return st;
     }
-    return MDF_OK;
+    return mdf_configure_html_c89(impl);
 }

@@ -13,7 +13,7 @@ ABI and existing rendering tests. Publication remains an engineer operation.
 | Separate equivalent Debug/Valgrind and repeated Lua producers | Shared native Debug producer and installed-SDK Lua graph | Memory checks, Lua runtime maps and module/CLI parity |
 | Active-worktree temporary release tags | Read-only final preflight; tag variations only in disposable fixtures | Version/source and release sequencing tests |
 | Packaging reconfiguration, forced relinks and partial final manifests | CMake install components and archive dependencies; explicit binary/full inventories | Determinism, warm reuse, selected ownership, missing-artifact failures |
-| Duplicate native Release builds and source checks in every preparation | Explicit preparation source smoke; clean source reconstruction supplies the final native Release producer | Source archive manifest/build/tests and final sequencing fixture |
+| A separate source-smoke Release producer and native-only packaging override | All targets build from the checkout through their normal Release presets | Canonical native package/reuse fixture, source archive content/mode checks and final sequencing fixture |
 | Parent-PID cancellation wrappers and broad best-effort inspection | Foreground helpers; caller owns whole-job cancellation; target-correct checks fail when unavailable | Failure-stop fixtures and final extracted byte checks |
 
 Successful suites use small CMake outputs with declared prerequisites. These are

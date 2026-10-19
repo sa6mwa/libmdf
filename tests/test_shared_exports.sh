@@ -14,6 +14,7 @@ mdf_feed
 mdf_finish
 mdf_finish_document
 mdf_flush
+mdf_html_c89_resolve_dump_paths
 mdf_html_font_resolve_dump_paths
 mdf_html_jetbrains_mono_font
 mdf_options_init

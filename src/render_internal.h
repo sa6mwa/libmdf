@@ -31,6 +31,7 @@ typedef struct html_state {
     size_t segment_cap;
     char *line_plain;
     size_t line_plain_len;
+    int line_heading_level;
     size_t line_plain_cap;
     char *osc_buf;
     size_t osc_len;

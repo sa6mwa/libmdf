@@ -6,7 +6,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 work="$root/build/test-export-relink"
 rm -rf -- "$work"
 mkdir -p "$work/source"
-cp -R "$root/"{src,include,cmake,scripts} "$work/source/"
+cp -R "$root/"{src,include,cmake,scripts,assets} "$work/source/"
 cp "$root/CMakeLists.txt" "$work/source/"
 source="$work/source" build="$work/build"
 cmake -S "$source" -B "$build" -G Ninja \

@@ -506,6 +506,8 @@ static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_f
     if (!lua_istable(L, index) || opts == NULL) {
         return MDF_OK;
     }
+    opts->html_c89 = lua_mdf_get_boolean_field(L, index, "c89");
+    if (opts->html_c89 && format != MDF_FORMAT_HTML) return MDF_ERROR_INVALID;
     disable_embedded_font = lua_mdf_get_boolean_field(L, index, "disable_embedded_font");
     dump_font = lua_mdf_get_boolean_field(L, index, "dump_font");
     dump_font_force = lua_mdf_get_boolean_field(L, index, "dump_font_force");
@@ -559,7 +561,7 @@ static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_f
 
 /* Expose the library's path resolution and identity rules so cmdf.lua can
  * reject destructive dump aliases before opening either user file. */
-static int lua_mdf_html_font_dump_paths(lua_State *L)
+static int lua_mdf_html_dump_paths(lua_State *L, int c89)
 {
     mdf_options opts;
     mdf_status st;
@@ -572,15 +574,29 @@ static int lua_mdf_html_font_dump_paths(lua_State *L)
     if (st != MDF_OK) {
         return luaL_error(L, "html font dump paths: %s", mdf_status_string(st));
     }
-    st = mdf_html_font_resolve_dump_paths(&opts,
-                                          regular_path, sizeof(regular_path),
-                                          italic_path, sizeof(italic_path));
+    if (c89) {
+        st = mdf_html_c89_resolve_dump_paths(&opts, regular_path, sizeof(regular_path),
+                                            italic_path, sizeof(italic_path));
+    } else {
+        st = mdf_html_font_resolve_dump_paths(&opts, regular_path, sizeof(regular_path),
+                                             italic_path, sizeof(italic_path));
+    }
     if (st != MDF_OK) {
         return luaL_error(L, "html font dump paths: %s", mdf_status_string(st));
     }
     lua_pushstring(L, regular_path);
     lua_pushstring(L, italic_path);
     return 2;
+}
+
+static int lua_mdf_html_font_dump_paths(lua_State *L)
+{
+    return lua_mdf_html_dump_paths(L, 0);
+}
+
+static int lua_mdf_html_c89_dump_paths(lua_State *L)
+{
+    return lua_mdf_html_dump_paths(L, 1);
 }
 
 static int lua_mdf_paths_alias(lua_State *L)
@@ -1825,6 +1841,7 @@ static const luaL_Reg lua_mdf_funcs[] = {
     {"render", lua_mdf_render},
     {"render_stream", lua_mdf_render_stream},
     {"html_font_dump_paths", lua_mdf_html_font_dump_paths},
+    {"html_c89_dump_paths", lua_mdf_html_c89_dump_paths},
     {"paths_alias", lua_mdf_paths_alias},
     {"path_aliases_stdout", lua_mdf_path_aliases_stdout},
     {"path_relative_to", lua_mdf_path_relative_to},

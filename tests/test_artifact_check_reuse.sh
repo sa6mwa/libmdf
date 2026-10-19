@@ -20,7 +20,12 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 printf 'run\n' >> "$LIBMDF_DIST_DIR/runs"
 grep -Fxq 'set(LIBMDF_ABI_VERSION 5)' "$root/CMakeLists.txt"
 grep -Fxq '# toolchain-valid' "$root/cmake/toolchains/included.cmake"
-if [[ $1 == complete ]]; then test ! -f "$LIBMDF_DIST_DIR/libmdf-9.9.9-x86_64-linux-gnu.tar.gz"; fi
+if [[ $1 == complete ]]; then
+  test ! -f "$LIBMDF_DIST_DIR/libmdf-9.9.9-x86_64-linux-gnu.tar.gz"
+  grep -Fxq '# source-valid' "$root/src/release-input.c"
+  grep -Fxq '# readme-valid' "$root/README.md"
+  grep -Fxq '# brand-valid' "$root/assets/c89/style.css"
+fi
 bash "$root/tests/test_shared_exports.sh"
 SCRIPT
 printf '#!/bin/sh\nexit 0\n' > "$work/source/tests/test_shared_exports.sh"
@@ -65,11 +70,36 @@ fi
 test ! -f "$work/build/artifacts.pass"
 printf '# toolchain-valid\n' > "$work/source/cmake/toolchains/included.cmake"
 mkdir -p "$work/source/build/debug/lua-runtime/bin"
+mkdir -p "$work/source/src" "$work/source/assets/c89"
+printf '# brand-valid\n' > "$work/source/assets/c89/style.css"
+printf '# source-valid\n' > "$work/source/src/release-input.c"
+printf '# readme-valid\n' > "$work/source/README.md"
 touch "$work/source/build/debug/lua-runtime/bin/lua" "$work/dist/libmdf-0.0.0-CHECKSUMS"
 cmake -S "$root/cmake/package-checks" -B "$work/complete" -G Ninja \
   -DLIBMDF_SOURCE_DIR="$work/source" -DLIBMDF_DIST_DIR="$work/dist" \
   -DLIBMDF_ARTIFACT_SCOPE=complete > "$work/complete-configure.log"
 cmake --build "$work/complete" --target verify > "$work/complete-first.log"
+printf '# changed source\n' > "$work/source/src/release-input.c"
+if cmake --build "$work/complete" --target verify > "$work/complete-source.log" 2>&1; then
+  printf 'Source edit left stale complete archive verification\n' >&2; exit 1;
+fi
+test ! -f "$work/complete/artifacts.pass"
+printf '# source-valid\n' > "$work/source/src/release-input.c"
+cmake --build "$work/complete" --target verify > "$work/complete-source-restored.log"
+printf '# changed README\n' > "$work/source/README.md"
+if cmake --build "$work/complete" --target verify > "$work/complete-readme.log" 2>&1; then
+  printf 'Root source input edit left stale complete archive verification\n' >&2; exit 1;
+fi
+test ! -f "$work/complete/artifacts.pass"
+printf '# readme-valid\n' > "$work/source/README.md"
+cmake --build "$work/complete" --target verify > "$work/complete-readme-restored.log"
+printf '# changed brand\n' > "$work/source/assets/c89/style.css"
+if cmake --build "$work/complete" --target verify > "$work/complete-brand.log" 2>&1; then
+  printf 'Brand asset edit left stale complete archive verification\n' >&2; exit 1;
+fi
+test ! -f "$work/complete/artifacts.pass"
+printf '# brand-valid\n' > "$work/source/assets/c89/style.css"
+cmake --build "$work/complete" --target verify > "$work/complete-brand-restored.log"
 cp -p "$work/dist/libmdf-0.0.0-x86_64-linux-gnu.tar.gz" "$work/dist/libmdf-9.9.9-x86_64-linux-gnu.tar.gz"
 if cmake --build "$work/complete" --target verify > "$work/membership.log" 2>&1; then
   printf 'Added release-looking filename left a stale complete success record\n' >&2; exit 1;

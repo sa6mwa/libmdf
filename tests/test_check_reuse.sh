@@ -4,10 +4,10 @@ set -euo pipefail
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 work="$root/build/test-check-reuse"
 rm -rf -- "$work"
-mkdir -p "$work/source/scripts" "$work/source/testdata"
+mkdir -p "$work/source/scripts" "$work/source/testdata" "$work/source/assets/c89"
 printf pass > "$work/source/testdata/input"
 touch "$work/source/Makefile"
-for input in README.md LICENSE libmdf-scm-1.rockspec.in; do printf 'valid\n' > "$work/source/$input"; done
+for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do printf 'valid\n' > "$work/source/$input"; done
 printf '{"version":5,"configurePresets":[]}\n' > "$work/source/CMakePresets.json"
 cat > "$work/source/scripts/probe.sh" <<'PROBE'
 #!/usr/bin/env bash
@@ -16,7 +16,7 @@ source=$1 build=$2
 printf 'run\n' >> "$build/runs"
 test -f "$source/testdata/input"
 [[ $(cat "$source/testdata/input") != fail ]]
-for input in README.md LICENSE libmdf-scm-1.rockspec.in; do grep -Fxq valid "$source/$input"; done
+for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do grep -Fxq valid "$source/$input"; done
 PROBE
 cat > "$work/source/CMakeLists.txt" <<'CMAKE'
 cmake_minimum_required(VERSION 3.24)
@@ -26,7 +26,8 @@ set(LIBMDF_BUILD_TESTS ON)
 set(LIBMDF_BUILD_HOST_TESTS ON)
 add_executable(test_public_api IMPORTED)
 add_executable(test_contracts IMPORTED)
-set_target_properties(test_public_api test_contracts PROPERTIES IMPORTED_LOCATION /bin/true)
+add_executable(test_c89 IMPORTED)
+set_target_properties(test_public_api test_contracts test_c89 PROPERTIES IMPORTED_LOCATION /bin/true)
 option(ENABLE_PROBE "Register the fixture check" ON)
 if(ENABLE_PROBE)
   add_test(NAME probe COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/probe.sh" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
@@ -36,6 +37,8 @@ CMAKE
 cmake -S "$work/source" -B "$work/build" -G Ninja -DCHECKS_MODULE="$root/cmake/Checks.cmake" > "$work/configure.log"
 cmake --build "$work/build" --target check-native > "$work/first.log"
 [[ $(wc -l < "$work/build/runs") == 1 ]]
+mkdir -p "$work/source/build/generated"
+ln -s absent "$work/source/build/generated/README.md"
 cmake -S "$work/source" -B "$work/build" > "$work/warm-configure.log"
 cmake --build "$work/build" --target check-native > "$work/warm.log"
 [[ $(wc -l < "$work/build/runs") == 1 ]]
@@ -53,7 +56,7 @@ test ! -f "$work/build/checks/native.pass"
 printf changed > "$work/source/testdata/input"
 cmake -S "$work/source" -B "$work/build" -DENABLE_PROBE=ON > "$work/root-configure.log"
 cmake --build "$work/build" --target check-native > "$work/root-first.log"
-for input in README.md LICENSE libmdf-scm-1.rockspec.in; do
+for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do
   sleep 1
   printf 'invalid\n' > "$work/source/$input"
   if cmake --build "$work/build" --target check-native > "$work/root-changed.log" 2>&1; then

@@ -15,9 +15,6 @@ phase=${@: -1}
 printf '%s\n' "$phase" >> "$TEST_PHASE_LOG"
 if [[ ${TEST_FAIL_PHASE:-} == "$phase" ]]; then exit 17; fi
 if [[ $phase == clean ]]; then "$TEST_RELEASE_ROOT/scripts/clean.sh"; fi
-if [[ $phase == package && -n ${LIBMDF_NATIVE_RELEASE_BUILD:-} ]]; then
-  printf '%s\n' "$LIBMDF_NATIVE_RELEASE_BUILD" > "$TEST_NATIVE_RECORD"
-fi
 MAKE
 chmod +x "$repo/fixture/bin/make"
 git -C "$repo" init -q -b release-line
@@ -30,8 +27,8 @@ git -C "$repo" add .
 git -C "$repo" commit -qm 'test(lifecycle): create release sequencing fixture'
 git -C "$repo" update-ref refs/remotes/origin/release-line HEAD
 git -C "$repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/release-line
-export TEST_RELEASE_ROOT="$repo" TEST_PHASE_LOG="$repo/record/phases" TEST_NATIVE_RECORD="$repo/record/native" PATH="$repo/fixture/bin:$PATH"
-unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_NATIVE_RELEASE_BUILD LIBMDF_DIST_DIR LIBMDF_PACKAGE_WORK_DIR
+export TEST_RELEASE_ROOT="$repo" TEST_PHASE_LOG="$repo/record/phases" PATH="$repo/fixture/bin:$PATH"
+unset LIBMDF_RELEASE_VERSION LIBMDF_TARGETS LIBMDF_DIST_DIR LIBMDF_PACKAGE_WORK_DIR
 mkdir -p "$repo/build/.hidden" "$repo/dist/.hidden" "$repo/.cache/.hidden"
 touch "$repo/build/preserve" "$repo/dist/preserve" "$repo/.cache/.hidden/preserve"
 if "$repo/scripts/release.sh" final > "$repo/record/untagged.log" 2>&1; then exit 1; fi
@@ -105,9 +102,8 @@ mv "$repo/record/local-cache" "$repo/.cache"
 "$repo/scripts/release.sh" final > "$repo/record/final.log" 2>&1
 test ! -e "$repo/build/preserve"; test ! -e "$repo/dist/preserve"
 test ! -e "$repo/build/.hidden"; test ! -e "$repo/dist/.hidden"; test ! -e "$repo/.cache"
-printf '%s\n' clean format-check test-hardening package-source-smoke package release-lua-artifacts package-checksums verify-release-archives > "$repo/record/expected"
+printf '%s\n' clean format-check test-hardening test-release package-source package release-lua-artifacts package-checksums verify-release-archives > "$repo/record/expected"
 cmp "$repo/record/expected" "$TEST_PHASE_LOG"
-grep -Fxq "$repo/build/package-source-smoke/build" "$TEST_NATIVE_RECORD"
 : > "$TEST_PHASE_LOG"
 mkdir -p "$repo/build"; touch "$repo/build/warm"
 git -C "$repo" checkout -q fix/candidate
@@ -124,5 +120,13 @@ if LIBMDF_RELEASE_VERSION=1.2.3 "$repo/scripts/release.sh" final > "$repo/record
 test -f "$repo/build/warm"
 : > "$TEST_PHASE_LOG"
 if TEST_FAIL_PHASE=package "$repo/scripts/release.sh" final > "$repo/record/final-failed.log" 2>&1; then exit 1; fi
-printf '%s\n' clean format-check test-hardening package-source-smoke package > "$repo/record/expected"
+printf '%s\n' clean format-check test-hardening test-release package-source package > "$repo/record/expected"
+cmp "$repo/record/expected" "$TEST_PHASE_LOG"
+: > "$TEST_PHASE_LOG"
+if TEST_FAIL_PHASE=package-source "$repo/scripts/release.sh" final > "$repo/record/source-failed.log" 2>&1; then exit 1; fi
+printf '%s\n' clean format-check test-hardening test-release package-source > "$repo/record/expected"
+cmp "$repo/record/expected" "$TEST_PHASE_LOG"
+: > "$TEST_PHASE_LOG"
+if TEST_FAIL_PHASE=test-release "$repo/scripts/release.sh" final > "$repo/record/release-tests-failed.log" 2>&1; then exit 1; fi
+printf '%s\n' clean format-check test-hardening test-release > "$repo/record/expected"
 cmp "$repo/record/expected" "$TEST_PHASE_LOG"

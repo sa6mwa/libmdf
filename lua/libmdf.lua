@@ -24,6 +24,7 @@ local mdf = {}
 ---@field margin_left? integer ANSI columns left of content; may change later through `set_geometry`.
 ---@field margin_right? integer ANSI columns right of content; may change later through `set_geometry`.
 ---@field theme? string Built-in theme name for ANSI, HTML, and deck; absent selects default.
+---@field c89? boolean C89 Systems branding for HTML; SVGs follow font embedding and dumping.
 ---@field html_content_width_ch? number HTML content width in `ch` units.
 ---@field html_title? string Explicit HTML or deck title.
 ---@field deck_transition? "fade"|"cross"|"hard" Deck slide transition.
@@ -173,6 +174,14 @@ end
 ---@return string italic_path
 function mdf.html_font_dump_paths(opts)
   return core.html_font_dump_paths(opts or {})
+end
+
+---Resolve the two C89 SVG destinations without writing assets.
+---@param opts libmdf.Options
+---@return string mark_path
+---@return string logo_path
+function mdf.html_c89_dump_paths(opts)
+  return core.html_c89_dump_paths(opts or {})
 end
 
 ---Return whether two nonempty paths identify the same destination.

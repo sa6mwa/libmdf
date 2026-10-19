@@ -247,12 +247,18 @@ typedef struct mdf_options {
     /** Enable OSC8 hyperlinks for ANSI links; default zero. OFF (including AUTO on non-terminals) overrides this. */
     int osc8;
     /**
-     * Built-in theme name. NULL selects the default theme and allows deck front
-     * matter theme defaults; any non-NULL name is an explicit override.
+     * Built-in theme name. NULL selects the default theme (one-dark for C89
+     * HTML) and allows deck front matter theme defaults; any non-NULL name is
+     * an explicit override.
      */
     const char *theme_name;
     /** HTML document width in ch. HTML charts are centered inside this content width. */
     double html_content_width_ch;
+    /** C89 Systems page branding, for MDF_FORMAT_HTML only. Default zero.
+     * SVGs follow the font's embedded/external mode. Font dumping also writes
+     * c89-mark.svg and c89-systems.svg beside the regular font, respecting force.
+     */
+    int html_c89;
     /**
      * Optional HTML font data. When unset, HTML defaults to built-in JetBrains
      * Mono. External font configuration always selects built-in JetBrains Mono
@@ -684,6 +690,12 @@ mdf_status mdf_html_font_resolve_dump_paths(const mdf_options *opts,
                                             size_t regular_path_cap,
                                             char *italic_path,
                                             size_t italic_path_cap);
+/** Resolve the two C89 SVG destinations beside the regular font without
+ * writing files. Requires html_c89 and enabled font dumping. Rejects aliases
+ * between any of the four font/SVG destinations. */
+mdf_status mdf_html_c89_resolve_dump_paths(const mdf_options *opts,
+                                         char *mark_path, size_t mark_path_cap,
+                                         char *logo_path, size_t logo_path_cap);
 /**
  * Return nonzero when two non-empty paths name the same existing filesystem
  * object or the same currently absent destination. Identical non-empty path

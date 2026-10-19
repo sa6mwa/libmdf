@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Invalid selected paths must preserve non-staging data and start no producer.
 set -euo pipefail
-unset LIBMDF_RELEASE_VERSION LIBMDF_NATIVE_RELEASE_BUILD LIBMDF_DIST_DIR
+unset LIBMDF_RELEASE_VERSION LIBMDF_DIST_DIR
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 work="$root/build/test-build-path-ownership"
 rm -rf -- "$work"
