@@ -398,6 +398,31 @@ Available themes can be queried with `mdf_theme_count`, `mdf_theme_name`, and
 `rose-pine`, `solarized-dark`, `solarized-light`, and `tokyo-night`; use
 `cmdf --list-themes` for the exact list in a build.
 
+`mdf_theme_get_palette(name, &palette)` copies all 19 semantic foregrounds into
+a public `mdf_theme_palette`: H1 through H6 (`heading[0]` through `heading[5]`),
+emphasis, strong, combined emphasis/strong, inline/block code, quote marker/text,
+list marker, link label/URL, thematic break, and table header/border. Each field
+is a caller-owned, NUL-terminated foreground-only ANSI SGR string; an empty string
+means that slot has no foreground. `palette.name` is the canonical name in borrowed
+immutable library storage. The lookup allocates nothing and does not inspect the
+environment or terminal. Consumers decide when to enable color and add attributes.
+
+```c
+mdf_theme_palette palette;
+if (renderer->get_theme_palette(renderer, &palette) == MDF_OK) {
+    printf("%sCommand%s\n", palette.heading[1], "\033[39m");
+}
+```
+
+The receiver method (also `mdf_get_theme_palette(renderer, &palette)`) returns the
+configured theme even with ANSI disabled or boring mode enabled. C89 HTML's default
+is `one-dark`; deck front matter does not change the configured theme. Use
+`mdf_theme_heading_foreground(name, level, out, out_size)` for a single H1..H6
+foreground. Name lookup accepts NULL/empty for `default` and is case-insensitive.
+Invalid names, heading levels, NULL outputs and insufficient buffers return
+`MDF_ERROR_INVALID` without changing the output. Palette arrays can be retained
+after renderer destruction; the borrowed name remains valid until library unload.
+
 ## Chart Fences
 
 `libmdf` supports chart fences as a libmdf-specific Markdown extension. This is

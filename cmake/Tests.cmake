@@ -38,6 +38,18 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_public_api COMMAND test_public_api)
   set_tests_properties(test_public_api PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
+  foreach(kind static shared)
+    if(TARGET mdf_${kind})
+      add_executable(test_theme_palette_${kind} tests/test_theme_palette.c)
+      libmdf_configure_c89_target(test_theme_palette_${kind})
+      target_link_libraries(test_theme_palette_${kind} PRIVATE mdf_${kind})
+      libmdf_configure_development_runtime(test_theme_palette_${kind})
+      add_test(NAME theme_palette_${kind} COMMAND test_theme_palette_${kind})
+      set_tests_properties(theme_palette_${kind} PROPERTIES LABELS "unit;api" TIMEOUT 10
+        ENVIRONMENT "NO_COLOR=1;TERM=dumb")
+    endif()
+  endforeach()
+
   if(CMAKE_CURRENT_BINARY_DIR STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build/debug")
     # Give public headers exact C89 commands, including when host/Lua checks are
     # disabled, instead of borrowing an unrelated source's inferred includes.
@@ -80,6 +92,16 @@ if(LIBMDF_BUILD_TESTS)
   set_tests_properties(test_contracts PROPERTIES LABELS "unit;streaming;api" TIMEOUT 10)
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64"
      AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    find_program(LIBMDF_TEST_CXX NAMES c++ g++ REQUIRED)
+    foreach(kind static shared)
+      if(TARGET mdf_${kind})
+        add_test(NAME theme_palette_cpp_${kind} COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_cpp.sh"
+          "${LIBMDF_TEST_CXX}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme_palette.c"
+          "${LIBMDF_GENERATED_INCLUDE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/include"
+          "$<TARGET_FILE:mdf_${kind}>" "${CMAKE_CURRENT_BINARY_DIR}/theme_palette_cpp_${kind}")
+        set_tests_properties(theme_palette_cpp_${kind} PROPERTIES LABELS "unit;api" TIMEOUT 15)
+      endif()
+    endforeach()
     find_program(LIBMDF_VALGRIND valgrind REQUIRED)
     foreach(check public_api contracts c89)
       set(memory_args)

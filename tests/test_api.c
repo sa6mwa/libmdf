@@ -2021,12 +2021,15 @@ int main(void)
                     renderer->reset != NULL &&
                     renderer->set_sink != NULL,
                     "single-handle api populates receiver methods");
-    fails += expect(sizeof(mdf) == sizeof(mdf_v011_layout) &&
+    fails += expect(offsetof(mdf, get_theme_palette) == sizeof(mdf_v011_layout) &&
                     offsetof(mdf, reset) == offsetof(mdf_v011_layout, reset) &&
                     offsetof(mdf, set_sink) == offsetof(mdf_v011_layout, set_sink) &&
                     offsetof(mdf, set_geometry) == offsetof(mdf_v011_layout, reserved) &&
                     offsetof(mdf, impl) == offsetof(mdf_v011_layout, impl),
                     "runtime geometry consumes an ABI-4 reserve slot without shifting old members");
+    fails += expect(renderer->get_theme_palette != NULL &&
+                    sizeof(mdf) == offsetof(mdf, get_theme_palette) + sizeof(renderer->get_theme_palette),
+                    "theme palette method is appended after the complete released receiver layout");
     for (reserved_index = 0; reserved_index < MDF_RECEIVER_RESERVED_SLOTS; reserved_index++) {
         fails += expect(renderer->reserved[reserved_index] == NULL,
                         "single-handle api leaves reserved receiver slots null");

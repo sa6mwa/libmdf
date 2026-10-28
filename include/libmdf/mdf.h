@@ -414,6 +414,49 @@ typedef struct mdf_token {
     int level;
 } mdf_token;
 
+/** Capacity of each NUL-terminated foreground-only ANSI SGR in a palette. */
+#define MDF_THEME_FOREGROUND_SIZE 32
+
+/**
+ * All semantic foreground colors of a built-in theme. heading[0..5] means
+ * H1..H6. Each array contains only a foreground SGR, or an empty string when
+ * that slot has no foreground. No attributes, background, reset or text are
+ * included. Arrays belong to the caller; name is immutable library storage,
+ * valid until the library is unloaded. No allocation or terminal detection.
+ */
+typedef struct mdf_theme_palette {
+    /** Canonical built-in theme name. */
+    const char *name;
+    /** Heading foregrounds H1 through H6. */
+    char heading[6][MDF_THEME_FOREGROUND_SIZE];
+    /** Emphasized text foreground. */
+    char emphasis[MDF_THEME_FOREGROUND_SIZE];
+    /** Strong text foreground. */
+    char strong[MDF_THEME_FOREGROUND_SIZE];
+    /** Combined emphasis and strong text foreground. */
+    char emphasis_strong[MDF_THEME_FOREGROUND_SIZE];
+    /** Inline code foreground. */
+    char code_inline[MDF_THEME_FOREGROUND_SIZE];
+    /** Code block foreground. */
+    char code_block[MDF_THEME_FOREGROUND_SIZE];
+    /** Quote marker foreground. */
+    char quote[MDF_THEME_FOREGROUND_SIZE];
+    /** Quoted text foreground. */
+    char quote_text[MDF_THEME_FOREGROUND_SIZE];
+    /** List marker foreground. */
+    char list_marker[MDF_THEME_FOREGROUND_SIZE];
+    /** Link label foreground. */
+    char link_text[MDF_THEME_FOREGROUND_SIZE];
+    /** Visible link destination foreground. */
+    char link_url[MDF_THEME_FOREGROUND_SIZE];
+    /** Thematic break foreground. */
+    char thematic_break[MDF_THEME_FOREGROUND_SIZE];
+    /** Table header foreground. */
+    char table_header[MDF_THEME_FOREGROUND_SIZE];
+    /** Table border foreground. */
+    char table_wire[MDF_THEME_FOREGROUND_SIZE];
+} mdf_theme_palette;
+
 typedef struct mdf mdf;
 
 /** Receiver vtable slots reserved for ABI-compatible future expansion. */
@@ -497,6 +540,8 @@ struct mdf {
     void (*reserved[MDF_RECEIVER_RESERVED_SLOTS])(void);
     /** Private implementation state. Do not inspect or modify it. */
     void *impl;
+    /** Get the configured theme's full foreground palette; see mdf_get_theme_palette. */
+    mdf_status (*get_theme_palette)(const mdf *self, mdf_theme_palette *out);
 };
 
 /**
@@ -711,6 +756,29 @@ size_t mdf_theme_count(void);
 const char *mdf_theme_name(size_t index);
 /** Nonzero when name matches a built-in theme case-insensitively; NULL/empty selects default. */
 int mdf_theme_exists(const char *name);
+/**
+ * Copy every foreground slot of name into out. NULL/empty name selects default;
+ * names are case-insensitive. Unknown names and NULL out return MDF_ERROR_INVALID
+ * without modifying out. Color enablement is the caller's responsibility: this
+ * lookup does not inspect the environment or terminal and performs no allocation.
+ */
+mdf_status mdf_theme_get_palette(const char *name, mdf_theme_palette *out);
+/**
+ * Copy the renderer's configured theme palette, independent of ANSI enablement
+ * or boring mode. Includes the one-dark default selected by C89 HTML. Per-document
+ * deck front matter does not change the configured theme. NULL/invalid renderer
+ * or NULL out returns MDF_ERROR_INVALID without modifying out. No allocation,
+ * rendering, sink writes, environment lookup or terminal detection occurs.
+ */
+mdf_status mdf_get_theme_palette(const mdf *self, mdf_theme_palette *out);
+/**
+ * Copy one heading foreground (level 1..6) into out, including its trailing NUL.
+ * NULL/empty name selects default; names are case-insensitive. No foreground
+ * produces an empty string successfully. Invalid names, levels, NULL out or
+ * insufficient out_size return MDF_ERROR_INVALID without modifying out.
+ * The same allocation-free, foreground-only rules as mdf_theme_get_palette apply.
+ */
+mdf_status mdf_theme_heading_foreground(const char *name, int level, char *out, size_t out_size);
 /** Detect whether the current terminal is likely to support OSC8 links. */
 int mdf_detect_osc8_support(void);
 /** Return terminal width for fd, then COLUMNS, then a positive fallback. */

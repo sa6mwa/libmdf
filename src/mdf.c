@@ -2427,6 +2427,7 @@ static void mdf_bind_receiver_methods(mdf *inst)
     inst->set_geometry = mdf_set_geometry;
     inst->reset = mdf_reset;
     inst->set_sink = mdf_set_sink;
+    inst->get_theme_palette = mdf_get_theme_palette;
 }
 
 static mdf_status mdf_impl_configure_emit_buffer(mdf_impl *impl)
@@ -3510,6 +3511,125 @@ static int str_contains_case(const char *haystack, const char *needle)
 int mdf_theme_exists(const char *name)
 {
     return mdf_theme_resolve(name) != NULL;
+}
+
+/* Built-in styles are trusted SGR strings. Preserve their color encoding while
+ * dropping attributes and backgrounds; the last foreground wins. */
+static mdf_status theme_foreground(const char *style, char *out, size_t out_size)
+{
+    const char *p;
+    const char *foreground;
+    const char *start;
+    char *end;
+    size_t len;
+    long value;
+    long mode;
+    int components;
+
+    if (out == NULL || out_size == 0) return MDF_ERROR_INVALID;
+    foreground = NULL;
+    len = 0;
+    p = style;
+    while (*p != '\0') {
+        if (*p == '\x1b' && p[1] == '[') {
+            p += 2;
+            while (*p != '\0' && *p != 'm') {
+                start = p;
+                value = strtol(p, &end, 10);
+                if (end == p) break;
+                p = end;
+                if (value == 0 || value == 39) {
+                    foreground = NULL;
+                    len = 0;
+                } else if ((value >= 30 && value <= 37) || (value >= 90 && value <= 97)) {
+                    foreground = start;
+                    len = (size_t)(p - start);
+                } else if ((value == 38 || value == 48) && *p == ';') {
+                    mode = strtol(p + 1, &end, 10);
+                    p = end;
+                    components = mode == 5 ? 1 : (mode == 2 ? 3 : 0);
+                    while (components > 0 && *p == ';') {
+                        (void)strtol(p + 1, &end, 10);
+                        p = end;
+                        components--;
+                    }
+                    if (value == 38 && components == 0 && (mode == 5 || mode == 2)) {
+                        foreground = start;
+                        len = (size_t)(p - start);
+                    }
+                }
+                if (*p != ';') break;
+                p++;
+            }
+        }
+        if (*p != '\0') p++;
+    }
+    if (foreground == NULL) {
+        out[0] = '\0';
+        return MDF_OK;
+    }
+    if (len + 4 > out_size) return MDF_ERROR_INVALID;
+    out[0] = '\x1b';
+    out[1] = '[';
+    memcpy(out + 2, foreground, len);
+    out[len + 2] = 'm';
+    out[len + 3] = '\0';
+    return MDF_OK;
+}
+
+static mdf_status theme_palette_copy(const mdf_theme_style *theme, mdf_theme_palette *out)
+{
+    mdf_theme_palette palette;
+    int i;
+
+    if (theme == NULL || out == NULL) return MDF_ERROR_INVALID;
+    memset(&palette, 0, sizeof(palette));
+    palette.name = theme->name;
+    for (i = 0; i < 6; i++) {
+        if (theme_foreground(theme->heading[i], palette.heading[i], sizeof(palette.heading[i])) != MDF_OK)
+            return MDF_ERROR_INVALID;
+    }
+#define MDF_COPY_FOREGROUND(field) \
+    if (theme_foreground(theme->field, palette.field, sizeof(palette.field)) != MDF_OK) return MDF_ERROR_INVALID
+    MDF_COPY_FOREGROUND(emphasis);
+    MDF_COPY_FOREGROUND(strong);
+    MDF_COPY_FOREGROUND(emphasis_strong);
+    MDF_COPY_FOREGROUND(code_inline);
+    MDF_COPY_FOREGROUND(code_block);
+    MDF_COPY_FOREGROUND(quote);
+    MDF_COPY_FOREGROUND(quote_text);
+    MDF_COPY_FOREGROUND(list_marker);
+    MDF_COPY_FOREGROUND(link_text);
+    MDF_COPY_FOREGROUND(link_url);
+    MDF_COPY_FOREGROUND(thematic_break);
+    MDF_COPY_FOREGROUND(table_header);
+    MDF_COPY_FOREGROUND(table_wire);
+#undef MDF_COPY_FOREGROUND
+    *out = palette;
+    return MDF_OK;
+}
+
+mdf_status mdf_theme_get_palette(const char *name, mdf_theme_palette *out)
+{
+    return theme_palette_copy(mdf_theme_resolve(name), out);
+}
+
+mdf_status mdf_get_theme_palette(const mdf *self, mdf_theme_palette *out)
+{
+    const mdf_impl *impl;
+
+    if (!mdf_renderer_is_builtin(self)) return MDF_ERROR_INVALID;
+    impl = (const mdf_impl *)self->impl;
+    return theme_palette_copy(impl->theme, out);
+}
+
+mdf_status mdf_theme_heading_foreground(const char *name, int level, char *out, size_t out_size)
+{
+    const mdf_theme_style *theme;
+
+    theme = mdf_theme_resolve(name);
+    if (theme == NULL || level < 1 || level > 6) return MDF_ERROR_INVALID;
+    return theme_foreground(theme->heading[level - 1], out, out_size);
 }
 
 const mdf_theme_style *mdf_theme_resolve(const char *name)

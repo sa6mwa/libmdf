@@ -14,6 +14,7 @@ mdf_feed
 mdf_finish
 mdf_finish_document
 mdf_flush
+mdf_get_theme_palette
 mdf_html_c89_resolve_dump_paths
 mdf_html_font_resolve_dump_paths
 mdf_html_jetbrains_mono_font
@@ -31,6 +32,8 @@ mdf_status_string
 mdf_terminal_width
 mdf_theme_count
 mdf_theme_exists
+mdf_theme_get_palette
+mdf_theme_heading_foreground
 mdf_theme_name
 mdf_write_token'
 
