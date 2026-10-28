@@ -812,6 +812,15 @@ likewise rejected from an active reader, sink, or trace callback, preserving
 the receiver for the outer call.
 Rebinding the identical callback is a no-op.
 
+Lua callback exceptions, including allocation failures while preparing callback
+arguments, return through native cleanup before the original error object is
+raised to the caller. Materialized result-copy failures also free the native
+string. Handles retain a private snapshot of the declared options and font
+configuration, sharing immutable Lua string storage; changing the original
+tables does not change a live renderer. C-string arguments require strings
+without embedded NUL bytes. Length-aware source, token and font byte strings
+retain their binary length semantics.
+
 ```lua
 local h = mdf.new({ boring = true })
 h:set_sink(function(chunk) io.write(chunk) end)
@@ -1058,10 +1067,22 @@ output against `testdata/deck-corpus/comprehensive.md`.
 
 ## Release Cycle
 
-The `pkt-systems-cmake-lifecycle` skill governs this checkout. Make exposes the
-commands, Bash sequences phases, CMake owns producers and CTest owns verification.
+The `pkt-systems-cmake-lifecycle` skill, maintained in
+[c89systems/cpkt](https://github.com/c89systems/cpkt/tree/trunk/skills/pkt-systems-cmake-lifecycle),
+governs this checkout. This standalone project does not consume a cpkt SDK.
+Make exposes commands, Bash sequences phases, CMake owns producers and CTest
+owns verification.
 `CMAKE_BUILD_PARALLEL_LEVEL` defaults to 2; Make and CTest run operations serially.
 No pipeline step requires Python.
+
+Run `make build-debug` before using clangd, and again after `make clean`. This
+normal build prepares generated headers, the installed-SDK Lua facade and
+`build/debug/compile_commands.json`, which `.clangd` discovers automatically.
+Each file uses its owning CMake target's language and compile flags, including
+C89 for the library and C99 for the Lua binding. The native suite checks that
+discovery for implementations and public headers with the workstation's clangd.
+Public headers have their own C89 compile commands. The editor check includes
+the Lua implementation only when `LIBMDF_BUILD_LUA_TESTS` is enabled.
 
 Toolchain files and runtime discovery never provision tools. Prepare them explicitly
 with `make tools-native` or `make tools-cross`. Linux uses the pinned complete
@@ -1069,8 +1090,12 @@ Bootlin collections; Darwin cross builds use the prepared osxcross SDK and pinne
 host MIG helper. `CPKT_TOOLCHAIN_CACHE` and `CPKT_DEPENDENCY_CACHE` overrides use
 this checkout's owned `build/` or `.cache/` paths, or the declared global cpkt cache
 (default `~/.cache/cpkt`, with separate `toolchains/` and `deps/` directories).
-The vendored lifecycle helper collection is kept together under `scripts/`;
+The vendored lifecycle helper collection matches the activated skill and is
+kept together under `scripts/`;
 `CPKT_LIFECYCLE_SCRIPTS_DIR` can select the installed skill's exact helper collection.
+Linux compiler collections resolve under `~/.cache/cpkt/toolchains/roots/` by
+default; dependency archives use `~/.cache/cpkt/deps/`. Clang/LLVM and the
+developer-prepared osxcross/Apple SDK remain workstation prerequisites.
 The declared global cache and installed workstation prerequisites survive
 `make clean`. Repo-local cache overrides are disposable. Cleanup removes the entire
 local

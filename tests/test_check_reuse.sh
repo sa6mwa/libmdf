@@ -7,7 +7,7 @@ rm -rf -- "$work"
 mkdir -p "$work/source/scripts" "$work/source/testdata" "$work/source/assets/c89"
 printf pass > "$work/source/testdata/input"
 touch "$work/source/Makefile"
-for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do printf 'valid\n' > "$work/source/$input"; done
+for input in .clangd README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do printf 'valid\n' > "$work/source/$input"; done
 printf '{"version":5,"configurePresets":[]}\n' > "$work/source/CMakePresets.json"
 cat > "$work/source/scripts/probe.sh" <<'PROBE'
 #!/usr/bin/env bash
@@ -16,7 +16,7 @@ source=$1 build=$2
 printf 'run\n' >> "$build/runs"
 test -f "$source/testdata/input"
 [[ $(cat "$source/testdata/input") != fail ]]
-for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do grep -Fxq valid "$source/$input"; done
+for input in .clangd README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do grep -Fxq valid "$source/$input"; done
 PROBE
 cat > "$work/source/CMakeLists.txt" <<'CMAKE'
 cmake_minimum_required(VERSION 3.24)
@@ -56,7 +56,7 @@ test ! -f "$work/build/checks/native.pass"
 printf changed > "$work/source/testdata/input"
 cmake -S "$work/source" -B "$work/build" -DENABLE_PROBE=ON > "$work/root-configure.log"
 cmake --build "$work/build" --target check-native > "$work/root-first.log"
-for input in README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do
+for input in .clangd README.md LICENSE libmdf-scm-1.rockspec.in assets/c89/style.css; do
   sleep 1
   printf 'invalid\n' > "$work/source/$input"
   if cmake --build "$work/build" --target check-native > "$work/root-changed.log" 2>&1; then

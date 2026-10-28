@@ -10,6 +10,7 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/*" "${CMAKE_CURRENT_SOURCE_DIR}/testdata/*"
     "${CMAKE_CURRENT_SOURCE_DIR}/lua/*" "${CMAKE_CURRENT_SOURCE_DIR}/benchmarks/*")
   list(APPEND check_inputs "${CMAKE_CURRENT_SOURCE_DIR}/Makefile"
+    "${CMAKE_CURRENT_SOURCE_DIR}/.clangd"
     "${CMAKE_CURRENT_SOURCE_DIR}/README.md" "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
     "${CMAKE_CURRENT_SOURCE_DIR}/libmdf-scm-1.rockspec.in"
     "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
@@ -28,6 +29,9 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
   if(TARGET lua)
     list(APPEND check_binaries "$<TARGET_FILE:lua>" "${CMAKE_CURRENT_BINARY_DIR}/cmdf.sh")
   endif()
+  if(TARGET test_public_headers)
+    list(APPEND check_binaries $<TARGET_OBJECTS:test_public_headers>)
+  endif()
   file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/inputs/native-members.txt"
     CONTENT "${check_inputs}\n${check_binaries}\n")
   list(APPEND check_inputs "${CMAKE_CURRENT_BINARY_DIR}/inputs/native-members.txt")
@@ -45,6 +49,14 @@ if(LIBMDF_BUILD_TESTS AND LIBMDF_BUILD_HOST_TESTS)
         "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
         "${check_configuration}")
       set(binaries "$<TARGET_FILE:test_public_api>" "$<TARGET_FILE:test_contracts>" "$<TARGET_FILE:test_c89>")
+      if(TARGET test_lua_allocations)
+        list(APPEND inputs "${CMAKE_CURRENT_SOURCE_DIR}/cmake/LuaTests.cmake"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_lua_allocations.c"
+          "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_ownership.lua"
+          "${CMAKE_CURRENT_SOURCE_DIR}/lua/libmdf_core.c"
+          "${CMAKE_CURRENT_SOURCE_DIR}/lua/libmdf.lua")
+        list(APPEND binaries "$<TARGET_FILE:test_lua_allocations>" "$<TARGET_FILE:libmdf_lua_core>")
+      endif()
     endif()
     add_custom_command(OUTPUT "${stamp}"
       COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/checks"

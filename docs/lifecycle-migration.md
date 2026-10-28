@@ -4,6 +4,20 @@ The current `pkt-systems-cmake-lifecycle` skill is the governing contract. The
 migration preserves the C library, CLI, Lua facade, seven shipment targets, public
 ABI and existing rendering tests. Publication remains an engineer operation.
 
+The authoritative skill source is maintained in
+[c89systems/cpkt](https://github.com/c89systems/cpkt/tree/trunk/skills/pkt-systems-cmake-lifecycle).
+This project uses the exact vendored helper collection, not a cpkt SDK or the
+former service endpoint. Linux toolchains already use the declared global
+`~/.cache/cpkt/toolchains` cache; verified dependency archives use
+`~/.cache/cpkt/deps`. Clang/LLVM and approved osxcross/Apple inputs stay
+operator-managed prerequisites.
+
+The native Debug build publishes the compilation database at the path selected
+by `.clangd` and prepares its actual generated/dependency headers. Editor flags
+come from each target, preserving the Lua binding's C99 contract. The native
+CTest suite verifies ordinary clangd discovery and invalidates that proof when
+editor configuration changes.
+
 | Removed behavior | Current owner | Observable proof |
 | --- | --- | --- |
 | Configure-time tool acquisition and duplicated resolver variants | Exact vendored helper collection; explicit preparation, read-only discovery | Resolver fixtures, real native/fuzz/cross producers |

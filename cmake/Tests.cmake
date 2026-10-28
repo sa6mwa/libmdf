@@ -38,6 +38,27 @@ if(LIBMDF_BUILD_TESTS)
   add_test(NAME test_public_api COMMAND test_public_api)
   set_tests_properties(test_public_api PROPERTIES LABELS "unit;api" TIMEOUT 10)
 
+  if(CMAKE_CURRENT_BINARY_DIR STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/build/debug")
+    # Give public headers exact C89 commands, including when host/Lua checks are
+    # disabled, instead of borrowing an unrelated source's inferred includes.
+    set(public_headers "${CMAKE_CURRENT_SOURCE_DIR}/include/libmdf.h"
+      "${LIBMDF_GENERATED_INCLUDE_DIR}/libmdf/mdf.h")
+    set_source_files_properties(${public_headers} PROPERTIES LANGUAGE C)
+    add_library(test_public_headers OBJECT ${public_headers})
+    target_link_libraries(test_public_headers PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)
+    libmdf_configure_c89_target(test_public_headers)
+    if(LIBMDF_BUILD_HOST_TESTS)
+      find_program(LIBMDF_CLANGD clangd REQUIRED)
+      set(editor_sources src/mdf.c include/libmdf.h build/debug/generated/include/libmdf/mdf.h)
+      if(LIBMDF_BUILD_LUA_TESTS)
+        list(APPEND editor_sources lua/libmdf_core.c)
+      endif()
+      add_test(NAME editor_clangd COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_clangd.sh"
+        "${LIBMDF_CLANGD}" ${editor_sources})
+      set_tests_properties(editor_clangd PROPERTIES LABELS "host;editor;lifecycle" TIMEOUT 120)
+    endif()
+  endif()
+
   add_executable(test_c89 tests/test_c89.c)
   libmdf_configure_c89_target(test_c89)
   target_link_libraries(test_c89 PRIVATE $<IF:$<BOOL:${LIBMDF_BUILD_STATIC}>,mdf_static,mdf_shared>)

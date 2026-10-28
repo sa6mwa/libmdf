@@ -11,30 +11,27 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-typedef struct lua_mdf_source_ctx {
-    lua_State *L;
-    int ref;
-} lua_mdf_source_ctx;
+typedef struct lua_mdf_failure {
+    int index;
+} lua_mdf_failure;
 
-typedef struct lua_mdf_sink_ctx {
+typedef struct lua_mdf_callback_ctx {
     lua_State *L;
     void *owner;
     int value_key;
-    int ref;
+    int index;
     int active;
-} lua_mdf_sink_ctx;
+    lua_mdf_failure *failure;
+} lua_mdf_callback_ctx;
 
-typedef struct lua_mdf_trace_ctx {
-    lua_State *L;
-    void *owner;
-    int value_key;
-    int ref;
-    int active;
-} lua_mdf_trace_ctx;
+typedef lua_mdf_callback_ctx lua_mdf_source_ctx;
+typedef lua_mdf_callback_ctx lua_mdf_sink_ctx;
+typedef lua_mdf_callback_ctx lua_mdf_trace_ctx;
 
 typedef struct lua_mdf_handle {
     mdf *mdf;
     int callback_operation_active;
+    lua_mdf_failure failure;
     /* Alternate contexts so core replacement closes the old Lua callback first. */
     lua_mdf_sink_ctx sink_ctx[2];
     int sink_slot;
@@ -43,6 +40,7 @@ typedef struct lua_mdf_handle {
 
 typedef struct lua_mdf_document_stream {
     mdf *mdf;
+    lua_mdf_failure failure;
     /* Alternate contexts so core replacement closes the old Lua callback first. */
     lua_mdf_sink_ctx sink_ctx[2];
     int sink_slot;
@@ -58,6 +56,65 @@ typedef struct lua_mdf_document_stream {
 #define LUA_MDF_VALUE_TRACE 4
 
 static int lua_mdf_get_boolean_field(lua_State *L, int table, const char *name);
+
+static const char *lua_mdf_cstring(lua_State *L, int index)
+{
+    size_t len;
+    const char *value;
+
+    luaL_checktype(L, index, LUA_TSTRING);
+    value = lua_tolstring(L, index, &len);
+    if (memchr(value, 0, len) != NULL) luaL_argerror(L, index, "string contains NUL");
+    return value;
+}
+
+static const char *lua_mdf_bytes(lua_State *L, int index, size_t *len)
+{
+    luaL_checktype(L, index, LUA_TSTRING);
+    return lua_tolstring(L, index, len);
+}
+
+/* Capture only the declared configuration containers. String storage is shared
+ * and pinned, never copied across the FFI or borrowed from a mutable table. */
+static void lua_mdf_snapshot_fields(lua_State *L, int index, const char *const *fields)
+{
+    int original = lua_absindex(L, index);
+    int copy;
+
+    lua_newtable(L);
+    copy = lua_gettop(L);
+    while (*fields != NULL) {
+        lua_getfield(L, original, *fields);
+        lua_setfield(L, copy, *fields++);
+    }
+}
+
+static void lua_mdf_snapshot_options(lua_State *L, int index)
+{
+    static const char *const fields[] = {
+        "format", "html", "deck", "boring", "osc8", "ansi_mode", "output_fd", "width",
+        "margin_left", "margin_right", "theme", "c89", "html_content_width_ch", "html_title",
+        "deck_transition", "slide_numbers", "deck_center_front_text", "table_buffer_mode",
+        "table_wire_mode", "write_trace", "html_font", "disable_embedded_font", "font_uri",
+        "font_regular_uri", "font_italic_uri", "dump_font", "dump_font_force", "font_path",
+        "font_regular_path", "font_italic_path", NULL
+    };
+    static const char *const font_fields[] = {
+        "family", "regular_format", "regular_data", "italic_format", "italic_data", NULL
+    };
+    int copy;
+
+    if (!lua_istable(L, index)) return;
+    lua_mdf_snapshot_fields(L, index, fields);
+    copy = lua_gettop(L);
+    lua_getfield(L, copy, "html_font");
+    if (lua_istable(L, -1)) {
+        lua_mdf_snapshot_fields(L, -1, font_fields);
+        lua_setfield(L, copy, "html_font");
+    }
+    lua_pop(L, 1);
+    lua_replace(L, index);
+}
 
 /* Borrow the descriptor from a live Lua file; never close or retain the file.
  * Deferred truncation below remains private to cmdf.lua. */
@@ -192,21 +249,6 @@ static int lua_mdf_push_owned_callback(lua_State *L, void *owner, int key)
     return 1;
 }
 
-static void lua_mdf_move_trace_to_owner(lua_State *L, int owner_index, lua_mdf_trace_ctx *ctx)
-{
-    int owner;
-
-    if (ctx->ref == LUA_NOREF) {
-        return;
-    }
-    owner = lua_absindex(L, owner_index);
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->ref);
-    lua_mdf_set_owned_value(L, owner, ctx->value_key, -1);
-    lua_pop(L, 1);
-    luaL_unref(L, LUA_REGISTRYINDEX, ctx->ref);
-    ctx->ref = LUA_NOREF;
-}
-
 static const char *lua_mdf_format_name(mdf_format format)
 {
     if (format == MDF_FORMAT_HTML) {
@@ -218,33 +260,82 @@ static const char *lua_mdf_format_name(mdf_format format)
     return "ansi";
 }
 
+typedef struct lua_mdf_callback_frame {
+    lua_mdf_callback_ctx *ctx;
+    const char *src;
+    size_t len;
+    mdf_format format;
+    int trace;
+    char *dst;
+    size_t cap;
+    size_t read;
+    int ok;
+} lua_mdf_callback_frame;
+
+/* Argument creation and result interpretation belong inside the protected
+ * frame too: an allocation failure must return through the native renderer. */
+static int lua_mdf_output_protected(lua_State *L)
+{
+    lua_mdf_callback_frame *frame = (lua_mdf_callback_frame *)lua_touserdata(L, 1);
+    lua_mdf_callback_ctx *ctx = frame->ctx;
+
+    if (ctx->owner != NULL) {
+        if (!lua_mdf_push_owned_callback(L, ctx->owner, ctx->value_key)) return 0;
+    } else {
+        lua_pushvalue(L, 2);
+    }
+    if (frame->trace) {
+        lua_pushstring(L, lua_mdf_format_name(frame->format));
+    }
+    lua_pushlstring(L, frame->src, frame->len);
+    lua_call(L, frame->trace ? 2 : 1, 1);
+    frame->ok = lua_isnil(L, -1) || lua_toboolean(L, -1);
+    return 0;
+}
+
+static int lua_mdf_protect(lua_mdf_callback_frame *frame, lua_CFunction function)
+{
+    lua_mdf_callback_ctx *ctx = frame->ctx;
+    lua_State *L = ctx->L;
+    int status;
+
+    if (ctx->failure->index != 0) return 0;
+    /* Entry points reserve stack space before acquiring native resources.
+     * These pushes cannot allocate. lua_pcall protects all subsequent work. */
+    lua_pushcfunction(L, function);
+    lua_pushlightuserdata(L, frame);
+    if (ctx->owner == NULL) lua_pushvalue(L, ctx->index);
+    else lua_pushnil(L);
+    ctx->active++;
+    status = lua_pcall(L, 2, 0, 0);
+    ctx->active--;
+    if (status != LUA_OK) {
+        ctx->failure->index = lua_gettop(L);
+        return 0;
+    }
+    return 1;
+}
+
+static void lua_mdf_raise_callback(lua_State *L, lua_mdf_failure *failure)
+{
+    int index = failure->index;
+
+    if (index == 0) return;
+    failure->index = 0;
+    lua_pushvalue(L, index);
+    lua_error(L);
+}
+
 static int lua_mdf_trace_emit(void *userdata, mdf_format format, const char *src, size_t len)
 {
-    lua_mdf_trace_ctx *ctx;
-    lua_State *L;
-    int ok;
+    lua_mdf_callback_frame frame = {0};
 
-    ctx = (lua_mdf_trace_ctx *)userdata;
-    L = ctx->L;
-    ctx->active++;
-    if (ctx->owner != NULL) {
-        if (!lua_mdf_push_owned_callback(L, ctx->owner, ctx->value_key)) {
-            ctx->active--;
-            return -1;
-        }
-    } else {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->ref);
-    }
-    lua_pushstring(L, lua_mdf_format_name(format));
-    lua_pushlstring(L, src, len);
-    if (lua_pcall(L, 2, 1, 0) != LUA_OK) {
-        ctx->active--;
-        return -1;
-    }
-    ok = lua_isnil(L, -1) || lua_toboolean(L, -1);
-    lua_pop(L, 1);
-    ctx->active--;
-    return ok ? 0 : -1;
+    frame.ctx = (lua_mdf_trace_ctx *)userdata;
+    frame.src = src;
+    frame.len = len;
+    frame.format = format;
+    frame.trace = 1;
+    return lua_mdf_protect(&frame, lua_mdf_output_protected) && frame.ok ? 0 : -1;
 }
 
 static mdf_format lua_mdf_format_from_options(lua_State *L, int index)
@@ -256,7 +347,7 @@ static mdf_format lua_mdf_format_from_options(lua_State *L, int index)
     }
     lua_getfield(L, index, "format");
     if (!lua_isnil(L, -1)) {
-        format = luaL_checkstring(L, -1);
+        format = lua_mdf_cstring(L, -1);
         if (strcmp(format, "ansi") == 0) {
             lua_pop(L, 1);
             return MDF_FORMAT_ANSI;
@@ -288,7 +379,7 @@ static mdf_deck_transition lua_mdf_deck_transition(lua_State *L, int index)
     if (lua_isnoneornil(L, index)) {
         return MDF_DECK_TRANSITION_FADE;
     }
-    s = luaL_checkstring(L, index);
+    s = lua_mdf_cstring(L, index);
     if (strcmp(s, "fade") == 0) {
         return MDF_DECK_TRANSITION_FADE;
     }
@@ -308,7 +399,7 @@ static int lua_mdf_font_format(lua_State *L, int index)
     if (lua_isnoneornil(L, index)) {
         return MDF_HTML_FONT_FORMAT_NONE;
     }
-    s = luaL_checkstring(L, index);
+    s = lua_mdf_cstring(L, index);
     if (strcmp(s, "woff2") == 0) {
         return MDF_HTML_FONT_FORMAT_WOFF2;
     }
@@ -325,7 +416,7 @@ static mdf_table_buffer_mode lua_mdf_table_buffer_mode(lua_State *L, int index)
     if (lua_isnoneornil(L, index)) {
         return MDF_TABLE_BUFFER_FULL;
     }
-    s = luaL_checkstring(L, index);
+    s = lua_mdf_cstring(L, index);
     if (strcmp(s, "full") == 0) {
         return MDF_TABLE_BUFFER_FULL;
     }
@@ -342,7 +433,7 @@ static mdf_table_wire_mode lua_mdf_table_wire_mode(lua_State *L, int index)
     if (lua_isnoneornil(L, index)) {
         return MDF_TABLE_WIRE_LINE;
     }
-    s = luaL_checkstring(L, index);
+    s = lua_mdf_cstring(L, index);
     if (strcmp(s, "line") == 0) {
         return MDF_TABLE_WIRE_LINE;
     }
@@ -373,12 +464,13 @@ static const char *lua_mdf_get_optional_html_title(lua_State *L, int index)
         return NULL;
     }
     lua_getfield(L, index, "html_title");
-    title = lua_isnil(L, -1) ? NULL : luaL_checkstring(L, -1);
+    title = lua_isnil(L, -1) ? NULL : lua_mdf_cstring(L, -1);
     lua_pop(L, 1);
     return title;
 }
 
-static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lua_mdf_trace_ctx *trace_ctx)
+static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts,
+                                  lua_mdf_trace_ctx *trace_ctx, int owner_index)
 {
     size_t len;
     const char *bytes;
@@ -392,7 +484,7 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_getfield(L, index, "ansi_mode");
     if (!lua_isnil(L, -1)) {
         const char *mode;
-        mode = luaL_checkstring(L, -1);
+        mode = lua_mdf_cstring(L, -1);
         if (strcmp(mode, "auto") == 0) opts->ansi_mode = MDF_ANSI_AUTO;
         else if (strcmp(mode, "on") == 0) opts->ansi_mode = MDF_ANSI_ON;
         else if (strcmp(mode, "off") == 0) opts->ansi_mode = MDF_ANSI_OFF;
@@ -424,7 +516,7 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     lua_pop(L, 1);
     lua_getfield(L, index, "theme");
     if (!lua_isnil(L, -1)) {
-        opts->theme_name = luaL_checkstring(L, -1);
+        opts->theme_name = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "html_content_width_ch");
@@ -451,7 +543,7 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
     if (lua_istable(L, -1)) {
         lua_getfield(L, -1, "family");
         if (!lua_isnil(L, -1)) {
-            opts->html_font.family = luaL_checkstring(L, -1);
+            opts->html_font.family = lua_mdf_cstring(L, -1);
         }
         lua_pop(L, 1);
         lua_getfield(L, -1, "regular_format");
@@ -459,7 +551,7 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
         lua_pop(L, 1);
         lua_getfield(L, -1, "regular_data");
         if (!lua_isnil(L, -1)) {
-            bytes = luaL_checklstring(L, -1, &len);
+            bytes = lua_mdf_bytes(L, -1, &len);
             opts->html_font.regular.data = (const unsigned char *)bytes;
             opts->html_font.regular.data_len = len;
         }
@@ -469,27 +561,30 @@ static void lua_mdf_apply_options(lua_State *L, int index, mdf_options *opts, lu
         lua_pop(L, 1);
         lua_getfield(L, -1, "italic_data");
         if (!lua_isnil(L, -1)) {
-            bytes = luaL_checklstring(L, -1, &len);
+            bytes = lua_mdf_bytes(L, -1, &len);
             opts->html_font.italic.data = (const unsigned char *)bytes;
             opts->html_font.italic.data_len = len;
         }
         lua_pop(L, 1);
     }
     lua_pop(L, 1);
-    /* Do not create a registry reference until every later option that can
-     * raise has been validated. Constructors can then transfer or release it
-     * through their normal ownership path. */
     lua_getfield(L, index, "write_trace");
     if (!lua_isnil(L, -1)) {
         if (trace_ctx == NULL) {
             luaL_error(L, "write_trace requires a trace context");
         }
         luaL_checktype(L, -1, LUA_TFUNCTION);
-        lua_pushvalue(L, -1);
         trace_ctx->L = L;
-        trace_ctx->ref = luaL_ref(L, LUA_REGISTRYINDEX);
         opts->write_trace.userdata = trace_ctx;
         opts->write_trace.emit = lua_mdf_trace_emit;
+        if (owner_index != 0) {
+            lua_mdf_set_owned_value(L, owner_index, trace_ctx->value_key, -1);
+        } else {
+            /* Keep one-shot callbacks on this call's stack, with no registry
+             * roots to leak if later validation or allocation raises. */
+            trace_ctx->index = lua_gettop(L);
+            return;
+        }
     }
     lua_pop(L, 1);
 }
@@ -516,32 +611,32 @@ static mdf_status lua_mdf_apply_html_font_options(lua_State *L, int index, mdf_f
     italic_uri = NULL;
     lua_getfield(L, index, "font_uri");
     if (!lua_isnil(L, -1)) {
-        font_uri = luaL_checkstring(L, -1);
+        font_uri = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_regular_uri");
     if (!lua_isnil(L, -1)) {
-        regular_uri = luaL_checkstring(L, -1);
+        regular_uri = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_italic_uri");
     if (!lua_isnil(L, -1)) {
-        italic_uri = luaL_checkstring(L, -1);
+        italic_uri = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_path");
     if (!lua_isnil(L, -1)) {
-        opts->html_font_dump_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_path = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_regular_path");
     if (!lua_isnil(L, -1)) {
-        opts->html_font_dump_regular_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_regular_path = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     lua_getfield(L, index, "font_italic_path");
     if (!lua_isnil(L, -1)) {
-        opts->html_font_dump_italic_path = luaL_checkstring(L, -1);
+        opts->html_font_dump_italic_path = lua_mdf_cstring(L, -1);
     }
     lua_pop(L, 1);
     if ((disable_embedded_font || dump_font || dump_font_force || font_uri != NULL || regular_uri != NULL || italic_uri != NULL ||
@@ -569,6 +664,7 @@ static int lua_mdf_html_dump_paths(lua_State *L, int c89)
     char italic_path[4096];
 
     luaL_checktype(L, 1, LUA_TTABLE);
+    lua_mdf_snapshot_options(L, 1);
     mdf_options_init(&opts);
     st = lua_mdf_apply_html_font_options(L, 1, MDF_FORMAT_HTML, &opts);
     if (st != MDF_OK) {
@@ -604,8 +700,8 @@ static int lua_mdf_paths_alias(lua_State *L)
     const char *first_path;
     const char *second_path;
 
-    first_path = luaL_checkstring(L, 1);
-    second_path = luaL_checkstring(L, 2);
+    first_path = lua_mdf_cstring(L, 1);
+    second_path = lua_mdf_cstring(L, 2);
     lua_pushboolean(L, mdf_paths_alias(first_path, second_path));
     return 1;
 }
@@ -619,7 +715,7 @@ static int lua_mdf_path_aliases_stdout(lua_State *L)
     struct stat stdout_st;
     int aliases;
 
-    path = luaL_checkstring(L, 1);
+    path = lua_mdf_cstring(L, 1);
     aliases = stat(path, &path_st) == 0 && fstat(STDOUT_FILENO, &stdout_st) == 0 &&
         path_st.st_dev == stdout_st.st_dev && path_st.st_ino == stdout_st.st_ino;
     lua_pushboolean(L, aliases);
@@ -695,8 +791,8 @@ static int lua_mdf_path_relative_to(lua_State *L)
     const char *target_part;
     size_t out_len;
 
-    from_dir = luaL_checkstring(L, 1);
-    target_path = luaL_checkstring(L, 2);
+    from_dir = lua_mdf_cstring(L, 1);
+    target_path = lua_mdf_cstring(L, 2);
     if (lua_mdf_normalize_absolute_path(from, sizeof(from), from_dir) != 0 ||
         lua_mdf_normalize_absolute_path(target, sizeof(target), target_path) != 0) {
         return luaL_error(L, "relative path: invalid path");
@@ -776,39 +872,34 @@ static int lua_mdf_path_relative_to(lua_State *L)
     return 1;
 }
 
-static size_t lua_mdf_source_read(void *userdata, char *dst, size_t cap, int *err)
+static int lua_mdf_source_protected(lua_State *L)
 {
-    lua_mdf_source_ctx *ctx;
+    lua_mdf_callback_frame *frame = (lua_mdf_callback_frame *)lua_touserdata(L, 1);
     size_t len;
     const char *chunk;
 
-    ctx = (lua_mdf_source_ctx *)userdata;
-    *err = 0;
-    lua_rawgeti(ctx->L, LUA_REGISTRYINDEX, ctx->ref);
-    lua_pushinteger(ctx->L, (lua_Integer)cap);
-    if (lua_pcall(ctx->L, 1, 1, 0) != LUA_OK) {
-        *err = 1;
-        lua_pop(ctx->L, 1);
-        return 0;
-    }
-    if (lua_isnil(ctx->L, -1)) {
-        lua_pop(ctx->L, 1);
-        return 0;
-    }
-    if (lua_type(ctx->L, -1) != LUA_TSTRING) {
-        *err = 1;
-        lua_pop(ctx->L, 1);
-        return 0;
-    }
-    chunk = lua_tolstring(ctx->L, -1, &len);
-    if (len > cap) {
-        *err = 1;
-        lua_pop(ctx->L, 1);
-        return 0;
-    }
-    memcpy(dst, chunk, len);
-    lua_pop(ctx->L, 1);
-    return len;
+    lua_pushvalue(L, 2);
+    lua_pushinteger(L, (lua_Integer)frame->cap);
+    lua_call(L, 1, 1);
+    if (lua_isnil(L, -1)) { frame->ok = 1; return 0; }
+    if (lua_type(L, -1) != LUA_TSTRING) return 0;
+    chunk = lua_tolstring(L, -1, &len);
+    if (len > frame->cap) return 0;
+    memcpy(frame->dst, chunk, len);
+    frame->read = len;
+    frame->ok = 1;
+    return 0;
+}
+
+static size_t lua_mdf_source_read(void *userdata, char *dst, size_t cap, int *err)
+{
+    lua_mdf_callback_frame frame = {0};
+
+    frame.ctx = (lua_mdf_source_ctx *)userdata;
+    frame.dst = dst;
+    frame.cap = cap;
+    *err = !(lua_mdf_protect(&frame, lua_mdf_source_protected) && frame.ok);
+    return frame.read;
 }
 
 static lua_mdf_handle *lua_mdf_check_handle(lua_State *L, int index)
@@ -838,9 +929,9 @@ static int lua_mdf_token_type(lua_State *L, int index)
     const char *s;
 
     if (lua_isinteger(L, index)) {
-        return (int)lua_tointeger(L, index);
+        return lua_mdf_check_int_arg(L, index);
     }
-    s = luaL_checkstring(L, index);
+    s = lua_mdf_cstring(L, index);
     if (strcmp(s, "text") == 0) return MDF_TOKEN_TEXT;
     if (strcmp(s, "space") == 0) return MDF_TOKEN_SPACE;
     if (strcmp(s, "newline") == 0) return MDF_TOKEN_NEWLINE;
@@ -873,43 +964,26 @@ static void lua_mdf_read_token(lua_State *L, int index, mdf_token *tok)
     lua_pop(L, 1);
     lua_getfield(L, index, "text");
     if (!lua_isnil(L, -1)) {
-        tok->text = luaL_checklstring(L, -1, &len);
+        tok->text = lua_mdf_bytes(L, -1, &len);
         tok->len = len;
     }
-    lua_pop(L, 1);
+    /* Retain text until the native write returns, including values synthesized
+     * by __index. Looking up level may run Lua and collect an unpinned string. */
     lua_getfield(L, index, "level");
     if (!lua_isnil(L, -1)) {
-        tok->level = (int)luaL_checkinteger(L, -1);
+        tok->level = lua_mdf_check_int_arg(L, -1);
     }
     lua_pop(L, 1);
 }
 
 static int lua_mdf_sink_write(void *userdata, const char *src, size_t len)
 {
-    lua_mdf_sink_ctx *ctx;
-    lua_State *L;
-    int ok;
+    lua_mdf_callback_frame frame = {0};
 
-    ctx = (lua_mdf_sink_ctx *)userdata;
-    L = ctx->L;
-    ctx->active++;
-    if (ctx->owner != NULL) {
-        if (!lua_mdf_push_owned_callback(L, ctx->owner, ctx->value_key)) {
-            ctx->active--;
-            return -1;
-        }
-    } else {
-        lua_rawgeti(L, LUA_REGISTRYINDEX, ctx->ref);
-    }
-    lua_pushlstring(L, src, len);
-    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-        ctx->active--;
-        return -1;
-    }
-    ok = lua_isnil(L, -1) || lua_toboolean(L, -1);
-    lua_pop(L, 1);
-    ctx->active--;
-    return ok ? 0 : -1;
+    frame.ctx = (lua_mdf_sink_ctx *)userdata;
+    frame.src = src;
+    frame.len = len;
+    return lua_mdf_protect(&frame, lua_mdf_output_protected) && frame.ok ? 0 : -1;
 }
 
 static void lua_mdf_refresh_sink_contexts(lua_mdf_sink_ctx contexts[2], lua_State *L)
@@ -939,6 +1013,7 @@ static void lua_mdf_refresh_handle_callbacks(lua_mdf_handle *handle, lua_State *
     if (lua_mdf_handle_callbacks_active(handle)) {
         return;
     }
+    luaL_checkstack(L, 16, "libmdf callbacks");
     lua_mdf_refresh_sink_contexts(handle->sink_ctx, L);
     handle->trace_ctx.L = L;
 }
@@ -948,8 +1023,24 @@ static void lua_mdf_refresh_document_stream_callbacks(lua_mdf_document_stream *s
     if (lua_mdf_document_stream_callbacks_active(stream)) {
         return;
     }
+    luaL_checkstack(L, 16, "libmdf callbacks");
     lua_mdf_refresh_sink_contexts(stream->sink_ctx, L);
     stream->trace_ctx.L = L;
+}
+
+static int lua_mdf_result_protected(lua_State *L)
+{
+    const char *out = (const char *)lua_touserdata(L, 1);
+
+    lua_pushlstring(L, out == NULL ? "" : out, out == NULL ? 0 : strlen(out));
+    return 1;
+}
+
+static int lua_mdf_copy_result(lua_State *L, const char *out)
+{
+    lua_pushcfunction(L, lua_mdf_result_protected);
+    lua_pushlightuserdata(L, (void *)out);
+    return lua_pcall(L, 1, 1, 0);
 }
 
 static int lua_mdf_render(lua_State *L)
@@ -962,20 +1053,25 @@ static int lua_mdf_render(lua_State *L)
     const char *html_title;
     char *out;
     mdf_status st;
+    lua_mdf_failure failure = {0};
+    int copy_status;
 
-    markdown = luaL_checkstring(L, 1);
+    luaL_checkstack(L, 16, "libmdf callbacks");
+    markdown = lua_mdf_cstring(L, 1);
+    lua_mdf_snapshot_options(L, 2);
     mdf_options_init(&opts);
     trace_ctx.L = L;
     trace_ctx.owner = NULL;
     trace_ctx.value_key = 0;
-    trace_ctx.ref = LUA_NOREF;
+    trace_ctx.index = 0;
     trace_ctx.active = 0;
+    trace_ctx.failure = &failure;
     format = MDF_FORMAT_ANSI;
     html_title = NULL;
     if (lua_istable(L, 2)) {
         format = lua_mdf_format_from_options(L, 2);
         html_title = lua_mdf_get_optional_html_title(L, 2);
-        lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
+        lua_mdf_apply_options(L, 2, &opts, &trace_ctx, 0);
     }
     inst = NULL;
     st = lua_istable(L, 2) ? lua_mdf_apply_html_font_options(L, 2, format, &opts) : MDF_OK;
@@ -986,18 +1082,12 @@ static int lua_mdf_render(lua_State *L)
         if (inst != NULL) {
             inst->destroy(inst);
         }
-        if (trace_ctx.ref != LUA_NOREF) {
-            luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-        }
         return luaL_error(L, "mdf_create: %s", mdf_status_string(st));
     }
     if ((format == MDF_FORMAT_HTML || format == MDF_FORMAT_HTML_DECK) && html_title != NULL) {
         st = mdf_set_html_title(inst, html_title);
         if (st != MDF_OK) {
             inst->destroy(inst);
-            if (trace_ctx.ref != LUA_NOREF) {
-                luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-            }
             return luaL_error(L, "mdf_set_html_title: %s", mdf_status_string(st));
         }
     }
@@ -1010,17 +1100,13 @@ static int lua_mdf_render(lua_State *L)
         err = inst->error(inst);
         snprintf(errbuf, sizeof(errbuf), "%s", err == NULL ? "" : err);
         inst->destroy(inst);
-        if (trace_ctx.ref != LUA_NOREF) {
-            luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-        }
+        lua_mdf_raise_callback(L, &failure);
         return luaL_error(L, "mdf_render: %s: %s", mdf_status_string(st), errbuf);
     }
-    lua_pushlstring(L, out == NULL ? "" : out, out == NULL ? 0 : strlen(out));
+    copy_status = lua_mdf_copy_result(L, out);
     inst->string_free(inst, out);
     inst->destroy(inst);
-    if (trace_ctx.ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-    }
+    if (copy_status != LUA_OK) return lua_error(L);
     return 1;
 }
 
@@ -1036,31 +1122,36 @@ static int lua_mdf_render_stream(lua_State *L)
     lua_mdf_sink_ctx sink_ctx;
     const char *html_title;
     mdf_status st;
+    lua_mdf_failure failure = {0};
 
+    luaL_checkstack(L, 16, "libmdf callbacks");
     luaL_checktype(L, 1, LUA_TFUNCTION);
     luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_mdf_snapshot_options(L, 3);
     mdf_options_init(&opts);
     trace_ctx.L = L;
     trace_ctx.owner = NULL;
     trace_ctx.value_key = 0;
-    trace_ctx.ref = LUA_NOREF;
+    trace_ctx.index = 0;
     trace_ctx.active = 0;
+    trace_ctx.failure = &failure;
     format = MDF_FORMAT_ANSI;
     html_title = NULL;
     if (lua_istable(L, 3)) {
         format = lua_mdf_format_from_options(L, 3);
         html_title = lua_mdf_get_optional_html_title(L, 3);
-        lua_mdf_apply_options(L, 3, &opts, &trace_ctx);
+        lua_mdf_apply_options(L, 3, &opts, &trace_ctx, 0);
     }
-    lua_pushvalue(L, 1);
+    memset(&source_ctx, 0, sizeof(source_ctx));
     source_ctx.L = L;
-    source_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    lua_pushvalue(L, 2);
+    source_ctx.index = 1;
+    source_ctx.failure = &failure;
     sink_ctx.L = L;
     sink_ctx.owner = NULL;
     sink_ctx.value_key = 0;
-    sink_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    sink_ctx.index = 2;
     sink_ctx.active = 0;
+    sink_ctx.failure = &failure;
     source.userdata = &source_ctx;
     source.read = lua_mdf_source_read;
     sink.userdata = &sink_ctx;
@@ -1079,11 +1170,7 @@ static int lua_mdf_render_stream(lua_State *L)
     if (inst != NULL) {
         inst->destroy(inst);
     }
-    luaL_unref(L, LUA_REGISTRYINDEX, source_ctx.ref);
-    luaL_unref(L, LUA_REGISTRYINDEX, sink_ctx.ref);
-    if (trace_ctx.ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-    }
+    lua_mdf_raise_callback(L, &failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_render_stream: %s", mdf_status_string(st));
     }
@@ -1099,36 +1186,40 @@ static int lua_mdf_new(lua_State *L)
     const char *html_title;
     mdf_status st;
 
+    lua_mdf_snapshot_options(L, 1);
     mdf_options_init(&opts);
     format = lua_mdf_format_from_options(L, 1);
     html_title = lua_mdf_get_optional_html_title(L, 1);
     handle = (lua_mdf_handle *)lua_newuserdatauv(L, sizeof(*handle), 1);
     handle->mdf = NULL;
+    handle->failure.index = 0;
     handle->callback_operation_active = 0;
     handle->sink_ctx[0].L = L;
     handle->sink_ctx[0].owner = handle;
     handle->sink_ctx[0].value_key = LUA_MDF_VALUE_SINK_0;
-    handle->sink_ctx[0].ref = LUA_NOREF;
+    handle->sink_ctx[0].index = 0;
     handle->sink_ctx[0].active = 0;
+    handle->sink_ctx[0].failure = &handle->failure;
     handle->sink_ctx[1].L = L;
     handle->sink_ctx[1].owner = handle;
     handle->sink_ctx[1].value_key = LUA_MDF_VALUE_SINK_1;
-    handle->sink_ctx[1].ref = LUA_NOREF;
+    handle->sink_ctx[1].index = 0;
     handle->sink_ctx[1].active = 0;
+    handle->sink_ctx[1].failure = &handle->failure;
     handle->sink_slot = -1;
     handle->trace_ctx.L = L;
     handle->trace_ctx.owner = handle;
     handle->trace_ctx.value_key = LUA_MDF_VALUE_TRACE;
-    handle->trace_ctx.ref = LUA_NOREF;
+    handle->trace_ctx.index = 0;
     handle->trace_ctx.active = 0;
+    handle->trace_ctx.failure = &handle->failure;
+    lua_createtable(L, 4, 0);
+    lua_setiuservalue(L, -2, 1);
     luaL_getmetatable(L, LUA_MDF_HANDLE);
     lua_setmetatable(L, -2);
-    lua_newtable(L);
-    lua_setiuservalue(L, -2, 1);
     lua_mdf_register_owner(L, -1, handle);
     if (lua_istable(L, 1)) {
-        lua_mdf_apply_options(L, 1, &opts, &handle->trace_ctx);
-        lua_mdf_move_trace_to_owner(L, -1, &handle->trace_ctx);
+        lua_mdf_apply_options(L, 1, &opts, &handle->trace_ctx, lua_gettop(L));
     }
     if (lua_istable(L, 1)) {
         lua_mdf_set_owned_value(L, -1, LUA_MDF_VALUE_OPTIONS, 1);
@@ -1164,34 +1255,38 @@ static int lua_mdf_document_stream_new(lua_State *L)
 
     luaL_checktype(L, 1, LUA_TTABLE);
     luaL_checktype(L, 2, LUA_TFUNCTION);
+    lua_mdf_snapshot_options(L, 1);
     mdf_options_init(&opts);
     format = lua_mdf_format_from_options(L, 1);
     html_title = lua_mdf_get_optional_html_title(L, 1);
     stream = (lua_mdf_document_stream *)lua_newuserdatauv(L, sizeof(*stream), 1);
     stream->mdf = NULL;
+    stream->failure.index = 0;
     stream->sink_ctx[0].L = L;
     stream->sink_ctx[0].owner = stream;
     stream->sink_ctx[0].value_key = LUA_MDF_VALUE_SINK_0;
-    stream->sink_ctx[0].ref = LUA_NOREF;
+    stream->sink_ctx[0].index = 0;
     stream->sink_ctx[0].active = 0;
+    stream->sink_ctx[0].failure = &stream->failure;
     stream->sink_ctx[1].L = L;
     stream->sink_ctx[1].owner = stream;
     stream->sink_ctx[1].value_key = LUA_MDF_VALUE_SINK_1;
-    stream->sink_ctx[1].ref = LUA_NOREF;
+    stream->sink_ctx[1].index = 0;
     stream->sink_ctx[1].active = 0;
+    stream->sink_ctx[1].failure = &stream->failure;
     stream->sink_slot = -1;
     stream->trace_ctx.L = L;
     stream->trace_ctx.owner = stream;
     stream->trace_ctx.value_key = LUA_MDF_VALUE_TRACE;
-    stream->trace_ctx.ref = LUA_NOREF;
+    stream->trace_ctx.index = 0;
     stream->trace_ctx.active = 0;
+    stream->trace_ctx.failure = &stream->failure;
+    lua_createtable(L, 4, 0);
+    lua_setiuservalue(L, -2, 1);
     luaL_getmetatable(L, LUA_MDF_DOCUMENT_STREAM);
     lua_setmetatable(L, -2);
-    lua_newtable(L);
-    lua_setiuservalue(L, -2, 1);
     lua_mdf_register_owner(L, -1, stream);
-    lua_mdf_apply_options(L, 1, &opts, &stream->trace_ctx);
-    lua_mdf_move_trace_to_owner(L, -1, &stream->trace_ctx);
+    lua_mdf_apply_options(L, 1, &opts, &stream->trace_ctx, lua_gettop(L));
     lua_mdf_set_owned_value(L, -1, LUA_MDF_VALUE_OPTIONS, 1);
     lua_mdf_set_owned_value(L, -1, LUA_MDF_VALUE_SINK_0, 2);
     stream->sink_slot = 0;
@@ -1267,6 +1362,7 @@ static int lua_mdf_document_stream_reset(lua_State *L)
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_refresh_document_stream_callbacks(stream, L);
     st = stream->mdf->reset(stream->mdf);
+    lua_mdf_raise_callback(L, &stream->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.reset: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -1282,7 +1378,7 @@ static int lua_mdf_document_stream_set_html_title(lua_State *L)
     mdf_status st;
 
     stream = lua_mdf_check_document_stream(L, 1);
-    title = lua_isnoneornil(L, 2) ? NULL : luaL_checkstring(L, 2);
+    title = lua_isnoneornil(L, 2) ? NULL : lua_mdf_cstring(L, 2);
     st = mdf_set_html_title(stream->mdf, title);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.set_html_title: %s: %s",
@@ -1323,12 +1419,14 @@ static int lua_mdf_document_stream_set_sink(lua_State *L)
     if (st != MDF_OK) {
         lua_mdf_clear_owned_value(L, 1, stream->sink_ctx[new_slot].value_key);
         stream->sink_slot = old_slot;
+        lua_mdf_raise_callback(L, &stream->failure);
         return luaL_error(L, "mdf_document_stream.set_sink: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
     }
     if (old_slot >= 0) {
         lua_mdf_clear_owned_value(L, 1, stream->sink_ctx[old_slot].value_key);
     }
+    lua_mdf_raise_callback(L, &stream->failure);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1342,8 +1440,9 @@ static int lua_mdf_document_stream_write(lua_State *L)
 
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_refresh_document_stream_callbacks(stream, L);
-    data = luaL_checklstring(L, 2, &len);
+    data = lua_mdf_bytes(L, 2, &len);
     st = stream->mdf->feed(stream->mdf, data, len);
+    lua_mdf_raise_callback(L, &stream->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.write: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -1360,6 +1459,7 @@ static int lua_mdf_document_stream_flush(lua_State *L)
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_refresh_document_stream_callbacks(stream, L);
     st = stream->mdf->flush(stream->mdf);
+    lua_mdf_raise_callback(L, &stream->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.flush: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -1376,6 +1476,7 @@ static int lua_mdf_document_stream_finish_document(lua_State *L)
     stream = lua_mdf_check_document_stream(L, 1);
     lua_mdf_refresh_document_stream_callbacks(stream, L);
     st = stream->mdf->finish_document(stream->mdf);
+    lua_mdf_raise_callback(L, &stream->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_document_stream.finish_document: %s: %s",
                           mdf_status_string(st), stream->mdf->error(stream->mdf));
@@ -1433,19 +1534,26 @@ static int lua_mdf_handle_render(lua_State *L)
     const char *markdown;
     char *out;
     mdf_status st;
+    int copy_status;
 
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
-    markdown = luaL_checkstring(L, 2);
+    markdown = lua_mdf_cstring(L, 2);
     out = NULL;
     st = handle->mdf->render_cstr(handle->mdf, markdown, &out);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_render: %s: %s",
                           mdf_status_string(st),
                           handle->mdf->error(handle->mdf));
     }
-    lua_pushlstring(L, out == NULL ? "" : out, out == NULL ? 0 : strlen(out));
+    /* Copying can run Lua finalizers. Keep the renderer alive until its native
+     * string is freed, even though the native render itself has finished. */
+    handle->callback_operation_active++;
+    copy_status = lua_mdf_copy_result(L, out);
     handle->mdf->string_free(handle->mdf, out);
+    handle->callback_operation_active--;
+    if (copy_status != LUA_OK) return lua_error(L);
     return 1;
 }
 
@@ -1459,15 +1567,16 @@ static int lua_mdf_handle_render_stream(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     luaL_checktype(L, 2, LUA_TFUNCTION);
-    lua_pushvalue(L, 2);
+    memset(&source_ctx, 0, sizeof(source_ctx));
     source_ctx.L = L;
-    source_ctx.ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    source_ctx.index = 2;
+    source_ctx.failure = &handle->failure;
     source.userdata = &source_ctx;
     source.read = lua_mdf_source_read;
     handle->callback_operation_active++;
     st = handle->mdf->render(handle->mdf, &source);
     handle->callback_operation_active--;
-    luaL_unref(L, LUA_REGISTRYINDEX, source_ctx.ref);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_render_stream: %s: %s",
                           mdf_status_string(st),
@@ -1508,12 +1617,14 @@ static int lua_mdf_handle_set_sink(lua_State *L)
     if (st != MDF_OK) {
         lua_mdf_clear_owned_value(L, 1, handle->sink_ctx[new_slot].value_key);
         handle->sink_slot = old_slot;
+        lua_mdf_raise_callback(L, &handle->failure);
         return luaL_error(L, "mdf_handle.set_sink: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
     }
     if (old_slot >= 0) {
         lua_mdf_clear_owned_value(L, 1, handle->sink_ctx[old_slot].value_key);
     }
+    lua_mdf_raise_callback(L, &handle->failure);
     lua_pushboolean(L, 1);
     return 1;
 }
@@ -1562,6 +1673,7 @@ static int lua_mdf_handle_reset(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     st = handle->mdf->reset(handle->mdf);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_handle.reset: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
@@ -1577,7 +1689,7 @@ static int lua_mdf_handle_set_html_title(lua_State *L)
     mdf_status st;
 
     handle = lua_mdf_check_handle(L, 1);
-    title = lua_isnoneornil(L, 2) ? NULL : luaL_checkstring(L, 2);
+    title = lua_isnoneornil(L, 2) ? NULL : lua_mdf_cstring(L, 2);
     st = mdf_set_html_title(handle->mdf, title);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_set_html_title: %s: %s",
@@ -1597,7 +1709,10 @@ static int lua_mdf_handle_write_token(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     lua_mdf_read_token(L, 2, &tok);
+    /* Token getters may execute Lua, including closing this handle. */
+    handle = lua_mdf_check_handle(L, 1);
     st = handle->mdf->write_token(handle->mdf, &tok);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_write_token: %s: %s",
                           mdf_status_string(st),
@@ -1615,6 +1730,7 @@ static int lua_mdf_handle_finish(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     st = handle->mdf->finish(handle->mdf);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_finish: %s: %s",
                           mdf_status_string(st),
@@ -1633,8 +1749,9 @@ static int lua_mdf_handle_feed(lua_State *L)
 
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
-    data = luaL_checklstring(L, 2, &len);
+    data = lua_mdf_bytes(L, 2, &len);
     st = handle->mdf->feed(handle->mdf, data, len);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_handle.feed: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
@@ -1651,6 +1768,7 @@ static int lua_mdf_handle_flush(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     st = handle->mdf->flush(handle->mdf);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_handle.flush: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
@@ -1667,6 +1785,7 @@ static int lua_mdf_handle_finish_document(lua_State *L)
     handle = lua_mdf_check_handle(L, 1);
     lua_mdf_refresh_handle_callbacks(handle, L);
     st = handle->mdf->finish_document(handle->mdf);
+    lua_mdf_raise_callback(L, &handle->failure);
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_handle.finish_document: %s: %s",
                           mdf_status_string(st), handle->mdf->error(handle->mdf));
@@ -1791,14 +1910,18 @@ static int lua_mdf_pager(lua_State *L)
     lua_mdf_trace_ctx trace_ctx;
     mdf_pager_format format;
     mdf_status st;
+    lua_mdf_failure failure = {0};
 
-    path = luaL_checkstring(L, 1);
+    luaL_checkstack(L, 16, "libmdf callbacks");
+    path = lua_mdf_cstring(L, 1);
+    lua_mdf_snapshot_options(L, 2);
     mdf_options_init(&opts);
     trace_ctx.L = L;
     trace_ctx.owner = NULL;
     trace_ctx.value_key = 0;
-    trace_ctx.ref = LUA_NOREF;
+    trace_ctx.index = 0;
     trace_ctx.active = 0;
+    trace_ctx.failure = &failure;
     format = MDF_PAGER_FORMAT_AUTO;
     if (!lua_isnoneornil(L, 2)) {
         const char *value;
@@ -1807,7 +1930,7 @@ static int lua_mdf_pager(lua_State *L)
         luaL_checktype(L, 2, LUA_TTABLE);
         lua_getfield(L, 2, "format");
         if (!lua_isnil(L, -1)) {
-            value = luaL_checklstring(L, -1, &value_len);
+            value = lua_mdf_bytes(L, -1, &value_len);
             if (lua_mdf_pager_format_equals(value, value_len, "markdown") ||
                 lua_mdf_pager_format_is_markdown_media_type(value, value_len)) {
                 format = MDF_PAGER_FORMAT_MARKDOWN;
@@ -1819,12 +1942,9 @@ static int lua_mdf_pager(lua_State *L)
             }
         }
         lua_pop(L, 1);
-        lua_mdf_apply_options(L, 2, &opts, &trace_ctx);
+        lua_mdf_apply_options(L, 2, &opts, &trace_ctx, 0);
     }
     st = mdf_pager_file(path, &opts, format);
-    if (trace_ctx.ref != LUA_NOREF) {
-        luaL_unref(L, LUA_REGISTRYINDEX, trace_ctx.ref);
-    }
     if (st != MDF_OK) {
         return luaL_error(L, "mdf_pager: %s", mdf_status_string(st));
     }

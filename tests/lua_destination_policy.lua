@@ -1,4 +1,5 @@
 local mdf = require("libmdf")
+assert(io.stdin:read("*a") == "", "Lua policy fixture supplies its own input; stdin must be EOF")
 local workflow, policy, destination, width = arg[1], arg[2], arg[3], tonumber(arg[4])
 local opts = { ansi_mode = policy, width = width, osc8 = true }
 if destination == "known" then opts.output_fd = mdf.file_descriptor(io.stdout) end

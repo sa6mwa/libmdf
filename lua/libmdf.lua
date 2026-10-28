@@ -99,6 +99,8 @@ mdf.version_patch = core.version_patch
 ---change width or margins; sink/trace callbacks cannot mutate geometry or lifecycle state.
 ---Options resolve once at creation; binding/replacing a sink does not redetect
 ---its terminal status. Unknown sinks default to escape-free UTF-8 at width 80.
+---Configuration containers are captured privately; font strings stay retained
+---until close. Later mutation of the caller's options does not alter the handle.
 ---@param opts? libmdf.Options
 ---@return libmdf.Handle
 function mdf.new(opts)
@@ -125,6 +127,8 @@ end
 ---Stream through explicit per-call reader and writer callbacks without binding
 ---the writer to a persistent handle. The reader returns a string up to `cap`
 ---or `nil` at EOF; a writer/trace callback returns `false` to fail.
+---Callback exceptions are rethrown unchanged after native cleanup, including OOM
+---while preparing callback arguments. Writer calls preserve decision boundaries.
 ---@param read libmdf.Reader
 ---@param write libmdf.Writer
 ---@param opts? libmdf.Options

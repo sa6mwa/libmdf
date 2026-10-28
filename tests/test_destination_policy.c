@@ -114,8 +114,12 @@ static char *run(const char *const *args, int terminal, int want_success)
     close(input[0]); close(errors);
     if (terminal) close(slave);
     else close(output[1]);
-    n = write(input[1], source, strlen(source));
-    check(n == (ssize_t)strlen(source) || (!want_success && n < 0 && errno == EPIPE), "fixture input");
+    /* Lua API workflows generate their own source; give them EOF instead of
+     * racing an unused write against a child that may already have exited. */
+    if (program == NULL) {
+        n = write(input[1], source, strlen(source));
+        check(n == (ssize_t)strlen(source) || (!want_success && n < 0 && errno == EPIPE), "fixture input");
+    }
     close(input[1]);
     out = read_output(terminal ? master : output[0]);
     close(terminal ? master : output[0]);

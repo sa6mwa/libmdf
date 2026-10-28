@@ -36,6 +36,22 @@ set_target_properties(libmdf_lua_core PROPERTIES PREFIX "" OUTPUT_NAME core
   BUILD_RPATH "${sdk_lib}")
 set(tree "${CMAKE_CURRENT_BINARY_DIR}/lua-tree")
 configure_file(lua/libmdf.lua "${tree}/share/lua/5.5/libmdf.lua" COPYONLY)
+add_executable(test_lua_allocations tests/test_lua_allocations.c)
+set_target_properties(test_lua_allocations PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON)
+target_compile_options(test_lua_allocations PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+target_include_directories(test_lua_allocations PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/lua-runtime/include")
+target_link_libraries(test_lua_allocations PRIVATE lua_core m dl)
+target_link_options(test_lua_allocations PRIVATE -Wl,-E)
+libmdf_configure_development_runtime(test_lua_allocations)
+add_dependencies(test_lua_allocations libmdf_lua_core)
+add_test(NAME lua_allocations COMMAND test_lua_allocations "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_ownership.lua")
+add_test(NAME memory_lua_allocations COMMAND "${LIBMDF_VALGRIND}"
+  --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect
+  --error-exitcode=1 "$<TARGET_FILE:test_lua_allocations>" "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_ownership.lua")
+set_tests_properties(lua_allocations memory_lua_allocations PROPERTIES
+  LABELS "integration;lua" TIMEOUT 60
+  ENVIRONMENT "LUA_PATH=${tree}/share/lua/5.5/?.lua\;\;;LUA_CPATH=${tree}/lib/lua/5.5/?.so\;\;")
+set_tests_properties(memory_lua_allocations PROPERTIES LABELS "memory;lua")
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cmdf.sh"
   COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_cmdf_dev_sh.sh" "${CMAKE_CURRENT_BINARY_DIR}/cmdf.sh"
     "$<TARGET_FILE:lua>" "${tree}" "${CMAKE_CURRENT_BINARY_DIR}/cmdf.lua"
